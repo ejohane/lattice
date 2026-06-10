@@ -28,6 +28,7 @@ export async function runCli(args: string[], input?: string): Promise<CliResult>
     const child = spawn(latticePath, args, {
       env: {
         ...process.env,
+        PATH: defaultPath(process.env.PATH),
         LATTICE_VAULT_PATH: vaultPath,
       },
       stdio: ["pipe", "pipe", "pipe"],
@@ -81,4 +82,13 @@ function resolveExecutable(command: string): string {
   ];
 
   return candidates.find((candidate) => existsSync(candidate)) ?? command;
+}
+
+function defaultPath(current: string | undefined): string {
+  const defaults = ["/opt/homebrew/bin", "/usr/local/bin", "/usr/bin", "/bin", "/usr/sbin", "/sbin"];
+  const parts = new Set((current ?? "").split(":").filter(Boolean));
+  for (const item of defaults) {
+    parts.add(item);
+  }
+  return [...parts].join(":");
 }
