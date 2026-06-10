@@ -2,6 +2,8 @@ import path from "node:path";
 import { mkdir } from "node:fs/promises";
 import { VaultPaths } from "../types";
 
+const SCREEN_CAPTURE_PATH = "/usr/sbin/screencapture";
+
 export async function captureScreenshot(input: {
   paths: VaultPaths;
   localDate: string;
@@ -22,7 +24,7 @@ export async function captureScreenshot(input: {
   const screenshotDir = path.join(input.paths.screenshots, input.localDate);
   await mkdir(screenshotDir, { recursive: true });
   const screenshotPath = path.join(screenshotDir, `${input.captureId}.png`);
-  const proc = Bun.spawn(["screencapture", "-x", screenshotPath], {
+  const proc = Bun.spawn([SCREEN_CAPTURE_PATH, "-x", screenshotPath], {
     stdout: "pipe",
     stderr: "pipe",
   });

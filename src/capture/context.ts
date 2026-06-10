@@ -1,5 +1,7 @@
 import { CaptureContext } from "../types";
 
+const OSASCRIPT_PATH = "/usr/bin/osascript";
+
 export async function captureActiveWindow(): Promise<{
   active_app: string | null;
   active_window: string | null;
@@ -25,7 +27,7 @@ tell application "System Events"
 end tell
 `;
 
-  const proc = Bun.spawn(["osascript", "-e", script], {
+  const proc = Bun.spawn([OSASCRIPT_PATH, "-e", script], {
     stdout: "pipe",
     stderr: "pipe",
   });
