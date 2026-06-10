@@ -1,0 +1,77 @@
+{
+  "$schema": "https://www.raycast.com/schemas/extension.json",
+  "name": "lattice",
+  "title": "Lattice",
+  "description": "Fast Raycast capture and manual synthesis for a local context vault.",
+  "icon": "extension-icon.svg",
+  "author": "ejohane",
+  "license": "MIT",
+  "commands": [
+    {
+      "name": "capture-thought",
+      "title": "Capture Thought",
+      "description": "Save a quick note with local context.",
+      "mode": "view"
+    },
+    {
+      "name": "synthesize-captures",
+      "title": "Synthesize Captures",
+      "description": "Manually synthesize captures for a date.",
+      "mode": "view"
+    },
+    {
+      "name": "open-vault",
+      "title": "Open Vault",
+      "description": "Open the Lattice folder.",
+      "mode": "no-view"
+    },
+    {
+      "name": "open-daily-briefs",
+      "title": "Open Daily Briefs",
+      "description": "Open generated daily briefs.",
+      "mode": "no-view"
+    },
+    {
+      "name": "open-wiki-proposals",
+      "title": "Open Wiki Proposals",
+      "description": "Open proposed wiki updates for review.",
+      "mode": "no-view"
+    }
+  ],
+  "preferences": [
+    {
+      "name": "projectPath",
+      "title": "Project Path",
+      "description": "Absolute path to the Lattice project folder containing src/cli.ts.",
+      "type": "textfield",
+      "required": true
+    },
+    {
+      "name": "vaultPath",
+      "title": "Vault Path",
+      "description": "Absolute path to the local vault folder.",
+      "type": "textfield",
+      "required": true
+    },
+    {
+      "name": "bunPath",
+      "title": "Bun Path",
+      "description": "Path or command name used to run Bun.",
+      "type": "textfield",
+      "required": true,
+      "default": "bun"
+    }
+  ],
+  "dependencies": {
+    "@raycast/api": "^1.104.19"
+  },
+  "devDependencies": {
+    "@types/node": "^25.0.0",
+    "typescript": "^6.0.3"
+  },
+  "scripts": {
+    "dev": "ray develop",
+    "build": "ray build",
+    "typecheck": "tsc --noEmit"
+  }
+}

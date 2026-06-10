@@ -1,0 +1,9 @@
+node_modules/
+bun.lockb
+ContextVault/
+LatticeVault/
+work/
+raycast-extension/raycast-env.d.ts
+raycast-extension/com.*.raycast-dev.plist
+.DS_Store
+*.log
