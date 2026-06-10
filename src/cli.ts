@@ -1,20 +1,19 @@
 #!/usr/bin/env bun
 import { Command } from "commander";
 import path from "node:path";
-import { resolveVaultPath } from "./config";
+import { copyFile, mkdir, readdir, stat } from "node:fs/promises";
+import { mergeConfig, resolveVaultPath } from "./config";
 import { createCapture } from "./capture/capture";
-import { rebuildWikiIndex } from "./index/wiki-index";
-import { createLlmProvider } from "./llm/provider";
-import { toLocalDateString } from "./time";
-import { DEFAULT_CONFIG, ProviderNameSchema } from "./types";
-import { ensureVault, exists, getVaultPaths, loadConfig, writeText } from "./vault";
-import { synthesizeDate } from "./synthesis/synthesize";
+import { listIngested, listPending, markIngested } from "./queue";
+import { QueueEntry, VaultPaths } from "./types";
+import { timestampForFilename } from "./time";
+import { ensureVault, exists, getVaultPaths, readJsonIfExists, writeJson } from "./vault";
 
 const program = new Command();
 
 program
   .name("lattice")
-  .description("Minimal local-first capture and synthesis system.")
+  .description("Local-first context capture protocol for agent-maintained wikis.")
   .option("--vault <path>", "Vault path. Defaults to LATTICE_VAULT_PATH or ./LatticeVault.");
 
 program
@@ -58,128 +57,96 @@ program
   });
 
 program
-  .command("synthesize")
-  .description("Manually synthesize captures for a date.")
-  .option("--date <yyyy-mm-dd>", "Date to synthesize.", toLocalDateString(new Date()))
-  .option("--provider <provider>", "Override provider: copilot, opencode, openai, or mock.")
-  .option("--harness <harness>", "Alias for --provider.")
-  .option("--model <model>", "Override model.")
+  .command("pending")
+  .description("List captures waiting for external agent ingestion.")
+  .option("--json", "Print machine-readable JSON.")
+  .action(listPendingCommand);
+
+program
+  .command("list")
+  .description("Alias for pending.")
+  .option("--json", "Print machine-readable JSON.")
+  .action(listPendingCommand);
+
+program
+  .command("mark-ingested")
+  .description("Move pending capture IDs into the ingested queue.")
+  .argument("<captureIds...>", "Capture IDs to mark ingested.")
+  .option("--agent <name>", "Agent or harness name.", "agent")
+  .option("--json", "Print machine-readable JSON.")
+  .action(async (captureIds: string[], options) => {
+    const root = resolveVaultPath(program.opts().vault);
+    const paths = await ensureVault(root);
+    const ids = captureIds.map((id) => id.trim()).filter(Boolean);
+    if (ids.length === 0) {
+      throw new Error("Provide at least one capture ID.");
+    }
+
+    const result = await markIngested({
+      paths,
+      captureIds: ids,
+      agent: options.agent,
+    });
+
+    if (options.json) {
+      console.log(JSON.stringify(result, null, 2));
+    } else if (result.missing.length > 0) {
+      console.log(`Not pending: ${result.missing.join(", ")}`);
+    } else {
+      console.log(`Marked ${result.ingested.length} capture(s) ingested.`);
+    }
+
+    if (result.missing.length > 0) {
+      process.exitCode = 1;
+    }
+  });
+
+program
+  .command("doctor")
+  .description("Check vault layout and queue readability.")
   .option("--json", "Print machine-readable JSON.")
   .action(async (options) => {
     const root = resolveVaultPath(program.opts().vault);
-    const paths = await ensureVault(root);
-    const config = await loadConfig(root);
-    const providerOption = options.harness ?? options.provider;
-    const providerOverride = providerOption
-      ? ProviderNameSchema.parse(providerOption)
-      : undefined;
-
-    const synthesizeInput: Parameters<typeof synthesizeDate>[0] = {
-      paths,
-      config,
-      date: options.date,
-    };
-    if (providerOverride) {
-      synthesizeInput.providerOverride = providerOverride;
-    }
-    if (options.model) {
-      synthesizeInput.modelOverride = options.model;
-    }
-
-    const result = await synthesizeDate(synthesizeInput);
+    const result = await doctorVault(root);
 
     if (options.json) {
       console.log(JSON.stringify(result, null, 2));
     } else {
-      console.log(`Daily brief: ${path.relative(root, result.dailyPath)}`);
-      console.log(`Wiki proposal: ${path.relative(root, result.proposalMarkdownPath)}`);
-      console.log(`Run artifact: ${path.relative(root, result.runPath)}`);
+      for (const line of result.ok) {
+        console.log(`ok: ${line}`);
+      }
+      for (const line of result.warnings) {
+        console.log(`warning: ${line}`);
+      }
+      for (const line of result.errors) {
+        console.log(`error: ${line}`);
+      }
+      console.log(
+        result.errors.length === 0
+          ? "Vault doctor passed."
+          : "Vault doctor found errors.",
+      );
+    }
+
+    if (result.errors.length > 0) {
+      process.exitCode = 1;
     }
   });
 
 program
-  .command("index")
-  .description("Rebuild compact wiki indexes.")
+  .command("pack")
+  .description("Create a portable pack of pending raw captures and skills.")
   .option("--json", "Print machine-readable JSON.")
   .action(async (options) => {
     const root = resolveVaultPath(program.opts().vault);
     const paths = await ensureVault(root);
-    const index = await rebuildWikiIndex(paths);
+    const result = await createPendingPack(paths);
     if (options.json) {
-      console.log(JSON.stringify(index, null, 2));
+      console.log(JSON.stringify(result, null, 2));
     } else {
-      console.log(`Indexed ${index.pages.length} wiki pages.`);
+      console.log(`Pack: ${path.relative(root, result.path)}`);
+      console.log(`Captures: ${result.capture_count}`);
     }
-  });
-
-program
-  .command("provider-check")
-  .description("Run a minimal provider compatibility check.")
-  .option("--provider <provider>", "Provider to check.", "mock")
-  .option("--harness <harness>", "Alias for --provider.")
-  .option("--model <model>", "Model to request.")
-  .action(async (options) => {
-    const root = resolveVaultPath(program.opts().vault);
-    const config = (await exists(getVaultPaths(root).config))
-      ? await loadConfig(root)
-      : DEFAULT_CONFIG;
-    const providerName = ProviderNameSchema.parse(options.harness ?? options.provider);
-    const provider = createLlmProvider(providerName);
-    const response = await provider.generateText({
-      model: options.model ?? config.llm.model,
-      system: "Return only JSON.",
-      prompt: 'Return {"ok": true}.',
-      temperature: 0,
-    });
-    console.log(response.text);
-  });
-
-program
-  .command("verify")
-  .description("Run a token-free end-to-end verification with the mock provider.")
-  .action(async () => {
-    const root = path.join(process.cwd(), "work", `verify-vault-${Date.now()}`);
-    const paths = await ensureVault(root);
-    const first = await createCapture({
-      paths,
-      body: "Build the lattice with Raycast capture and manual synthesis.",
-      source: "verify",
-      screenshot: false,
-      now: new Date("2026-06-09T15:00:00-05:00"),
-    });
-    await createCapture({
-      paths,
-      body: "Decision: use proposed wiki updates for review instead of automatic wiki edits.",
-      source: "verify",
-      screenshot: false,
-      now: new Date("2026-06-09T15:05:00-05:00"),
-    });
-    await writeText(
-      path.join(paths.wiki, "Inbox", "Lattice.md"),
-      [
-        "---",
-        "title: Lattice",
-        "kind: project",
-        "summary: A Raycast-first local capture and synthesis app.",
-        "aliases:",
-        "  - lattice capture",
-        "---",
-        "",
-        "# Lattice",
-        "",
-        "A manually created wiki page used by the verification flow.",
-      ].join("\n"),
-    );
-    const config = await loadConfig(root);
-    const result = await synthesizeDate({
-      paths,
-      config,
-      date: first.local_date,
-      providerOverride: "mock",
-    });
-    console.log(`Verified capture and synthesis in ${root}`);
-    console.log(`Daily brief: ${result.dailyPath}`);
-    console.log(`Proposal: ${result.proposalMarkdownPath}`);
   });
 
 async function resolveBody(options: {
@@ -195,6 +162,174 @@ async function resolveBody(options: {
   }
 
   throw new Error("Provide --body or --stdin.");
+}
+
+async function listPendingCommand(options: { json?: boolean }): Promise<void> {
+  const root = resolveVaultPath(program.opts().vault);
+  const paths = await ensureVault(root);
+  const pending = await listPending(paths);
+
+  if (options.json) {
+    console.log(JSON.stringify(pending, null, 2));
+    return;
+  }
+
+  if (pending.length === 0) {
+    console.log("No pending captures.");
+    return;
+  }
+
+  for (const entry of pending) {
+    console.log(
+      [
+        entry.capture_id,
+        entry.local_date,
+        entry.source,
+        entry.raw_capture_path,
+      ].join("\t"),
+    );
+  }
+}
+
+async function doctorVault(root: string): Promise<{
+  root: string;
+  ok: string[];
+  warnings: string[];
+  errors: string[];
+}> {
+  const paths = getVaultPaths(root);
+  const ok: string[] = [];
+  const warnings: string[] = [];
+  const errors: string[] = [];
+
+  const directories = [
+    paths.raw,
+    paths.captures,
+    paths.screenshots,
+    paths.queue,
+    paths.wiki,
+    paths.wikiPages,
+    paths.skills,
+    paths.skillWorkflows,
+    paths.packs,
+  ];
+  for (const directory of directories) {
+    if (await isDirectory(directory)) {
+      ok.push(`${path.relative(root, directory) || "."}/`);
+    } else {
+      errors.push(`Missing directory: ${path.relative(root, directory)}`);
+    }
+  }
+
+  const files = [
+    paths.config,
+    path.join(paths.wiki, "index.md"),
+    path.join(paths.wiki, "log.md"),
+    path.join(paths.skills, "AGENTS.md"),
+    path.join(paths.skills, "CLAUDE.md"),
+    path.join(paths.skills, "copilot-skill.md"),
+  ];
+  for (const filePath of files) {
+    if (await exists(filePath)) {
+      ok.push(path.relative(root, filePath));
+    } else {
+      errors.push(`Missing file: ${path.relative(root, filePath)}`);
+    }
+  }
+
+  if (await exists(paths.config)) {
+    mergeConfig(await readJsonIfExists(paths.config));
+    ok.push("config parses");
+  }
+
+  try {
+    const pending = await listPending(paths);
+    const ingested = await listIngested(paths);
+    ok.push(`${pending.length} pending capture(s) parse`);
+    ok.push(`${ingested.length} ingested capture(s) parse`);
+  } catch (error) {
+    errors.push(`Queue parse failed: ${error instanceof Error ? error.message : String(error)}`);
+  }
+
+  if (!(await exists(paths.rawLog))) {
+    warnings.push("raw/log.jsonl does not exist yet");
+  }
+
+  return { root, ok, warnings, errors };
+}
+
+async function createPendingPack(paths: VaultPaths): Promise<{
+  path: string;
+  capture_count: number;
+  pending: QueueEntry[];
+}> {
+  const pending = await listPending(paths);
+  const packName = `pack_${timestampForFilename()}_${crypto.randomUUID().slice(0, 8)}`;
+  const packPath = path.join(paths.packs, packName);
+  await mkdir(packPath, { recursive: true });
+
+  await copyIfExists(paths.config, path.join(packPath, "config.json"));
+  await copyTree(paths.skills, path.join(packPath, "skills"));
+  await copyIfExists(paths.pendingQueue, path.join(packPath, "queue", "pending.jsonl"));
+
+  for (const entry of pending) {
+    await copyVaultRelative(paths, entry.raw_capture_path, packPath);
+    if (entry.screenshot_path) {
+      await copyVaultRelative(paths, entry.screenshot_path, packPath);
+    }
+  }
+
+  await writeJson(path.join(packPath, "manifest.json"), {
+    schema_version: 1,
+    created_at: new Date().toISOString(),
+    capture_count: pending.length,
+    pending,
+  });
+
+  return { path: packPath, capture_count: pending.length, pending };
+}
+
+async function copyVaultRelative(
+  paths: VaultPaths,
+  relativePath: string,
+  packPath: string,
+): Promise<void> {
+  await copyIfExists(path.join(paths.root, relativePath), path.join(packPath, relativePath));
+}
+
+async function copyIfExists(source: string, destination: string): Promise<void> {
+  if (!(await exists(source))) {
+    return;
+  }
+
+  await mkdir(path.dirname(destination), { recursive: true });
+  await copyFile(source, destination);
+}
+
+async function copyTree(source: string, destination: string): Promise<void> {
+  if (!(await exists(source))) {
+    return;
+  }
+
+  await mkdir(destination, { recursive: true });
+  const entries = await readdir(source, { withFileTypes: true });
+  for (const entry of entries) {
+    const sourcePath = path.join(source, entry.name);
+    const destinationPath = path.join(destination, entry.name);
+    if (entry.isDirectory()) {
+      await copyTree(sourcePath, destinationPath);
+    } else if (entry.isFile()) {
+      await copyIfExists(sourcePath, destinationPath);
+    }
+  }
+}
+
+async function isDirectory(filePath: string): Promise<boolean> {
+  try {
+    return (await stat(filePath)).isDirectory();
+  } catch {
+    return false;
+  }
 }
 
 try {

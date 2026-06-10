@@ -2,6 +2,7 @@ import crypto from "node:crypto";
 import { CaptureRecord, VaultPaths } from "../types";
 import { toLocalDateString, timestampForFilename } from "../time";
 import { saveCapture } from "../vault";
+import { enqueueCapture } from "../queue";
 import { buildContext, captureActiveWindow } from "./context";
 import { captureScreenshot } from "./screenshot";
 
@@ -31,6 +32,8 @@ export async function createCapture(input: {
   }
 
   const capture: CaptureRecord = {
+    schema_version: 1,
+    kind: "capture",
     id,
     created_at: now.toISOString(),
     local_date: localDate,
@@ -44,6 +47,7 @@ export async function createCapture(input: {
     }),
   };
 
-  await saveCapture(input.paths, capture);
+  const queueEntry = await saveCapture(input.paths, capture);
+  await enqueueCapture(input.paths, queueEntry);
   return capture;
 }

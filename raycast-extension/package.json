@@ -2,7 +2,7 @@
   "$schema": "https://www.raycast.com/schemas/extension.json",
   "name": "lattice",
   "title": "Lattice",
-  "description": "Fast Raycast capture and manual synthesis for a local context vault.",
+  "description": "Fast Raycast capture for a local Lattice context vault.",
   "icon": "extension-icon.svg",
   "author": "ejohane",
   "license": "MIT",
@@ -14,27 +14,9 @@
       "mode": "view"
     },
     {
-      "name": "synthesize-captures",
-      "title": "Synthesize Captures",
-      "description": "Manually synthesize captures for a date.",
-      "mode": "view"
-    },
-    {
       "name": "open-vault",
       "title": "Open Vault",
       "description": "Open the Lattice folder.",
-      "mode": "no-view"
-    },
-    {
-      "name": "open-daily-briefs",
-      "title": "Open Daily Briefs",
-      "description": "Open generated daily briefs.",
-      "mode": "no-view"
-    },
-    {
-      "name": "open-wiki-proposals",
-      "title": "Open Wiki Proposals",
-      "description": "Open proposed wiki updates for review.",
       "mode": "no-view"
     }
   ],
