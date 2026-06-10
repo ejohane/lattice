@@ -8,7 +8,9 @@ import {
   ensureVault,
   exists,
   installBundledSkills,
+  loadConfig,
   loadCapturesForDate,
+  writeJson,
   writeText,
 } from "../src/vault";
 
@@ -23,6 +25,7 @@ describe("vault protocol", () => {
     expect(await exists(path.join(paths.wiki, "index.md"))).toBe(true);
     expect(await exists(path.join(paths.wiki, "log.md"))).toBe(true);
     expect(await exists(paths.wikiPages)).toBe(true);
+    expect(await exists(path.join(root, "AGENTS.md"))).toBe(true);
     expect(await exists(path.join(paths.skills, "AGENTS.md"))).toBe(true);
     expect(await exists(path.join(paths.skills, "ingest-captures.md"))).toBe(true);
     expect(await exists(path.join(paths.skills, "maintain-wiki.md"))).toBe(true);
@@ -30,6 +33,57 @@ describe("vault protocol", () => {
     expect(await exists(path.join(paths.skills, "lint-wiki.md"))).toBe(true);
     expect(await exists(paths.packs)).toBe(true);
     expect(await exists(paths.config)).toBe(true);
+  });
+
+  test("initializes a vault with a human-readable name", async () => {
+    const root = await tempRoot();
+    const paths = await ensureVault(root, { vaultName: "Research Vault" });
+    const config = await loadConfig(root);
+
+    expect(config.vault.name).toBe("Research Vault");
+    expect(await readFile(path.join(paths.wiki, "index.md"), "utf8")).toContain(
+      "# Research Vault Wiki",
+    );
+  });
+
+  test("updates the vault name without clobbering existing config", async () => {
+    const root = await tempRoot();
+    const paths = await ensureVault(root);
+    await writeJson(paths.config, {
+      protocol_version: 1,
+      vault: {
+        name: "Old Name",
+      },
+      llm: {
+        provider: "mock",
+        model: "local-test-model",
+        temperature: 0.5,
+      },
+      capture: {
+        screenshots_default: false,
+      },
+    });
+
+    await ensureVault(root, { vaultName: "New Name" });
+    const config = await loadConfig(root);
+
+    expect(config.vault.name).toBe("New Name");
+    expect(config.llm.provider).toBe("mock");
+    expect(config.llm.model).toBe("local-test-model");
+    expect(config.llm.temperature).toBe(0.5);
+    expect(config.capture.screenshots_default).toBe(false);
+  });
+
+  test("does not overwrite a local root AGENTS.md", async () => {
+    const root = await tempRoot();
+    await ensureVault(root);
+    await writeText(path.join(root, "AGENTS.md"), "# Local agent notes");
+
+    await ensureVault(root);
+
+    expect(await readFile(path.join(root, "AGENTS.md"), "utf8")).toBe(
+      "# Local agent notes\n",
+    );
   });
 
   test("installs bundled skills without overwriting local edits unless forced", async () => {

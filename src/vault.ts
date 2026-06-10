@@ -8,7 +8,7 @@ import {
   QueueEntry,
   VaultPaths,
 } from "./types";
-import { mergeConfig } from "./config";
+import { mergeConfig, normalizeVaultName } from "./config";
 import { bundledSkillTemplates } from "./skill-templates";
 
 export function getVaultPaths(root: string): VaultPaths {
@@ -44,7 +44,7 @@ export function getVaultPaths(root: string): VaultPaths {
 
 export async function ensureVault(
   root: string,
-  options: { installSkills?: boolean } = {},
+  options: { installSkills?: boolean; vaultName?: string } = {},
 ): Promise<VaultPaths> {
   const paths = getVaultPaths(root);
   await Promise.all([
@@ -57,14 +57,45 @@ export async function ensureVault(
     mkdir(paths.packs, { recursive: true }),
   ]);
 
-  if (!(await exists(paths.config))) {
-    await writeJson(paths.config, DEFAULT_CONFIG);
+  const vaultName = normalizeVaultName(options.vaultName);
+  let config = DEFAULT_CONFIG;
+  if (await exists(paths.config)) {
+    try {
+      config = mergeConfig(JSON.parse(await readFile(paths.config, "utf8")));
+    } catch {
+      config = DEFAULT_CONFIG;
+    }
+    if (vaultName) {
+      config = {
+        ...config,
+        vault: {
+          ...config.vault,
+          name: vaultName,
+        },
+      };
+      await writeJson(paths.config, config);
+    }
+  } else {
+    config = vaultName
+      ? {
+          ...DEFAULT_CONFIG,
+          vault: {
+            ...DEFAULT_CONFIG.vault,
+            name: vaultName,
+          },
+        }
+      : DEFAULT_CONFIG;
+    await writeJson(paths.config, config);
   }
 
   await writeStarterFile(
+    path.join(paths.root, "AGENTS.md"),
+    renderRootAgentsGuide(),
+  );
+  await writeStarterFile(
     path.join(paths.wiki, "index.md"),
     [
-      "# Lattice Wiki",
+      `# ${config.vault.name} Wiki`,
       "",
       "This wiki is owned by your maintenance agents. Use `wiki/pages/` for durable pages and `wiki/log.md` for the running maintenance log.",
     ].join("\n"),
@@ -82,6 +113,29 @@ export async function ensureVault(
   }
 
   return paths;
+}
+
+function renderRootAgentsGuide(): string {
+  return [
+    "# Lattice Vault",
+    "",
+    "This is a Lattice vault: immutable raw captures plus an agent-maintained markdown wiki.",
+    "",
+    "Start here, then read `skills/AGENTS.md` before making vault changes. For task-specific workflows, use:",
+    "",
+    "- `skills/ingest-captures.md`",
+    "- `skills/maintain-wiki.md`",
+    "- `skills/answer-from-wiki.md`",
+    "- `skills/lint-wiki.md`",
+    "",
+    "Core rules:",
+    "",
+    "- Do not edit, move, or delete files under `raw/`.",
+    "- Do not edit `queue/` by hand; use `lattice mark-ingested` after captures are incorporated.",
+    "- Wiki maintenance belongs under `wiki/`.",
+    "- Cite capture IDs for claims added from raw captures.",
+    "- Keep `wiki/index.md` useful as a topic map and `wiki/log.md` useful as a chronological maintenance log.",
+  ].join("\n");
 }
 
 export async function installBundledSkills(

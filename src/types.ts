@@ -46,6 +46,9 @@ export type IngestedEntry = z.infer<typeof IngestedEntrySchema>;
 
 export const AppConfigSchema = z.object({
   protocol_version: z.literal(1),
+  vault: z.object({
+    name: z.string().min(1),
+  }),
   llm: z.object({
     provider: ProviderNameSchema,
     model: z.string(),
@@ -60,6 +63,9 @@ export type AppConfig = z.infer<typeof AppConfigSchema>;
 
 export const DEFAULT_CONFIG: AppConfig = {
   protocol_version: 1,
+  vault: {
+    name: "Lattice Vault",
+  },
   llm: {
     provider: "copilot",
     model: "gpt-5.4-mini",

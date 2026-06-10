@@ -2,7 +2,7 @@
 import { Command } from "commander";
 import path from "node:path";
 import { copyFile, mkdir, readdir, stat } from "node:fs/promises";
-import { mergeConfig, resolveVaultPath } from "./config";
+import { mergeConfig, normalizeVaultName, resolveVaultPath } from "./config";
 import { createCapture } from "./capture/capture";
 import { listIngested, listPending, markIngested } from "./queue";
 import { QueueEntry, VaultPaths } from "./types";
@@ -27,9 +27,11 @@ program
 program
   .command("init")
   .description("Create the vault folder structure.")
-  .action(async () => {
+  .option("--name <name>", "Human-readable vault name.")
+  .action(async (options) => {
     const root = resolveVaultPath(program.opts().vault);
-    await ensureVault(root);
+    const vaultName = resolveVaultNameOption(options.name);
+    await ensureVault(root, vaultName ? { vaultName } : {});
     console.log(`Initialized vault: ${root}`);
   });
 
@@ -228,6 +230,19 @@ async function resolveBody(options: {
   throw new Error("Provide --body or --stdin.");
 }
 
+function resolveVaultNameOption(name?: string): string | undefined {
+  if (name === undefined) {
+    return undefined;
+  }
+
+  const vaultName = normalizeVaultName(name);
+  if (!vaultName) {
+    throw new Error("Vault name cannot be empty.");
+  }
+
+  return vaultName;
+}
+
 async function listPendingCommand(options: { json?: boolean }): Promise<void> {
   const root = resolveVaultPath(program.opts().vault);
   const paths = await ensureVault(root);
@@ -285,6 +300,7 @@ async function doctorVault(root: string): Promise<{
   }
 
   const files = [
+    path.join(root, "AGENTS.md"),
     paths.config,
     path.join(paths.wiki, "index.md"),
     path.join(paths.wiki, "log.md"),
