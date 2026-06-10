@@ -3,7 +3,7 @@
   "name": "lattice",
   "title": "Lattice",
   "description": "Fast Raycast capture and CLI operations for a local Lattice context vault.",
-  "icon": "extension-icon.svg",
+  "icon": "../assets/icon.svg",
   "author": "ejohane",
   "license": "MIT",
   "commands": [
