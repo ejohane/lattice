@@ -4,7 +4,13 @@ import path from "node:path";
 import { mkdir, readFile } from "node:fs/promises";
 import { createCapture } from "../src/capture/capture";
 import { listIngested, listPending, markIngested } from "../src/queue";
-import { ensureVault, exists, loadCapturesForDate } from "../src/vault";
+import {
+  ensureVault,
+  exists,
+  installBundledSkills,
+  loadCapturesForDate,
+  writeText,
+} from "../src/vault";
 
 describe("vault protocol", () => {
   test("initializes the durable vault layout", async () => {
@@ -18,10 +24,32 @@ describe("vault protocol", () => {
     expect(await exists(path.join(paths.wiki, "log.md"))).toBe(true);
     expect(await exists(paths.wikiPages)).toBe(true);
     expect(await exists(path.join(paths.skills, "AGENTS.md"))).toBe(true);
-    expect(await exists(path.join(paths.skills, "CLAUDE.md"))).toBe(true);
-    expect(await exists(path.join(paths.skills, "copilot-skill.md"))).toBe(true);
+    expect(await exists(path.join(paths.skills, "ingest-captures.md"))).toBe(true);
+    expect(await exists(path.join(paths.skills, "maintain-wiki.md"))).toBe(true);
+    expect(await exists(path.join(paths.skills, "answer-from-wiki.md"))).toBe(true);
+    expect(await exists(path.join(paths.skills, "lint-wiki.md"))).toBe(true);
     expect(await exists(paths.packs)).toBe(true);
     expect(await exists(paths.config)).toBe(true);
+  });
+
+  test("installs bundled skills without overwriting local edits unless forced", async () => {
+    const root = await tempRoot();
+    const paths = await ensureVault(root, { installSkills: false });
+    const agentsPath = path.join(paths.skills, "AGENTS.md");
+
+    const firstInstall = await installBundledSkills(paths);
+    expect(firstInstall.installed).toContain("skills/AGENTS.md");
+    expect(firstInstall.skipped).toEqual([]);
+
+    await writeText(agentsPath, "# Local skill guide");
+    const secondInstall = await installBundledSkills(paths);
+    expect(secondInstall.installed).not.toContain("skills/AGENTS.md");
+    expect(secondInstall.skipped).toContain("skills/AGENTS.md");
+    expect(await readFile(agentsPath, "utf8")).toBe("# Local skill guide\n");
+
+    const forcedInstall = await installBundledSkills(paths, { overwrite: true });
+    expect(forcedInstall.installed).toContain("skills/AGENTS.md");
+    expect(await readFile(agentsPath, "utf8")).toContain("# Lattice Vault Agent Guide");
   });
 
   test("writes immutable raw captures and pending queue entries", async () => {
