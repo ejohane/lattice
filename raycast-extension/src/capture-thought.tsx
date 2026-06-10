@@ -55,7 +55,7 @@ export default function CaptureThought() {
         </ActionPanel>
       }
     >
-      <Form.TextArea id="body" title="Thought" placeholder="What are you thinking?" autoFocus />
+      <Form.TextArea id="body" title="Body" placeholder="Capture a thought or source note" autoFocus />
       <Form.Checkbox id="includeScreenshot" title="Screenshot" label="Capture screenshot" defaultValue />
     </Form>
   );

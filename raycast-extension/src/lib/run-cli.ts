@@ -1,4 +1,7 @@
 import { spawn } from "node:child_process";
+import { existsSync } from "node:fs";
+import os from "node:os";
+import path from "node:path";
 import { getPreferences } from "./preferences";
 
 export interface CliResult {
@@ -6,10 +9,22 @@ export interface CliResult {
   stderr: string;
 }
 
+export class CliCommandError extends Error {
+  constructor(
+    message: string,
+    readonly stdout: string,
+    readonly stderr: string,
+    readonly code: number | null,
+  ) {
+    super(message);
+    this.name = "CliCommandError";
+  }
+}
+
 export async function runCli(args: string[], input?: string): Promise<CliResult> {
   const preferences = getPreferences();
   return new Promise((resolve, reject) => {
-    const child = spawn(preferences.bunPath, ["run", "src/cli.ts", ...args], {
+    const child = spawn(resolveExecutable(preferences.bunPath), ["run", "src/cli.ts", ...args], {
       cwd: preferences.projectPath,
       env: {
         ...process.env,
@@ -34,10 +49,13 @@ export async function runCli(args: string[], input?: string): Promise<CliResult>
         resolve({ stdout, stderr });
       } else {
         reject(
-          new Error(
+          new CliCommandError(
             stderr.trim() ||
               stdout.trim() ||
               `lattice command failed with exit code ${code ?? "unknown"}`,
+            stdout,
+            stderr,
+            code,
           ),
         );
       }
@@ -48,4 +66,18 @@ export async function runCli(args: string[], input?: string): Promise<CliResult>
     }
     child.stdin.end();
   });
+}
+
+function resolveExecutable(command: string): string {
+  if (command.includes(path.sep)) {
+    return command;
+  }
+
+  const candidates = [
+    path.join(os.homedir(), ".bun", "bin", command),
+    path.join("/opt/homebrew/bin", command),
+    path.join("/usr/local/bin", command),
+  ];
+
+  return candidates.find((candidate) => existsSync(candidate)) ?? command;
 }

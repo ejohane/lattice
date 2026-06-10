@@ -2,7 +2,7 @@
   "$schema": "https://www.raycast.com/schemas/extension.json",
   "name": "lattice",
   "title": "Lattice",
-  "description": "Fast Raycast capture for a local Lattice context vault.",
+  "description": "Fast Raycast capture and CLI operations for a local Lattice context vault.",
   "icon": "extension-icon.svg",
   "author": "ejohane",
   "license": "MIT",
@@ -14,9 +14,75 @@
       "mode": "view"
     },
     {
+      "name": "pending-captures",
+      "title": "Pending Captures",
+      "description": "List captures waiting for external agent ingestion.",
+      "mode": "view"
+    },
+    {
+      "name": "mark-ingested",
+      "title": "Mark Ingested",
+      "description": "Mark one or more pending captures as ingested.",
+      "mode": "view"
+    },
+    {
+      "name": "run-doctor",
+      "title": "Run Doctor",
+      "description": "Check vault layout and queue readability.",
+      "mode": "no-view"
+    },
+    {
+      "name": "create-pack",
+      "title": "Create Pack",
+      "description": "Create a portable pack of pending captures and skills.",
+      "mode": "no-view"
+    },
+    {
+      "name": "install-skills",
+      "title": "Install Skills",
+      "description": "Install or update bundled vault skills.",
+      "mode": "view"
+    },
+    {
       "name": "open-vault",
-      "title": "Open Vault",
-      "description": "Open the Lattice folder.",
+      "title": "Open Lattice Vault",
+      "description": "Open the vault root.",
+      "mode": "no-view"
+    },
+    {
+      "name": "open-pending-queue",
+      "title": "Open Queue",
+      "description": "Open pending and ingested queue files.",
+      "mode": "no-view"
+    },
+    {
+      "name": "open-raw-captures",
+      "title": "Open Raw Captures",
+      "description": "Open immutable raw capture records.",
+      "mode": "no-view"
+    },
+    {
+      "name": "open-screenshots",
+      "title": "Open Screenshots",
+      "description": "Open screenshot and captured asset files.",
+      "mode": "no-view"
+    },
+    {
+      "name": "open-wiki",
+      "title": "Open Wiki",
+      "description": "Open the agent-maintained wiki.",
+      "mode": "no-view"
+    },
+    {
+      "name": "open-instructions",
+      "title": "Open Agent Skills",
+      "description": "Open vault instructions for external agents.",
+      "mode": "no-view"
+    },
+    {
+      "name": "open-packs",
+      "title": "Open Packs",
+      "description": "Open exported context packs.",
       "mode": "no-view"
     }
   ],
@@ -38,7 +104,7 @@
     {
       "name": "bunPath",
       "title": "Bun Path",
-      "description": "Path or command name used to run Bun.",
+      "description": "Path or command name used to run Bun. Common Bun install paths are resolved automatically.",
       "type": "textfield",
       "required": true,
       "default": "bun"

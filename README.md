@@ -168,7 +168,8 @@ Pending queue entries reference raw files instead of duplicating capture bodies.
 ## Raycast Extension
 
 The extension lives in `raycast-extension/` and remains a thin adapter over the
-CLI capture command.
+CLI. It shells out to the configured project with `LATTICE_VAULT_PATH`; protocol
+logic stays in `src/cli.ts` and the SDK modules.
 
 Install and build:
 
@@ -181,17 +182,33 @@ bun run build
 Commands:
 
 - `Capture Thought`
-- `Open Vault`
+- `Pending Captures`
+- `Mark Ingested`
+- `Run Doctor`
+- `Create Pack`
+- `Install Skills`
+- `Open Lattice Vault`
+- `Open Queue`
+- `Open Raw Captures`
+- `Open Screenshots`
+- `Open Wiki`
+- `Open Agent Skills`
+- `Open Packs`
 
 Preferences:
 
 - `Project Path`: absolute path to this project folder.
 - `Vault Path`: absolute path to the local vault.
-- `Bun Path`: usually `bun`.
+- `Bun Path`: usually `bun`; the adapter resolves common Bun install paths when
+  Raycast's runtime PATH is sparse.
 
 When saving from Raycast, the extension closes the Raycast window before calling
 the CLI so the screenshot and active app/window metadata refer to the workspace
 you were using, not the Raycast form.
+
+Folder-opening commands call `lattice init` through the configured CLI before
+opening paths. CLI operation commands call `capture`, `pending`,
+`mark-ingested`, `doctor`, `pack`, and `skills install` directly.
 
 ## Verification
 
