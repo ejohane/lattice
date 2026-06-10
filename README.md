@@ -47,16 +47,40 @@ LatticeVault/
     pages/
   skills/
     AGENTS.md
-    CLAUDE.md
-    copilot-skill.md
-    workflows/
+    ingest-captures.md
+    maintain-wiki.md
+    answer-from-wiki.md
+    lint-wiki.md
   exports/packs/
   config.json
 ```
 
 `raw/` is immutable source material. `queue/` is operational state for external
 agents. `wiki/` is agent-owned; the CLI initializes it but does not synthesize
-or edit wiki pages.
+or edit wiki pages. `skills/` contains plain markdown operating procedures that
+any external harness can read.
+
+## Skills
+
+Lattice skills are ordinary markdown files, not tool-specific plugin packages.
+They describe reusable agent capabilities for maintaining a vault:
+
+- `skills/AGENTS.md`: entry point and shared agent contract.
+- `skills/ingest-captures.md`: consume pending captures and update the wiki.
+- `skills/maintain-wiki.md`: reorganize pages, links, citations, and stale
+  claims.
+- `skills/answer-from-wiki.md`: answer from durable wiki knowledge without
+  overclaiming.
+- `skills/lint-wiki.md`: health-check citations, links, orphans, and
+  contradictions.
+
+`lattice init` installs the bundled skills into the vault without overwriting
+existing skill files. You can install or update them explicitly:
+
+```bash
+bun run src/cli.ts --vault ./LatticeVault skills install
+bun run src/cli.ts --vault ./LatticeVault skills install --force
+```
 
 ## CLI
 

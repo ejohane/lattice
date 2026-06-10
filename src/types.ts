@@ -83,7 +83,6 @@ export interface VaultPaths {
   wiki: string;
   wikiPages: string;
   skills: string;
-  skillWorkflows: string;
   exports: string;
   packs: string;
   index: string;

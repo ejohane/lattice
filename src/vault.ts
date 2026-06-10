@@ -1,5 +1,6 @@
 import path from "node:path";
 import { appendFile, mkdir, readFile, readdir, stat, writeFile } from "node:fs/promises";
+import { fileURLToPath } from "node:url";
 import {
   AppConfig,
   CaptureRecord,
@@ -9,6 +10,12 @@ import {
   VaultPaths,
 } from "./types";
 import { mergeConfig } from "./config";
+
+const BUNDLED_SKILLS_DIR = path.resolve(
+  path.dirname(fileURLToPath(import.meta.url)),
+  "..",
+  "skills",
+);
 
 export function getVaultPaths(root: string): VaultPaths {
   const raw = path.join(root, "raw");
@@ -31,7 +38,6 @@ export function getVaultPaths(root: string): VaultPaths {
     wiki,
     wikiPages: path.join(wiki, "pages"),
     skills,
-    skillWorkflows: path.join(skills, "workflows"),
     exports: exportsDir,
     packs: path.join(exportsDir, "packs"),
     index: path.join(root, "index"),
@@ -42,7 +48,10 @@ export function getVaultPaths(root: string): VaultPaths {
   };
 }
 
-export async function ensureVault(root: string): Promise<VaultPaths> {
+export async function ensureVault(
+  root: string,
+  options: { installSkills?: boolean } = {},
+): Promise<VaultPaths> {
   const paths = getVaultPaths(root);
   await Promise.all([
     mkdir(paths.raw, { recursive: true }),
@@ -50,7 +59,7 @@ export async function ensureVault(root: string): Promise<VaultPaths> {
     mkdir(paths.screenshots, { recursive: true }),
     mkdir(paths.queue, { recursive: true }),
     mkdir(paths.wikiPages, { recursive: true }),
-    mkdir(paths.skillWorkflows, { recursive: true }),
+    mkdir(paths.skills, { recursive: true }),
     mkdir(paths.packs, { recursive: true }),
   ]);
 
@@ -74,46 +83,39 @@ export async function ensureVault(root: string): Promise<VaultPaths> {
       "Agents should append dated notes here when they ingest captures or reorganize pages.",
     ].join("\n"),
   );
-  await writeStarterFile(
-    path.join(paths.skills, "AGENTS.md"),
-    [
-      "# Lattice Agent Skills",
-      "",
-      "- Treat `raw/` as immutable source material.",
-      "- Use `queue/pending.jsonl` to find captures that need wiki maintenance.",
-      "- Update `wiki/` directly, then run `lattice mark-ingested` for captures you handled.",
-      "- Do not rewrite raw captures or screenshots.",
-    ].join("\n"),
-  );
-  await writeStarterFile(
-    path.join(paths.skills, "CLAUDE.md"),
-    [
-      "# Claude Maintenance Notes",
-      "",
-      "Maintain the wiki from pending captures. Preserve raw source files and record completed captures with `lattice mark-ingested`.",
-    ].join("\n"),
-  );
-  await writeStarterFile(
-    path.join(paths.skills, "copilot-skill.md"),
-    [
-      "# Copilot Skill",
-      "",
-      "Use the Lattice queue as the operational boundary. Read raw captures, update `wiki/`, and mark captures ingested through the CLI.",
-    ].join("\n"),
-  );
-  await writeStarterFile(
-    path.join(paths.skillWorkflows, "ingest-pending.md"),
-    [
-      "# Ingest Pending Captures",
-      "",
-      "1. Read `queue/pending.jsonl`.",
-      "2. Open each referenced `raw_capture_path` and related screenshot if present.",
-      "3. Update or create pages under `wiki/pages/` and append to `wiki/log.md`.",
-      "4. Run `lattice mark-ingested <capture-id> --agent <agent-name>`.",
-    ].join("\n"),
-  );
+  if (options.installSkills !== false) {
+    await installBundledSkills(paths);
+  }
 
   return paths;
+}
+
+export async function installBundledSkills(
+  paths: VaultPaths,
+  options: { overwrite?: boolean } = {},
+): Promise<{
+  installed: string[];
+  skipped: string[];
+}> {
+  await mkdir(paths.skills, { recursive: true });
+  const templateFiles = await listFiles(BUNDLED_SKILLS_DIR);
+  const installed: string[] = [];
+  const skipped: string[] = [];
+
+  for (const templatePath of templateFiles) {
+    const relativePath = path.relative(BUNDLED_SKILLS_DIR, templatePath);
+    const destinationPath = path.join(paths.skills, relativePath);
+    const vaultRelativePath = path.relative(paths.root, destinationPath);
+    if (!options.overwrite && await exists(destinationPath)) {
+      skipped.push(vaultRelativePath);
+      continue;
+    }
+
+    await writeText(destinationPath, await readFile(templatePath, "utf8"));
+    installed.push(vaultRelativePath);
+  }
+
+  return { installed, skipped };
 }
 
 export async function loadConfig(root: string): Promise<AppConfig> {
@@ -216,6 +218,12 @@ export async function listMarkdownFiles(root: string): Promise<string[]> {
   const out: string[] = [];
   await walk(root, out);
   return out.filter((file) => file.endsWith(".md"));
+}
+
+async function listFiles(root: string): Promise<string[]> {
+  const out: string[] = [];
+  await walk(root, out);
+  return out;
 }
 
 async function walk(current: string, out: string[]): Promise<void> {

@@ -7,7 +7,14 @@ import { createCapture } from "./capture/capture";
 import { listIngested, listPending, markIngested } from "./queue";
 import { QueueEntry, VaultPaths } from "./types";
 import { timestampForFilename } from "./time";
-import { ensureVault, exists, getVaultPaths, readJsonIfExists, writeJson } from "./vault";
+import {
+  ensureVault,
+  exists,
+  getVaultPaths,
+  installBundledSkills,
+  readJsonIfExists,
+  writeJson,
+} from "./vault";
 
 const program = new Command();
 
@@ -98,6 +105,34 @@ program
 
     if (result.missing.length > 0) {
       process.exitCode = 1;
+    }
+  });
+
+const skillsCommand = program
+  .command("skills")
+  .description("Manage bundled vault skills.");
+
+skillsCommand
+  .command("install")
+  .description("Install bundled Lattice skills into the vault.")
+  .option("--force", "Overwrite existing skill files.")
+  .option("--json", "Print machine-readable JSON.")
+  .action(async (options) => {
+    const root = resolveVaultPath(program.opts().vault);
+    const paths = await ensureVault(root, { installSkills: false });
+    const result = await installBundledSkills(paths, {
+      overwrite: options.force,
+    });
+
+    if (options.json) {
+      console.log(JSON.stringify(result, null, 2));
+      return;
+    }
+
+    const action = options.force ? "Installed or updated" : "Installed";
+    console.log(`${action} ${result.installed.length} skill file(s).`);
+    if (result.skipped.length > 0) {
+      console.log(`Skipped ${result.skipped.length} existing skill file(s).`);
     }
   });
 
@@ -210,7 +245,6 @@ async function doctorVault(root: string): Promise<{
     paths.wiki,
     paths.wikiPages,
     paths.skills,
-    paths.skillWorkflows,
     paths.packs,
   ];
   for (const directory of directories) {
@@ -226,8 +260,10 @@ async function doctorVault(root: string): Promise<{
     path.join(paths.wiki, "index.md"),
     path.join(paths.wiki, "log.md"),
     path.join(paths.skills, "AGENTS.md"),
-    path.join(paths.skills, "CLAUDE.md"),
-    path.join(paths.skills, "copilot-skill.md"),
+    path.join(paths.skills, "ingest-captures.md"),
+    path.join(paths.skills, "maintain-wiki.md"),
+    path.join(paths.skills, "answer-from-wiki.md"),
+    path.join(paths.skills, "lint-wiki.md"),
   ];
   for (const filePath of files) {
     if (await exists(filePath)) {
