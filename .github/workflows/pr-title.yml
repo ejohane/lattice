@@ -1,0 +1,39 @@
+name: Conventional PR Title
+
+on:
+  pull_request:
+    types:
+      - opened
+      - edited
+      - synchronize
+      - reopened
+      - ready_for_review
+
+permissions:
+  contents: read
+
+jobs:
+  validate:
+    name: Validate PR title
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Check Conventional Commit title
+        env:
+          PR_TITLE: ${{ github.event.pull_request.title }}
+        run: |
+          pattern='^(build|chore|ci|docs|feat|fix|perf|refactor|revert|style|test)(\([A-Za-z0-9._/-]+\))?(!)?: .+'
+
+          if [[ ! "$PR_TITLE" =~ $pattern ]]; then
+            cat <<'EOF' >&2
+          PR titles must use Conventional Commit format because squash-merge
+          titles drive semantic versioning and automated releases.
+
+          Examples:
+            feat: add update command
+            fix(cli): handle missing vault
+            ci!: replace release pipeline
+          EOF
+            printf '\nReceived title: %s\n' "$PR_TITLE" >&2
+            exit 1
+          fi

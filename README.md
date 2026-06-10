@@ -90,6 +90,59 @@ Install dependencies:
 bun install
 ```
 
+Install the latest released binary in one command:
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/ejohane/lattice/main/scripts/install.sh | sh
+```
+
+The installer detects macOS arm64, macOS x64, or Linux x64, downloads the
+matching GitHub release archive, verifies its `.sha256` checksum when `shasum`
+or `sha256sum` is available, and installs `lattice` to `~/.local/bin`.
+
+Install a specific release or destination:
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/ejohane/lattice/main/scripts/install.sh | LATTICE_VERSION=v0.1.0 LATTICE_INSTALL_DIR=/usr/local/bin sh
+```
+
+Build a standalone CLI binary for the current platform:
+
+```bash
+bun run build
+./dist/lattice --help
+```
+
+Install the current-platform binary locally as `lattice`:
+
+```bash
+bun run install:local
+lattice --vault ./LatticeVault init
+```
+
+`install:local` copies the compiled binary to `~/.local/bin/lattice` by
+default. Override the destination when needed:
+
+```bash
+LATTICE_INSTALL_DIR=/usr/local/bin bun run install:local
+```
+
+Build explicit macOS artifacts with Bun's executable targets:
+
+```bash
+bun run build:binary:darwin-arm64
+bun run build:binary:darwin-x64
+bun run build:binary:linux-x64
+```
+
+Those commands write `dist/lattice-darwin-arm64`, `dist/lattice-darwin-x64`,
+and `dist/lattice-linux-x64`. You can also pass any Bun executable target
+directly:
+
+```bash
+LATTICE_TARGET=bun-linux-x64 bun run build:binary
+```
+
 Initialize a vault:
 
 ```bash
@@ -140,6 +193,83 @@ bun run src/cli.ts --vault ./LatticeVault pack
 
 All operational commands support `--json` where machine-readable output is
 useful for adapters.
+
+After local install, the same commands are available through the binary:
+
+```bash
+lattice --vault ./LatticeVault capture --body "Need to revisit the capture flow."
+lattice --vault ./LatticeVault pending
+```
+
+Update an installed binary in place:
+
+```bash
+lattice update
+```
+
+Install a specific release:
+
+```bash
+lattice update --version v0.1.0
+```
+
+`lattice update` downloads the matching release archive for the current platform,
+verifies the `.sha256` checksum, and replaces the running binary atomically. When
+running from source with `bun run src/cli.ts`, pass an explicit destination so it
+does not try to replace the Bun runtime:
+
+```bash
+bun run src/cli.ts update --install-dir ~/.local/bin
+```
+
+## Binary Artifacts and Releases
+
+GitHub Actions includes two workflows:
+
+- `CI`: runs tests, typecheck, builds a local binary, and smoke-tests
+  `./dist/lattice --help` on pushes to `main` and pull requests.
+- `Conventional PR Title`: requires every PR title to use Conventional Commit
+  format so squash merges can drive semantic versioning.
+- `Release`: on pushes to `main`, runs tests/typecheck, builds packaged binary
+  archives, and runs semantic-release to tag and publish GitHub releases.
+
+Use squash merges with Conventional Commit PR titles:
+
+```text
+feat: add capture search
+fix(cli): handle missing vault config
+feat!: change vault protocol layout
+```
+
+semantic-release analyzes commits on `main` and creates `vX.Y.Z` tags:
+
+- `feat` creates a minor release.
+- `!` after the type or scope creates a major release.
+- All other accepted types create a patch release so every merge to `main`
+  produces release assets that `lattice update` can install.
+
+The release workflow currently builds:
+
+- `lattice-darwin-arm64.tar.gz` on the native `macos-15` arm64 runner.
+- `lattice-darwin-x64.tar.gz` on the native `macos-15-intel` runner.
+- `lattice-linux-x64.tar.gz` on `ubuntu-latest`.
+
+Each archive contains `lattice`, `README.md`, and `LICENSE`, plus a matching
+`.sha256` checksum file. It also includes `scripts/install.sh` for auditability.
+Release publishing uses the standard `GITHUB_TOKEN`; no additional secrets are
+required. The curl installer and `lattice update` both consume these release
+assets from the latest GitHub release.
+
+Install a downloaded archive manually:
+
+```bash
+tar -xzf lattice-darwin-arm64.tar.gz
+install -m 0755 lattice-darwin-arm64/lattice ~/.local/bin/lattice
+```
+
+The macOS binaries are unsigned and not notarized. They are intended for local
+developer distribution today; a future signed/notarized release would need Apple
+Developer credentials and a separate signing step.
 
 ## Capture Record
 

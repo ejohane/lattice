@@ -15,6 +15,7 @@ import {
   readJsonIfExists,
   writeJson,
 } from "./vault";
+import { updateLattice } from "./update";
 
 const program = new Command();
 
@@ -182,6 +183,34 @@ program
       console.log(`Pack: ${path.relative(root, result.path)}`);
       console.log(`Captures: ${result.capture_count}`);
     }
+  });
+
+program
+  .command("update")
+  .description("Update the installed lattice binary from GitHub release artifacts.")
+  .option("--version <tag>", "Release tag to install. Defaults to latest.", "latest")
+  .option("--repo <owner/name>", "GitHub repository to download releases from.", "ejohane/lattice")
+  .option("--install-dir <path>", "Install into this directory instead of replacing the running binary.")
+  .option("--binary-name <name>", "Installed binary name when --install-dir is used.", "lattice")
+  .option("--base-url <url>", "Release artifact base URL. Intended for mirrors and tests.")
+  .option("--json", "Print machine-readable JSON.")
+  .action(async (options) => {
+    const result = await updateLattice({
+      version: options.version,
+      repo: options.repo,
+      installDir: options.installDir,
+      binaryName: options.binaryName,
+      baseUrl: options.baseUrl,
+    });
+
+    if (options.json) {
+      console.log(JSON.stringify(result, null, 2));
+      return;
+    }
+
+    console.log(`Updated lattice: ${result.installedPath}`);
+    console.log(`Artifact: ${result.artifact}`);
+    console.log(`Version: ${result.version}`);
   });
 
 async function resolveBody(options: {
