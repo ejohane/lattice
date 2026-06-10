@@ -32,8 +32,26 @@ jobs:
       - name: Validate installer script
         run: sh -n scripts/install.sh
 
+      - name: Validate Raycast package script
+        run: bash -n scripts/package-raycast-extension.sh
+
       - name: Build local binary
         run: bun run build:binary
 
       - name: Smoke test binary
         run: ./dist/lattice --help
+
+      - name: Install Raycast extension dependencies
+        working-directory: raycast-extension
+        run: bun install --frozen-lockfile
+
+      - name: Typecheck Raycast extension
+        working-directory: raycast-extension
+        run: bun run typecheck
+
+      - name: Build Raycast extension
+        working-directory: raycast-extension
+        run: bun run build
+
+      - name: Package Raycast extension
+        run: bun run package:raycast

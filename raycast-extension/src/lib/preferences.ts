@@ -1,9 +1,8 @@
 import { getPreferenceValues } from "@raycast/api";
 
 export interface Preferences {
-  projectPath: string;
-  vaultPath: string;
-  bunPath: string;
+  latticePath?: string;
+  vaultPath?: string;
 }
 
 export function getPreferences(): Preferences {

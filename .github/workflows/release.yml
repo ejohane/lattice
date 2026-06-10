@@ -36,6 +36,9 @@ jobs:
       - name: Validate installer script
         run: sh -n scripts/install.sh
 
+      - name: Validate Raycast package script
+        run: bash -n scripts/package-raycast-extension.sh
+
   build:
     name: Build ${{ matrix.artifact }}
     needs: verify
@@ -92,10 +95,54 @@ jobs:
             ${{ matrix.artifact }}.tar.gz
             ${{ matrix.artifact }}.tar.gz.sha256
 
+  raycast:
+    name: Build Raycast extension artifact
+    needs: verify
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+
+      - name: Set up Bun
+        uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: 1.3.4
+
+      - name: Install root dependencies
+        run: bun install --frozen-lockfile
+
+      - name: Install Raycast extension dependencies
+        working-directory: raycast-extension
+        run: bun install --frozen-lockfile
+
+      - name: Typecheck Raycast extension
+        working-directory: raycast-extension
+        run: bun run typecheck
+
+      - name: Build Raycast extension
+        working-directory: raycast-extension
+        run: bun run build
+
+      - name: Package Raycast extension
+        run: |
+          LATTICE_ARTIFACT_DIR=. \
+          bun run package:raycast
+
+      - name: Upload Raycast artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: lattice-raycast-extension
+          path: |
+            lattice-raycast-extension.tar.gz
+            lattice-raycast-extension.tar.gz.sha256
+
   release:
     name: Semantic release
     if: github.event_name == 'push' && github.ref == 'refs/heads/main'
-    needs: build
+    needs:
+      - build
+      - raycast
     runs-on: ubuntu-latest
     permissions:
       contents: write

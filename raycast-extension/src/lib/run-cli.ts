@@ -2,7 +2,7 @@ import { spawn } from "node:child_process";
 import { existsSync } from "node:fs";
 import os from "node:os";
 import path from "node:path";
-import { getPreferences } from "./preferences";
+import { resolveLatticePath, resolveVaultPath } from "./lattice-config";
 
 export interface CliResult {
   stdout: string;
@@ -22,13 +22,13 @@ export class CliCommandError extends Error {
 }
 
 export async function runCli(args: string[], input?: string): Promise<CliResult> {
-  const preferences = getPreferences();
+  const latticePath = resolveExecutable(resolveLatticePath());
+  const vaultPath = resolveVaultPath();
   return new Promise((resolve, reject) => {
-    const child = spawn(resolveExecutable(preferences.bunPath), ["run", "src/cli.ts", ...args], {
-      cwd: preferences.projectPath,
+    const child = spawn(latticePath, args, {
       env: {
         ...process.env,
-        LATTICE_VAULT_PATH: preferences.vaultPath,
+        LATTICE_VAULT_PATH: vaultPath,
       },
       stdio: ["pipe", "pipe", "pipe"],
     });
@@ -74,9 +74,10 @@ function resolveExecutable(command: string): string {
   }
 
   const candidates = [
-    path.join(os.homedir(), ".bun", "bin", command),
     path.join("/opt/homebrew/bin", command),
     path.join("/usr/local/bin", command),
+    path.join(os.homedir(), ".local", "bin", command),
+    path.join(os.homedir(), ".bun", "bin", command),
   ];
 
   return candidates.find((candidate) => existsSync(candidate)) ?? command;
