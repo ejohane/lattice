@@ -6,10 +6,11 @@
   "scripts": {
     "cli": "bun run src/cli.ts",
     "capture": "bun run src/cli.ts capture",
-    "synthesize": "bun run src/cli.ts synthesize",
+    "pending": "bun run src/cli.ts pending",
+    "doctor": "bun run src/cli.ts doctor",
     "test": "bun test",
     "typecheck": "tsc --noEmit",
-    "verify": "bun test && bun run src/cli.ts verify"
+    "verify": "bun test && bun run typecheck"
   },
   "dependencies": {
     "@github/copilot-sdk": "^1.0.0",

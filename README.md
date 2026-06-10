@@ -1,50 +1,62 @@
 # Lattice
 
-Minimal Mac-first capture and synthesis system.
+Local-first context capture protocol for agent-maintained personal wikis.
 
 The product loop is:
 
 ```text
-Raycast quick capture
--> local vault folder
--> manual synthesis command
--> provider-backed JSON analysis
--> daily brief + proposed wiki updates
+Raycast, CLI, or another thin capture surface
+-> lattice CLI
+-> immutable raw capture files and screenshots
+-> pending queue
+-> external agent maintains wiki pages
+-> agent marks captures ingested
 ```
 
-The Raycast extension is intentionally thin. The Bun/TypeScript CLI owns storage,
-metadata capture, synthesis, validation, and rendering.
+Lattice owns capture and raw source preparation. Codex, Claude Code, GitHub
+Copilot, OpenCode, or another external harness owns wiki maintenance using the
+skills stored in the vault.
 
 ## What It Does
 
 - Captures quick notes from Raycast or the CLI.
-- Saves raw captures in an append-only local vault.
-- Captures timestamp, active app/window, and screenshots by default on macOS.
-- Runs manual one-pass synthesis for a selected date.
-- Uses a small LLM harness boundary: Copilot SDK, OpenCode, OpenAI API, or mock.
-- Parses and validates model JSON with Zod before writing outputs.
-- Generates daily briefs automatically.
-- Generates wiki update proposals for review instead of editing the wiki silently.
+- Saves raw captures as stable JSON records under `raw/captures/`.
+- Captures timestamp, local date, source, active app/window, screenshots, and
+  metadata errors.
+- Appends capture records to `raw/log.jsonl`.
+- Adds operational queue entries to `queue/pending.jsonl`.
+- Initializes a wiki workspace and agent skills without maintaining the
+  wiki itself.
+- Marks captures ingested after an external agent has incorporated them.
+- Exports pending source material into portable packs when needed.
 
 ## Vault Layout
 
 ```text
 LatticeVault/
-  raw/                  # append-only JSONL by date
-  captures/             # individual capture JSON files
-  screenshots/          # screenshots grouped by date
-  daily/                # generated daily briefs
+  raw/
+    captures/YYYY-MM-DD/cap_...json
+    screenshots/YYYY-MM-DD/cap_....png
+    log.jsonl
+  queue/
+    pending.jsonl
+    ingested.jsonl
   wiki/
-    Inbox/              # starting point for curated pages
-  index/                # compact page/taxonomy/alias indexes
-  review/               # proposed wiki updates
-  synthesis/
-    runs/               # raw synthesis run artifacts
+    index.md
+    log.md
+    pages/
+  skills/
+    AGENTS.md
+    CLAUDE.md
+    copilot-skill.md
+    workflows/
+  exports/packs/
   config.json
 ```
 
-Raw captures are source material. Daily notes are generated logs. Wiki updates
-are review proposals.
+`raw/` is immutable source material. `queue/` is operational state for external
+agents. `wiki/` is agent-owned; the CLI initializes it but does not synthesize
+or edit wiki pages.
 
 ## CLI
 
@@ -72,83 +84,67 @@ Capture without a screenshot:
 bun run src/cli.ts --vault ./LatticeVault capture --body "Fast note." --no-screenshot
 ```
 
-Synthesize with the configured harness:
+Read from stdin:
 
 ```bash
-bun run src/cli.ts --vault ./LatticeVault synthesize --date 2026-06-09
+echo "Follow up on agent ingestion workflow." | bun run src/cli.ts --vault ./LatticeVault capture --stdin
 ```
 
-Override the harness for one run:
+List pending captures:
 
 ```bash
-bun run src/cli.ts --vault ./LatticeVault synthesize --date 2026-06-09 --harness opencode --model openai/gpt-5.4-mini
+bun run src/cli.ts --vault ./LatticeVault pending
 ```
 
-Synthesize without spending tokens:
+Mark captures ingested after an agent updates the wiki:
 
 ```bash
-bun run src/cli.ts --vault ./LatticeVault synthesize --date 2026-06-09 --provider mock
+bun run src/cli.ts --vault ./LatticeVault mark-ingested cap_2026-06-09T10-00-00_abcd1234 --agent codex
 ```
 
-Check a provider:
+Check vault health:
 
 ```bash
-bun run src/cli.ts provider-check --provider mock
+bun run src/cli.ts --vault ./LatticeVault doctor
 ```
 
-## LLM Harnesses
+Create a portable pack of pending captures and skills:
 
-The synthesis engine calls one narrow interface:
-
-```text
-generateText({ model, system, prompt, temperature }) -> assistant text
+```bash
+bun run src/cli.ts --vault ./LatticeVault pack
 ```
 
-Harnesses:
+All operational commands support `--json` where machine-readable output is
+useful for adapters.
 
-- `copilot`: GitHub Copilot SDK. This is the default work path.
-- `opencode`: OpenCode CLI. Use this for OpenAI subscription-backed local synthesis.
-- `openai`: OpenAI Responses API. Requires `OPENAI_API_KEY`.
-- `mock`: deterministic token-free provider for tests and local verification.
+## Capture Record
 
-Default vault config:
+Raw capture JSON is stable and agent-friendly:
 
 ```json
 {
-  "llm": {
-    "provider": "copilot",
-    "model": "gpt-5.4-mini",
-    "temperature": 0
-  },
-  "capture": {
-    "screenshots_default": true
+  "schema_version": 1,
+  "kind": "capture",
+  "id": "cap_2026-06-09T10-00-00_abcd1234",
+  "created_at": "2026-06-09T15:00:00.000Z",
+  "local_date": "2026-06-09",
+  "body": "Need to revisit the capture flow.",
+  "source": "cli",
+  "context": {
+    "active_app": "Code",
+    "active_window": "lattice",
+    "screenshot_path": "raw/screenshots/2026-06-09/cap_2026-06-09T10-00-00_abcd1234.png",
+    "metadata_errors": []
   }
 }
 ```
 
-The exact Copilot model identifier can be changed in `LatticeVault/config.json`
-or overridden with `--model`.
-
-For local OpenCode synthesis, use:
-
-```json
-{
-  "llm": {
-    "provider": "opencode",
-    "model": "openai/gpt-5.4-mini",
-    "temperature": 0
-  }
-}
-```
-
-The OpenCode adapter resolves `OPENCODE_BIN` first, then
-`~/.opencode/bin/opencode`, then `opencode` on PATH. This lets Raycast use the
-same OpenCode subscription-backed setup as your terminal without requiring an
-OpenAI API key.
+Pending queue entries reference raw files instead of duplicating capture bodies.
 
 ## Raycast Extension
 
-The extension lives in `raycast-extension/`.
+The extension lives in `raycast-extension/` and remains a thin adapter over the
+CLI capture command.
 
 Install and build:
 
@@ -161,10 +157,7 @@ bun run build
 Commands:
 
 - `Capture Thought`
-- `Synthesize Captures`
 - `Open Vault`
-- `Open Daily Briefs`
-- `Open Wiki Proposals`
 
 Preferences:
 
@@ -184,10 +177,4 @@ Run automated checks:
 bun test
 bun run typecheck
 cd raycast-extension && bun run typecheck && bun run build
-```
-
-Run token-free end-to-end verification:
-
-```bash
-bun run src/cli.ts verify
 ```

@@ -17,6 +17,7 @@ export function mergeConfig(input: unknown): AppConfig {
 
   const partial = input as Partial<AppConfig>;
   return AppConfigSchema.parse({
+    protocol_version: 1,
     llm: {
       provider: partial.llm?.provider ?? DEFAULT_CONFIG.llm.provider,
       model: partial.llm?.model ?? DEFAULT_CONFIG.llm.model,
