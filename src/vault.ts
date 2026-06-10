@@ -1,6 +1,5 @@
 import path from "node:path";
 import { appendFile, mkdir, readFile, readdir, stat, writeFile } from "node:fs/promises";
-import { fileURLToPath } from "node:url";
 import {
   AppConfig,
   CaptureRecord,
@@ -10,12 +9,7 @@ import {
   VaultPaths,
 } from "./types";
 import { mergeConfig } from "./config";
-
-const BUNDLED_SKILLS_DIR = path.resolve(
-  path.dirname(fileURLToPath(import.meta.url)),
-  "..",
-  "skills",
-);
+import { bundledSkillTemplates } from "./skill-templates";
 
 export function getVaultPaths(root: string): VaultPaths {
   const raw = path.join(root, "raw");
@@ -98,12 +92,11 @@ export async function installBundledSkills(
   skipped: string[];
 }> {
   await mkdir(paths.skills, { recursive: true });
-  const templateFiles = await listFiles(BUNDLED_SKILLS_DIR);
   const installed: string[] = [];
   const skipped: string[] = [];
 
-  for (const templatePath of templateFiles) {
-    const relativePath = path.relative(BUNDLED_SKILLS_DIR, templatePath);
+  for (const template of bundledSkillTemplates) {
+    const relativePath = template.relativePath;
     const destinationPath = path.join(paths.skills, relativePath);
     const vaultRelativePath = path.relative(paths.root, destinationPath);
     if (!options.overwrite && await exists(destinationPath)) {
@@ -111,7 +104,7 @@ export async function installBundledSkills(
       continue;
     }
 
-    await writeText(destinationPath, await readFile(templatePath, "utf8"));
+    await writeText(destinationPath, template.content);
     installed.push(vaultRelativePath);
   }
 
@@ -218,12 +211,6 @@ export async function listMarkdownFiles(root: string): Promise<string[]> {
   const out: string[] = [];
   await walk(root, out);
   return out.filter((file) => file.endsWith(".md"));
-}
-
-async function listFiles(root: string): Promise<string[]> {
-  const out: string[] = [];
-  await walk(root, out);
-  return out;
 }
 
 async function walk(current: string, out: string[]): Promise<void> {
