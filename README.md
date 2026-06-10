@@ -52,19 +52,22 @@ LatticeVault/
     answer-from-wiki.md
     lint-wiki.md
   exports/packs/
+  AGENTS.md
   config.json
 ```
 
 `raw/` is immutable source material. `queue/` is operational state for external
 agents. `wiki/` is agent-owned; the CLI initializes it but does not synthesize
 or edit wiki pages. `skills/` contains plain markdown operating procedures that
-any external harness can read.
+any external harness can read. The root `AGENTS.md` is the default entrypoint
+for agents that automatically look for repository or workspace instructions.
 
 ## Skills
 
 Lattice skills are ordinary markdown files, not tool-specific plugin packages.
 They describe reusable agent capabilities for maintaining a vault:
 
+- `AGENTS.md`: root entrypoint for agent harnesses; points to the vault skills.
 - `skills/AGENTS.md`: entry point and shared agent contract.
 - `skills/ingest-captures.md`: consume pending captures and update the wiki.
 - `skills/maintain-wiki.md`: reorganize pages, links, citations, and stale
@@ -149,6 +152,12 @@ Initialize a vault:
 bun run src/cli.ts --vault ./LatticeVault init
 ```
 
+Give the vault a human-readable name:
+
+```bash
+bun run src/cli.ts --vault ./LatticeVault init --name "Research Vault"
+```
+
 Capture a note:
 
 ```bash
@@ -197,6 +206,7 @@ useful for adapters.
 After local install, the same commands are available through the binary:
 
 ```bash
+lattice --vault ./LatticeVault init --name "Research Vault"
 lattice --vault ./LatticeVault capture --body "Need to revisit the capture flow."
 lattice --vault ./LatticeVault pending
 ```

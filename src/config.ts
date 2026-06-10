@@ -18,6 +18,9 @@ export function mergeConfig(input: unknown): AppConfig {
   const partial = input as Partial<AppConfig>;
   return AppConfigSchema.parse({
     protocol_version: 1,
+    vault: {
+      name: normalizeVaultName(partial.vault?.name) ?? DEFAULT_CONFIG.vault.name,
+    },
     llm: {
       provider: partial.llm?.provider ?? DEFAULT_CONFIG.llm.provider,
       model: partial.llm?.model ?? DEFAULT_CONFIG.llm.model,
@@ -29,4 +32,13 @@ export function mergeConfig(input: unknown): AppConfig {
         DEFAULT_CONFIG.capture.screenshots_default,
     },
   });
+}
+
+export function normalizeVaultName(name: unknown): string | undefined {
+  if (typeof name !== "string") {
+    return undefined;
+  }
+
+  const trimmed = name.trim();
+  return trimmed.length > 0 ? trimmed : undefined;
 }
