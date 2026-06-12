@@ -211,31 +211,6 @@ lattice --vault ./LatticeVault capture --body "Need to revisit the capture flow.
 lattice --vault ./LatticeVault pending
 ```
 
-List installable capture apps:
-
-```bash
-lattice apps list
-```
-
-Install the Raycast app adapter:
-
-```bash
-lattice --vault ./LatticeVault apps install raycast
-```
-
-On macOS, this creates or updates a managed Raycast extension install under
-`~/Library/Application Support/Lattice/apps/raycast/`, writes the shared Lattice
-app config, installs extension dependencies, builds the extension, and starts
-Raycast development mode so Raycast can import the extension. Use `--no-import`
-to skip the Raycast import step and import the generated extension folder
-manually.
-
-Check the Raycast adapter:
-
-```bash
-lattice apps doctor raycast
-```
-
 Update an installed binary in place:
 
 ```bash
@@ -257,18 +232,37 @@ does not try to replace the Bun runtime:
 bun run src/cli.ts update --install-dir ~/.local/bin
 ```
 
+Install the Raycast adapter:
+
+```bash
+lattice --vault ./LatticeVault apps install raycast
+```
+
+On macOS, this downloads the compiled Raycast extension release artifact,
+verifies its `.sha256` checksum, installs a managed copy under
+`~/Library/Application Support/Lattice/apps/raycast/`, copies the compiled
+extension into Raycast's local extension directory, and writes shared Lattice
+app config with the vault path and CLI path. It does not run `bun install` or
+build the extension on the user's machine.
+
+Check the Raycast adapter:
+
+```bash
+lattice apps doctor raycast
+```
+
 ## Binary Artifacts and Releases
 
-GitHub Actions includes these workflows:
+GitHub Actions includes two workflows:
 
 - `CI`: runs tests, typecheck, builds a local binary, smoke-tests
-  `./dist/lattice --help`, builds the Raycast extension, and packages the
-  Raycast extension artifact on pushes to `main` and pull requests.
+  `./dist/lattice --help`, and packages the compiled Raycast extension on
+  pushes to `main` and pull requests.
 - `Conventional PR Title`: requires every PR title to use Conventional Commit
   format so squash merges can drive semantic versioning.
 - `Release`: on pushes to `main`, runs tests/typecheck, builds packaged binary
-  archives, packages the Raycast extension, and runs semantic-release to tag and
-  publish GitHub releases.
+  archives, packages the compiled Raycast extension, and runs semantic-release
+  to tag and publish GitHub releases.
 
 Use squash merges with Conventional Commit PR titles:
 
@@ -290,16 +284,15 @@ The release workflow currently builds:
 - `lattice-darwin-arm64.tar.gz` on the native `macos-15` arm64 runner.
 - `lattice-darwin-x64.tar.gz` on the native `macos-15-intel` runner.
 - `lattice-linux-x64.tar.gz` on `ubuntu-latest`.
-- `lattice-raycast-extension.tar.gz` on `ubuntu-latest`.
+- `lattice-raycast-extension-compiled.tar.gz` on `ubuntu-latest`.
 
 Each archive contains `lattice`, `README.md`, and `LICENSE`, plus a matching
-`.sha256` checksum file, except the Raycast archive, which contains the
-extension source, shared icon asset, `README.md`, and `LICENSE`. The binary
-archives include `scripts/install.sh` for auditability. Release publishing uses
-the standard `GITHUB_TOKEN`; no additional secrets are required. The curl
-installer and `lattice update` both consume binary release assets from the
-latest GitHub release. `lattice apps install raycast` consumes the Raycast
-extension release asset when it is not running from a source checkout.
+`.sha256` checksum file, except the Raycast archive, which contains the compiled
+extension bundle, `README.md`, and `LICENSE`. The CLI archives also include
+`scripts/install.sh` for auditability. Release publishing uses the standard
+`GITHUB_TOKEN`; no additional secrets are required. The curl installer,
+`lattice update`, and `lattice apps install raycast` consume these release assets
+from the latest GitHub release.
 
 Install a downloaded archive manually:
 
@@ -336,11 +329,50 @@ Raw capture JSON is stable and agent-friendly:
 
 Pending queue entries reference raw files instead of duplicating capture bodies.
 
+## macOS Menu Bar App
+
+The native macOS capture app lives in `macos/LatticeCapture/`. It is a minimal
+menu bar capture surface over the installed `lattice` CLI:
+
+```text
+Control-Option-Space
+-> centered floating input
+-> type a note
+-> Command-Return
+-> lattice capture --stdin --source mac-app --json
+```
+
+The input panel hides before capture and re-activates the previously focused app
+so screenshot and active-window metadata describe the workspace you were using,
+not the capture panel.
+
+Build and run the app from source:
+
+```bash
+bun run mac:build
+bun run mac:run
+```
+
+Build a local `.app` bundle:
+
+```bash
+bun run mac:bundle
+open "dist/Lattice Capture.app"
+```
+
+The app defaults to finding `lattice` on `PATH`, including common locations such
+as `~/.local/bin`, `/opt/homebrew/bin`, and `/usr/local/bin`. Use the menu bar
+Settings item to override the CLI path or set a vault path. If no vault path is
+set, the CLI uses its normal `LATTICE_VAULT_PATH` or `./LatticeVault` behavior.
+
+The menu bar app defaults to including screenshots. Toggle `Include Screenshot`
+from the menu bar item when you want text-only captures.
+
 ## Raycast Extension
 
 The extension lives in `raycast-extension/` and remains a thin adapter over the
-CLI. It shells out to the installed `lattice` binary with `LATTICE_VAULT_PATH`;
-protocol logic stays in `src/cli.ts` and the SDK modules.
+installed CLI. It shells out to the configured `lattice` binary with
+`LATTICE_VAULT_PATH`; protocol logic stays in `src/cli.ts` and the SDK modules.
 
 The preferred install path is:
 
@@ -348,13 +380,8 @@ The preferred install path is:
 lattice --vault ./LatticeVault apps install raycast
 ```
 
-Raycast development mode is the import mechanism used by the installer. Raycast
-documents that `ray develop` imports the extension if it was not imported
-before, but it may require the user to be signed into Raycast. If import fails,
-open Raycast's `Import Extension` command and select the installed
-`raycast-extension` folder printed by the installer.
-
-Install and build:
+The installer consumes the compiled release artifact and avoids install-time
+dependency downloads. To build from source while developing the extension:
 
 ```bash
 cd raycast-extension
@@ -399,5 +426,6 @@ Run automated checks:
 ```bash
 bun test
 bun run typecheck
+bun run mac:build
 cd raycast-extension && bun run typecheck && bun run build
 ```

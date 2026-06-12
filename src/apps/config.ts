@@ -13,6 +13,7 @@ export const LatticeUserConfigSchema = z.object({
       raycast: z
         .object({
           extension_path: z.string(),
+          raycast_extension_paths: z.array(z.string()).default([]),
           installed_at: z.string(),
         })
         .optional(),

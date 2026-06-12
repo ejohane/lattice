@@ -49,9 +49,5 @@ jobs:
         working-directory: raycast-extension
         run: bun run typecheck
 
-      - name: Build Raycast extension
-        working-directory: raycast-extension
-        run: bun run build
-
-      - name: Package Raycast extension
+      - name: Package compiled Raycast extension
         run: bun run package:raycast

@@ -96,7 +96,7 @@ jobs:
             ${{ matrix.artifact }}.tar.gz.sha256
 
   raycast:
-    name: Build Raycast extension artifact
+    name: Build compiled Raycast extension artifact
     needs: verify
     runs-on: ubuntu-latest
 
@@ -120,22 +120,18 @@ jobs:
         working-directory: raycast-extension
         run: bun run typecheck
 
-      - name: Build Raycast extension
-        working-directory: raycast-extension
-        run: bun run build
-
-      - name: Package Raycast extension
+      - name: Package compiled Raycast extension
         run: |
           LATTICE_ARTIFACT_DIR=. \
           bun run package:raycast
 
-      - name: Upload Raycast artifact
+      - name: Upload compiled Raycast artifact
         uses: actions/upload-artifact@v4
         with:
-          name: lattice-raycast-extension
+          name: lattice-raycast-extension-compiled
           path: |
-            lattice-raycast-extension.tar.gz
-            lattice-raycast-extension.tar.gz.sha256
+            lattice-raycast-extension-compiled.tar.gz
+            lattice-raycast-extension-compiled.tar.gz.sha256
 
   release:
     name: Semantic release

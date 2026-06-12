@@ -248,11 +248,11 @@ appsCommand
   .option("--version <tag>", "Release tag to install. Defaults to latest.", "latest")
   .option("--repo <owner/name>", "GitHub repository to download releases from.", "ejohane/lattice")
   .option("--base-url <url>", "Release artifact base URL. Intended for mirrors and tests.")
-  .option("--source <path>", "Install app assets from a local source directory.")
-  .option("--install-dir <path>", "Install app assets into this managed directory.")
+  .option("--source <path>", "Build and install app assets from a local source directory.")
+  .option("--install-dir <path>", "Install managed app assets into this directory.")
   .option("--lattice-path <path>", "Lattice binary path for the app to call.")
   .option("--config <path>", "Write/read Lattice app config at this path.")
-  .option("--no-import", "Skip Raycast development mode import.")
+  .option("--no-import", "Skip installing into Raycast's local extension directory.")
   .option("--json", "Print machine-readable JSON.")
   .action(async (appId: string, options) => {
     const root = resolveVaultPath(program.opts().vault);

@@ -1,8 +1,17 @@
-import path from "node:path";
-import { copyFile, cp, mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
-import { tmpdir } from "node:os";
-import { fileURLToPath } from "node:url";
 import { createHash } from "node:crypto";
+import path from "node:path";
+import { homedir, tmpdir } from "node:os";
+import {
+  chmod,
+  copyFile,
+  cp,
+  mkdir,
+  mkdtemp,
+  readFile,
+  readdir,
+  rm,
+  writeFile,
+} from "node:fs/promises";
 import { AppDoctorOptions, AppInstallOptions, AppInstallResult, LatticeApp } from "./types";
 import {
   readLatticeUserConfig,
@@ -13,7 +22,8 @@ import {
 import { ensureVault, exists } from "../vault";
 
 const DEFAULT_REPO = "ejohane/lattice";
-const RAYCAST_ARTIFACT = "lattice-raycast-extension";
+const RAYCAST_ARTIFACT = "lattice-raycast-extension-compiled";
+const RAYCAST_EXTENSION_NAME = "lattice";
 
 export const raycastApp: LatticeApp = {
   id: "raycast",
@@ -44,26 +54,36 @@ async function installRaycastApp(options: AppInstallOptions): Promise<AppInstall
   await rm(installRoot, { recursive: true, force: true });
   await mkdir(installRoot, { recursive: true });
 
-  const localSource = options.sourceDir
-    ? await resolveExplicitRaycastSource(options.sourceDir)
-    : await findLocalRaycastSource();
-  if (localSource) {
-    await copyLocalRaycastSource(localSource, installRoot);
-    steps.push(`Copied Raycast extension from ${localSource}`);
+  if (options.sourceDir) {
+    const sourceDir = await resolveExplicitRaycastSource(options.sourceDir);
+    await copyLocalRaycastSource(sourceDir, installRoot);
+    await buildLocalRaycastSource(extensionPath);
+    steps.push(`Built Raycast extension from ${sourceDir}`);
   } else {
-    await installRaycastFromRelease({
+    await installCompiledRaycastFromRelease({
       installRoot,
       version: options.version ?? "latest",
       repo: options.repo ?? DEFAULT_REPO,
       ...(options.baseUrl ? { baseUrl: options.baseUrl } : {}),
     });
-    steps.push(`Downloaded Raycast extension artifact ${RAYCAST_ARTIFACT}.tar.gz`);
+    steps.push(`Downloaded compiled Raycast extension artifact ${RAYCAST_ARTIFACT}.tar.gz`);
   }
 
   const latticePath = options.latticePath ?? await findLatticeExecutable();
   if (!latticePath) {
     warnings.push(
       "Could not find a lattice binary on PATH. Set the Raycast Lattice Path preference or reinstall with --lattice-path.",
+    );
+  }
+
+  const raycastTargets =
+    options.importToRaycast === false ? [] : await installCompiledRaycastExtension(extensionPath);
+  for (const target of raycastTargets) {
+    steps.push(`Installed compiled Raycast extension to ${target}`);
+  }
+  if (raycastTargets.length === 0 && options.importToRaycast !== false) {
+    warnings.push(
+      "Could not find a Raycast extension directory. Start Raycast once, then rerun the installer.",
     );
   }
 
@@ -77,6 +97,7 @@ async function installRaycastApp(options: AppInstallOptions): Promise<AppInstall
         ...config.apps,
         raycast: {
           extension_path: extensionPath,
+          raycast_extension_paths: raycastTargets,
           installed_at: new Date().toISOString(),
         },
       },
@@ -85,27 +106,9 @@ async function installRaycastApp(options: AppInstallOptions): Promise<AppInstall
   );
   steps.push(`Wrote Lattice app config to ${configPath}`);
 
-  await run(["bun", "install", "--frozen-lockfile"], extensionPath);
-  steps.push("Installed Raycast extension dependencies");
-  await run(["bun", "run", "build"], extensionPath);
-  steps.push("Built Raycast extension");
-
-  if (options.importToRaycast !== false) {
-    try {
-      await startRaycastDevelopmentMode(extensionPath);
-      steps.push("Started Raycast development mode to import the extension");
-    } catch (error) {
-      warnings.push(
-        `Could not start Raycast development mode: ${
-          error instanceof Error ? error.message : String(error)
-        }`,
-      );
-    }
-  }
-
   return {
     app: "raycast",
-    installed_path: extensionPath,
+    installed_path: raycastTargets[0] ?? extensionPath,
     config_path: configPath,
     steps,
     warnings,
@@ -147,33 +150,27 @@ async function doctorRaycastApp(options: AppDoctorOptions) {
     if (config.apps.raycast?.extension_path) {
       const extensionPath = config.apps.raycast.extension_path;
       if (await exists(path.join(extensionPath, "package.json"))) {
-        ok.push(`Raycast extension installed: ${extensionPath}`);
+        ok.push(`managed Raycast extension exists: ${extensionPath}`);
       } else {
-        errors.push(`Raycast extension package is missing: ${extensionPath}`);
+        errors.push(`Managed Raycast extension package is missing: ${extensionPath}`);
       }
     } else {
       warnings.push("Raycast app is not recorded as installed.");
+    }
+
+    const configuredTargets = config.apps.raycast?.raycast_extension_paths ?? [];
+    for (const target of configuredTargets) {
+      if (await exists(path.join(target, "package.json"))) {
+        ok.push(`Raycast local extension exists: ${target}`);
+      } else {
+        errors.push(`Raycast local extension package is missing: ${target}`);
+      }
     }
   } else {
     errors.push(`Missing Lattice app config: ${configPath}`);
   }
 
   return { app: "raycast", ok, warnings, errors };
-}
-
-async function findLocalRaycastSource(): Promise<string | undefined> {
-  const candidates = [
-    path.resolve(process.cwd(), "raycast-extension"),
-    path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..", "..", "raycast-extension"),
-  ];
-
-  for (const candidate of candidates) {
-    if (await exists(path.join(candidate, "package.json"))) {
-      return candidate;
-    }
-  }
-
-  return undefined;
 }
 
 async function resolveExplicitRaycastSource(sourceDir: string): Promise<string> {
@@ -203,7 +200,22 @@ async function copyLocalRaycastSource(sourceDir: string, installRoot: string): P
   }
 }
 
-async function installRaycastFromRelease(options: {
+async function buildLocalRaycastSource(extensionPath: string): Promise<void> {
+  await run(["bun", "install", "--frozen-lockfile"], extensionPath);
+  const compiledPath = `${extensionPath}-compiled`;
+  await rm(compiledPath, { recursive: true, force: true });
+  await run(
+    ["bun", "run", "ray", "build", "--environment", "dist", "--output", compiledPath, "--non-interactive"],
+    extensionPath,
+  );
+  await rm(extensionPath, { recursive: true, force: true });
+  await mkdir(path.dirname(extensionPath), { recursive: true });
+  await cp(compiledPath, extensionPath, { recursive: true });
+  await rm(compiledPath, { recursive: true, force: true });
+  await normalizeCompiledRaycastIcon(extensionPath);
+}
+
+async function installCompiledRaycastFromRelease(options: {
   installRoot: string;
   version: string;
   repo: string;
@@ -223,6 +235,11 @@ async function installRaycastFromRelease(options: {
     await run(["tar", "-xzf", archivePath, "-C", options.installRoot], process.cwd());
   } finally {
     await rm(tempDir, { recursive: true, force: true });
+  }
+
+  const extensionPath = path.join(options.installRoot, "raycast-extension");
+  if (!(await exists(path.join(extensionPath, "package.json")))) {
+    throw new Error(`Raycast artifact did not contain raycast-extension/package.json`);
   }
 }
 
@@ -258,33 +275,63 @@ async function findLatticeExecutable(): Promise<string | undefined> {
   return undefined;
 }
 
-async function startRaycastDevelopmentMode(extensionPath: string): Promise<void> {
-  const child = Bun.spawn(["bun", "run", "dev"], {
-    cwd: extensionPath,
-    stdout: "ignore",
-    stderr: "ignore",
-  });
-
-  await new Promise((resolve) => setTimeout(resolve, 1500));
-  (child as { unref?: () => void }).unref?.();
+async function installCompiledRaycastExtension(extensionPath: string): Promise<string[]> {
+  const targets = await resolveRaycastExtensionTargets();
+  for (const target of targets) {
+    await rm(target, { recursive: true, force: true });
+    await mkdir(path.dirname(target), { recursive: true });
+    await cp(extensionPath, target, { recursive: true });
+    await chmodRaycastFiles(target);
+  }
+  return targets;
 }
 
-async function run(args: string[], cwd: string, stdoutFile?: string): Promise<void> {
-  const child = Bun.spawn(args, {
-    cwd,
-    stdout: "pipe",
-    stderr: "pipe",
-  });
-  const exitCode = await child.exited;
-  const stdout = await new Response(child.stdout).text();
-  const stderr = await new Response(child.stderr).text();
-  if (exitCode !== 0) {
-    throw new Error(`${args.join(" ")} failed with exit code ${exitCode}: ${stderr.trim()}`);
+export async function resolveRaycastExtensionTargets(options: {
+  homeDir?: string;
+  extensionName?: string;
+} = {}): Promise<string[]> {
+  const home = options.homeDir ?? homedir();
+  const extensionName = options.extensionName ?? RAYCAST_EXTENSION_NAME;
+  const standardRoot = path.join(home, ".config", "raycast");
+  const roots = [
+    standardRoot,
+    path.join(home, ".config", "raycast-x"),
+  ];
+  const existingRoots: string[] = [];
+
+  for (const root of roots) {
+    if (await exists(root) || await exists(path.join(root, "extensions"))) {
+      existingRoots.push(root);
+    }
   }
 
-  if (stdoutFile) {
-    await writeFile(path.join(cwd, stdoutFile), stdout);
+  const selectedRoots = existingRoots.length > 0 ? existingRoots : [standardRoot];
+  return selectedRoots.map((root) => path.join(root, "extensions", extensionName));
+}
+
+async function chmodRaycastFiles(target: string): Promise<void> {
+  const entries = await readdir(target, { withFileTypes: true });
+  for (const entry of entries) {
+    const entryPath = path.join(target, entry.name);
+    if (entry.isDirectory()) {
+      await chmodRaycastFiles(entryPath);
+    } else if (entry.name.endsWith(".js")) {
+      await chmod(entryPath, 0o644);
+    }
   }
+}
+
+async function normalizeCompiledRaycastIcon(extensionPath: string): Promise<void> {
+  const packagePath = path.join(extensionPath, "package.json");
+  const manifest = JSON.parse(await readFile(packagePath, "utf8")) as { icon?: string };
+  manifest.icon = "assets/icon.svg";
+  const managedIconPath = path.join(path.dirname(extensionPath), "assets", "icon.svg");
+  const sourceIconPath = (await exists(managedIconPath))
+    ? managedIconPath
+    : path.resolve("assets", "icon.svg");
+  await mkdir(path.join(extensionPath, "assets"), { recursive: true });
+  await copyFile(sourceIconPath, path.join(extensionPath, "assets", "icon.svg"));
+  await writeFile(packagePath, `${JSON.stringify(manifest, null, 2)}\n`, "utf8");
 }
 
 async function downloadToFile(url: string, filePath: string): Promise<void> {
@@ -312,6 +359,19 @@ async function verifyChecksum(archivePath: string, checksumPath: string): Promis
     .digest("hex");
   if (actual !== expected) {
     throw new Error(`Checksum mismatch for ${path.basename(archivePath)}`);
+  }
+}
+
+async function run(args: string[], cwd: string): Promise<void> {
+  const child = Bun.spawn(args, {
+    cwd,
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  const exitCode = await child.exited;
+  const stderr = await new Response(child.stderr).text();
+  if (exitCode !== 0) {
+    throw new Error(`${args.join(" ")} failed with exit code ${exitCode}: ${stderr.trim()}`);
   }
 }
 

@@ -9,6 +9,7 @@ import {
   writeLatticeUserConfig,
 } from "../src/apps/config";
 import { getApp, listApps } from "../src/apps/registry";
+import { resolveRaycastExtensionTargets } from "../src/apps/raycast";
 
 describe("app registry", () => {
   test("lists Raycast as an installable app", () => {
@@ -49,6 +50,7 @@ describe("lattice app config", () => {
         apps: {
           raycast: {
             extension_path: "/tmp/lattice-raycast/raycast-extension",
+            raycast_extension_paths: ["/tmp/raycast/extensions/lattice"],
             installed_at: "2026-06-09T10:00:00.000Z",
           },
         },
@@ -63,10 +65,29 @@ describe("lattice app config", () => {
       apps: {
         raycast: {
           extension_path: "/tmp/lattice-raycast/raycast-extension",
+          raycast_extension_paths: ["/tmp/raycast/extensions/lattice"],
           installed_at: "2026-06-09T10:00:00.000Z",
         },
       },
     });
+  });
+});
+
+describe("Raycast extension targets", () => {
+  test("defaults to the standard Raycast config when none exist", async () => {
+    const root = await tempRoot();
+    await expect(resolveRaycastExtensionTargets({ homeDir: root })).resolves.toEqual([
+      path.join(root, ".config", "raycast", "extensions", "lattice"),
+    ]);
+  });
+
+  test("uses existing Raycast config roots", async () => {
+    const root = await tempRoot();
+    await mkdir(path.join(root, ".config", "raycast-x"), { recursive: true });
+
+    await expect(resolveRaycastExtensionTargets({ homeDir: root })).resolves.toEqual([
+      path.join(root, ".config", "raycast-x", "extensions", "lattice"),
+    ]);
   });
 });
 

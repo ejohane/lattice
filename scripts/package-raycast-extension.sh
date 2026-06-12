@@ -4,27 +4,34 @@ set -euo pipefail
 repo_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 cd "$repo_root"
 
-artifact="${LATTICE_RAYCAST_ARTIFACT:-lattice-raycast-extension}"
+artifact="${LATTICE_RAYCAST_ARTIFACT:-lattice-raycast-extension-compiled}"
 out_dir="${LATTICE_ARTIFACT_DIR:-dist}"
 work_dir="$out_dir/$artifact"
+extension_dir="$work_dir/raycast-extension"
 
 rm -rf "$work_dir"
-mkdir -p "$work_dir/assets"
+mkdir -p "$extension_dir"
 
-mkdir -p "$work_dir/raycast-extension"
-tar \
-  --exclude node_modules \
-  --exclude .raycast \
-  --exclude dist \
-  --exclude './assets/icon-options' \
-  --exclude 'assets/icon-options' \
-  --exclude './raycast-env.d.ts' \
-  --exclude 'raycast-env.d.ts' \
-  --exclude './com.*.raycast-dev.plist' \
-  --exclude 'com.*.raycast-dev.plist' \
-  -cf - -C raycast-extension . | tar -xf - -C "$work_dir/raycast-extension"
+(
+  cd raycast-extension
+  bun run ray build \
+    --environment dist \
+    --output "$repo_root/$extension_dir" \
+    --non-interactive
+)
 
-cp assets/icon.svg "$work_dir/assets/icon.svg"
+mkdir -p "$extension_dir/assets"
+cp assets/icon.svg "$extension_dir/assets/icon.svg"
+rm -rf "$extension_dir/assets/icon-options"
+
+bun -e '
+const fs = require("node:fs");
+const manifestPath = process.argv[1];
+const manifest = JSON.parse(fs.readFileSync(manifestPath, "utf8"));
+manifest.icon = "assets/icon.svg";
+fs.writeFileSync(manifestPath, `${JSON.stringify(manifest, null, 2)}\n`, "utf8");
+' "$extension_dir/package.json"
+
 cp README.md LICENSE "$work_dir/"
 
 mkdir -p "$out_dir"
