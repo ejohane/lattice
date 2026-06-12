@@ -16,6 +16,7 @@ import {
   writeJson,
 } from "./vault";
 import { updateLattice } from "./update";
+import { getApp, listApps } from "./apps/registry";
 
 const program = new Command();
 
@@ -213,6 +214,106 @@ program
     console.log(`Updated lattice: ${result.installedPath}`);
     console.log(`Artifact: ${result.artifact}`);
     console.log(`Version: ${result.version}`);
+  });
+
+const appsCommand = program
+  .command("apps")
+  .description("Install and inspect Lattice capture apps.");
+
+appsCommand
+  .command("list")
+  .description("List installable Lattice apps.")
+  .option("--json", "Print machine-readable JSON.")
+  .action((options) => {
+    const apps = listApps().map((app) => ({
+      id: app.id,
+      title: app.title,
+      description: app.description,
+    }));
+
+    if (options.json) {
+      console.log(JSON.stringify(apps, null, 2));
+      return;
+    }
+
+    for (const app of apps) {
+      console.log(`${app.id}\t${app.title}\t${app.description}`);
+    }
+  });
+
+appsCommand
+  .command("install")
+  .description("Install a Lattice app.")
+  .argument("<app>", "App to install, for example: raycast.")
+  .option("--version <tag>", "Release tag to install. Defaults to latest.", "latest")
+  .option("--repo <owner/name>", "GitHub repository to download releases from.", "ejohane/lattice")
+  .option("--base-url <url>", "Release artifact base URL. Intended for mirrors and tests.")
+  .option("--source <path>", "Build and install app assets from a local source directory.")
+  .option("--install-dir <path>", "Install managed app assets into this directory.")
+  .option("--lattice-path <path>", "Lattice binary path for the app to call.")
+  .option("--config <path>", "Write/read Lattice app config at this path.")
+  .option("--no-import", "Skip installing into Raycast's local extension directory.")
+  .option("--json", "Print machine-readable JSON.")
+  .action(async (appId: string, options) => {
+    const root = resolveVaultPath(program.opts().vault);
+    const result = await getApp(appId).install({
+      appId,
+      vaultPath: root,
+      version: options.version,
+      repo: options.repo,
+      baseUrl: options.baseUrl,
+      sourceDir: options.source,
+      installDir: options.installDir,
+      latticePath: options.latticePath,
+      configPath: options.config,
+      importToRaycast: options.import,
+    });
+
+    if (options.json) {
+      console.log(JSON.stringify(result, null, 2));
+      return;
+    }
+
+    console.log(`Installed ${result.app}: ${result.installed_path}`);
+    console.log(`Config: ${result.config_path}`);
+    for (const step of result.steps) {
+      console.log(`ok: ${step}`);
+    }
+    for (const warning of result.warnings) {
+      console.log(`warning: ${warning}`);
+    }
+  });
+
+appsCommand
+  .command("doctor")
+  .description("Check a Lattice app installation.")
+  .argument("<app>", "App to check, for example: raycast.")
+  .option("--config <path>", "Read Lattice app config at this path.")
+  .option("--json", "Print machine-readable JSON.")
+  .action(async (appId: string, options) => {
+    const result = await getApp(appId).doctor({
+      appId,
+      configPath: options.config,
+    });
+
+    if (options.json) {
+      console.log(JSON.stringify(result, null, 2));
+      return;
+    }
+
+    for (const line of result.ok) {
+      console.log(`ok: ${line}`);
+    }
+    for (const line of result.warnings) {
+      console.log(`warning: ${line}`);
+    }
+    for (const line of result.errors) {
+      console.log(`error: ${line}`);
+    }
+
+    if (result.errors.length > 0) {
+      process.exitCode = 1;
+    }
   });
 
 async function resolveBody(options: {

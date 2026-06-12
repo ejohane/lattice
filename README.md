@@ -232,16 +232,37 @@ does not try to replace the Bun runtime:
 bun run src/cli.ts update --install-dir ~/.local/bin
 ```
 
+Install the Raycast adapter:
+
+```bash
+lattice --vault ./LatticeVault apps install raycast
+```
+
+On macOS, this downloads the compiled Raycast extension release artifact,
+verifies its `.sha256` checksum, installs a managed copy under
+`~/Library/Application Support/Lattice/apps/raycast/`, copies the compiled
+extension into Raycast's local extension directory, and writes shared Lattice
+app config with the vault path and CLI path. It does not run `bun install` or
+build the extension on the user's machine.
+
+Check the Raycast adapter:
+
+```bash
+lattice apps doctor raycast
+```
+
 ## Binary Artifacts and Releases
 
 GitHub Actions includes two workflows:
 
-- `CI`: runs tests, typecheck, builds a local binary, and smoke-tests
-  `./dist/lattice --help` on pushes to `main` and pull requests.
+- `CI`: runs tests, typecheck, builds a local binary, smoke-tests
+  `./dist/lattice --help`, and packages the compiled Raycast extension on
+  pushes to `main` and pull requests.
 - `Conventional PR Title`: requires every PR title to use Conventional Commit
   format so squash merges can drive semantic versioning.
 - `Release`: on pushes to `main`, runs tests/typecheck, builds packaged binary
-  archives, and runs semantic-release to tag and publish GitHub releases.
+  archives, packages the compiled Raycast extension, and runs semantic-release
+  to tag and publish GitHub releases.
 
 Use squash merges with Conventional Commit PR titles:
 
@@ -263,12 +284,15 @@ The release workflow currently builds:
 - `lattice-darwin-arm64.tar.gz` on the native `macos-15` arm64 runner.
 - `lattice-darwin-x64.tar.gz` on the native `macos-15-intel` runner.
 - `lattice-linux-x64.tar.gz` on `ubuntu-latest`.
+- `lattice-raycast-extension-compiled.tar.gz` on `ubuntu-latest`.
 
 Each archive contains `lattice`, `README.md`, and `LICENSE`, plus a matching
-`.sha256` checksum file. It also includes `scripts/install.sh` for auditability.
-Release publishing uses the standard `GITHUB_TOKEN`; no additional secrets are
-required. The curl installer and `lattice update` both consume these release
-assets from the latest GitHub release.
+`.sha256` checksum file, except the Raycast archive, which contains the compiled
+extension bundle, `README.md`, and `LICENSE`. The CLI archives also include
+`scripts/install.sh` for auditability. Release publishing uses the standard
+`GITHUB_TOKEN`; no additional secrets are required. The curl installer,
+`lattice update`, and `lattice apps install raycast` consume these release assets
+from the latest GitHub release.
 
 Install a downloaded archive manually:
 
@@ -305,13 +329,59 @@ Raw capture JSON is stable and agent-friendly:
 
 Pending queue entries reference raw files instead of duplicating capture bodies.
 
+## macOS Menu Bar App
+
+The native macOS capture app lives in `macos/LatticeCapture/`. It is a minimal
+menu bar capture surface over the installed `lattice` CLI:
+
+```text
+Control-Option-Space
+-> centered floating input
+-> type a note
+-> Command-Return
+-> lattice capture --stdin --source mac-app --json
+```
+
+The input panel hides before capture and re-activates the previously focused app
+so screenshot and active-window metadata describe the workspace you were using,
+not the capture panel.
+
+Build and run the app from source:
+
+```bash
+bun run mac:build
+bun run mac:run
+```
+
+Build a local `.app` bundle:
+
+```bash
+bun run mac:bundle
+open "dist/Lattice Capture.app"
+```
+
+The app defaults to finding `lattice` on `PATH`, including common locations such
+as `~/.local/bin`, `/opt/homebrew/bin`, and `/usr/local/bin`. Use the menu bar
+Settings item to override the CLI path or set a vault path. If no vault path is
+set, the CLI uses its normal `LATTICE_VAULT_PATH` or `./LatticeVault` behavior.
+
+The menu bar app defaults to including screenshots. Toggle `Include Screenshot`
+from the menu bar item when you want text-only captures.
+
 ## Raycast Extension
 
 The extension lives in `raycast-extension/` and remains a thin adapter over the
-CLI. It shells out to the configured project with `LATTICE_VAULT_PATH`; protocol
-logic stays in `src/cli.ts` and the SDK modules.
+installed CLI. It shells out to the configured `lattice` binary with
+`LATTICE_VAULT_PATH`; protocol logic stays in `src/cli.ts` and the SDK modules.
 
-Install and build:
+The preferred install path is:
+
+```bash
+lattice --vault ./LatticeVault apps install raycast
+```
+
+The installer consumes the compiled release artifact and avoids install-time
+dependency downloads. To build from source while developing the extension:
 
 ```bash
 cd raycast-extension
@@ -337,10 +407,9 @@ Commands:
 
 Preferences:
 
-- `Project Path`: absolute path to this project folder.
-- `Vault Path`: absolute path to the local vault.
-- `Bun Path`: usually `bun`; the adapter resolves common Bun install paths when
-  Raycast's runtime PATH is sparse.
+- `Lattice Path`: optional override for the `lattice` binary path.
+- `Vault Path`: optional override for the local vault. Defaults to the vault
+  configured by `lattice apps install raycast`.
 
 When saving from Raycast, the extension closes the Raycast window before calling
 the CLI so the screenshot and active app/window metadata refer to the workspace
@@ -357,5 +426,6 @@ Run automated checks:
 ```bash
 bun test
 bun run typecheck
+bun run mac:build
 cd raycast-extension && bun run typecheck && bun run build
 ```

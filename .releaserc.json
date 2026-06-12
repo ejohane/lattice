@@ -91,6 +91,14 @@
           {
             "path": "release-artifacts/lattice-linux-x64.tar.gz.sha256",
             "label": "lattice-linux-x64.tar.gz.sha256"
+          },
+          {
+            "path": "release-artifacts/lattice-raycast-extension-compiled.tar.gz",
+            "label": "lattice-raycast-extension-compiled.tar.gz"
+          },
+          {
+            "path": "release-artifacts/lattice-raycast-extension-compiled.tar.gz.sha256",
+            "label": "lattice-raycast-extension-compiled.tar.gz.sha256"
           }
         ]
       }

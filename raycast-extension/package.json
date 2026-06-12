@@ -88,26 +88,19 @@
   ],
   "preferences": [
     {
-      "name": "projectPath",
-      "title": "Project Path",
-      "description": "Absolute path to the Lattice project folder containing src/cli.ts.",
+      "name": "latticePath",
+      "title": "Lattice Path",
+      "description": "Path or command name used to run the Lattice CLI. Defaults to the path configured by `lattice apps install raycast`, then `lattice` on PATH.",
       "type": "textfield",
-      "required": true
+      "required": false,
+      "default": "lattice"
     },
     {
       "name": "vaultPath",
       "title": "Vault Path",
-      "description": "Absolute path to the local vault folder.",
+      "description": "Optional override for the local vault folder. Defaults to the vault configured by `lattice apps install raycast`.",
       "type": "textfield",
-      "required": true
-    },
-    {
-      "name": "bunPath",
-      "title": "Bun Path",
-      "description": "Path or command name used to run Bun. Common Bun install paths are resolved automatically.",
-      "type": "textfield",
-      "required": true,
-      "default": "bun"
+      "required": false
     }
   ],
   "dependencies": {
