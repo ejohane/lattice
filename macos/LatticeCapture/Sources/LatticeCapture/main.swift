@@ -18,6 +18,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
   private var hotKey: GlobalHotKey?
 
   func applicationDidFinishLaunching(_ notification: Notification) {
+    applyAppearanceMode()
     buildStatusItem()
     registerConfiguredHotKey(showAlertOnFailure: false)
     if hasUsableActiveVault() {
@@ -107,10 +108,30 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     ))
 
     menu.addItem(NSMenuItem(
-      title: "Set Hotkey...",
+      title: "Settings...",
       action: #selector(openHotKeySettings),
       keyEquivalent: ","
     ))
+
+    let appearanceItem = NSMenuItem(
+      title: "Appearance",
+      action: nil,
+      keyEquivalent: ""
+    )
+    let appearanceMenu = NSMenu()
+    for mode in AppAppearanceMode.allCases {
+      let item = NSMenuItem(
+        title: mode.title,
+        action: #selector(setAppearanceModeFromMenu(_:)),
+        keyEquivalent: ""
+      )
+      item.target = self
+      item.representedObject = mode.rawValue
+      item.state = settings.appearanceMode == mode ? .on : .off
+      appearanceMenu.addItem(item)
+    }
+    menu.setSubmenu(appearanceMenu, for: appearanceItem)
+    menu.addItem(appearanceItem)
 
     let hotKeyItem = NSMenuItem(
       title: "Hotkey: \(settings.hotKey.displayString)",
@@ -171,6 +192,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         onChange: { [weak self] in
           self?.registerConfiguredHotKey(showAlertOnFailure: true)
           self?.refreshMenu()
+        },
+        onAppearanceChange: { [weak self] in
+          self?.applyAppearanceMode()
+          self?.refreshMenu()
         }
       )
     }
@@ -179,6 +204,20 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     settingsWindowController?.showWindow(nil)
     settingsWindowController?.window?.makeKeyAndOrderFront(nil)
     NSApp.activate(ignoringOtherApps: true)
+  }
+
+  @objc private func setAppearanceModeFromMenu(_ sender: NSMenuItem) {
+    guard
+      let rawValue = sender.representedObject as? String,
+      let mode = AppAppearanceMode(rawValue: rawValue)
+    else {
+      return
+    }
+
+    settings.appearanceMode = mode
+    settingsWindowController?.reloadSettings()
+    applyAppearanceMode()
+    refreshMenu()
   }
 
   private func toggleMainWindow() {
@@ -272,6 +311,13 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     alert.alertStyle = .warning
     alert.runModal()
   }
+
+  private func applyAppearanceMode() {
+    NSApp.appearance = settings.appearanceMode.nsAppearance
+    for window in NSApp.windows {
+      window.contentView?.needsDisplay = true
+    }
+  }
 }
 
 @MainActor
@@ -287,7 +333,7 @@ final class MainWindowController: NSWindowController, NSWindowDelegate {
     self.vaultService = vaultService
     self.onVisibilityChange = onVisibilityChange
     let window = NSWindow(
-      contentRect: NSRect(x: 0, y: 0, width: 900, height: 640),
+      contentRect: NSRect(x: 0, y: 0, width: 420, height: 780),
       styleMask: [.titled, .closable, .miniaturizable, .resizable, .fullSizeContentView],
       backing: .buffered,
       defer: false
@@ -297,7 +343,7 @@ final class MainWindowController: NSWindowController, NSWindowDelegate {
     window.titleVisibility = .hidden
     window.titlebarAppearsTransparent = true
     window.isReleasedWhenClosed = false
-    window.minSize = NSSize(width: 520, height: 360)
+    window.minSize = NSSize(width: 380, height: 420)
     window.center()
     window.collectionBehavior = [.canJoinAllSpaces, .fullScreenAuxiliary]
     window.contentView = editorView
@@ -357,12 +403,33 @@ final class MainWindowController: NSWindowController, NSWindowDelegate {
 }
 
 final class AppSettings {
+  private enum DefaultsKey {
+    static let appearanceMode = "appearanceMode"
+    static let globalHotKey = "globalHotKey"
+  }
+
   private let defaults = UserDefaults.standard
+
+  var appearanceMode: AppAppearanceMode {
+    get {
+      guard
+        let rawValue = defaults.string(forKey: DefaultsKey.appearanceMode),
+        let mode = AppAppearanceMode(rawValue: rawValue)
+      else {
+        return .system
+      }
+
+      return mode
+    }
+    set {
+      defaults.set(newValue.rawValue, forKey: DefaultsKey.appearanceMode)
+    }
+  }
 
   var hotKey: HotKeyShortcut {
     get {
       guard
-        let stored = defaults.dictionary(forKey: "globalHotKey"),
+        let stored = defaults.dictionary(forKey: DefaultsKey.globalHotKey),
         let keyCode = stored["keyCode"] as? Int
       else {
         return .defaultShortcut
@@ -386,7 +453,59 @@ final class AppSettings {
       defaults.set([
         "keyCode": Int(newValue.keyCode),
         "modifiers": newValue.modifiers.rawValue
-      ], forKey: "globalHotKey")
+      ], forKey: DefaultsKey.globalHotKey)
+    }
+  }
+}
+
+final class WindowBackgroundView: NSView {
+  override init(frame frameRect: NSRect) {
+    super.init(frame: frameRect)
+    wantsLayer = true
+    updateBackgroundColor()
+  }
+
+  @available(*, unavailable)
+  required init?(coder: NSCoder) {
+    fatalError("init(coder:) has not been implemented")
+  }
+
+  override func viewDidChangeEffectiveAppearance() {
+    super.viewDidChangeEffectiveAppearance()
+    updateBackgroundColor()
+  }
+
+  private func updateBackgroundColor() {
+    effectiveAppearance.performAsCurrentDrawingAppearance {
+      layer?.backgroundColor = NSColor.windowBackgroundColor.cgColor
+    }
+  }
+}
+
+enum AppAppearanceMode: String, CaseIterable {
+  case system
+  case light
+  case dark
+
+  var title: String {
+    switch self {
+    case .system:
+      "System"
+    case .light:
+      "Light"
+    case .dark:
+      "Dark"
+    }
+  }
+
+  var nsAppearance: NSAppearance? {
+    switch self {
+    case .system:
+      nil
+    case .light:
+      NSAppearance(named: .aqua)
+    case .dark:
+      NSAppearance(named: .darkAqua)
     }
   }
 }
@@ -646,20 +765,32 @@ private func fourCharCode(_ string: String) -> OSType {
 final class HotKeySettingsWindowController: NSWindowController {
   private let settings: AppSettings
   private let onChange: () -> Void
+  private let onAppearanceChange: () -> Void
   private let recorder = ShortcutRecorderField()
+  private let appearanceControl = NSSegmentedControl(
+    labels: AppAppearanceMode.allCases.map(\.title),
+    trackingMode: .selectOne,
+    target: nil,
+    action: nil
+  )
   private let statusLabel = NSTextField(labelWithString: "")
 
-  init(settings: AppSettings, onChange: @escaping () -> Void) {
+  init(
+    settings: AppSettings,
+    onChange: @escaping () -> Void,
+    onAppearanceChange: @escaping () -> Void
+  ) {
     self.settings = settings
     self.onChange = onChange
+    self.onAppearanceChange = onAppearanceChange
 
     let window = NSWindow(
-      contentRect: NSRect(x: 0, y: 0, width: 420, height: 220),
+      contentRect: NSRect(x: 0, y: 0, width: 440, height: 300),
       styleMask: [.titled, .closable],
       backing: .buffered,
       defer: false
     )
-    window.title = "Lattice Hotkey"
+    window.title = "Lattice Settings"
     window.isReleasedWhenClosed = false
     window.center()
 
@@ -673,9 +804,14 @@ final class HotKeySettingsWindowController: NSWindowController {
   }
 
   override func showWindow(_ sender: Any?) {
-    recorder.shortcut = settings.hotKey
-    updateStatus()
+    reloadSettings()
     super.showWindow(sender)
+  }
+
+  func reloadSettings() {
+    recorder.shortcut = settings.hotKey
+    updateAppearanceControl()
+    updateStatus()
   }
 
   private func buildContent() {
@@ -726,12 +862,27 @@ final class HotKeySettingsWindowController: NSWindowController {
     statusLabel.font = .systemFont(ofSize: 12, weight: .regular)
     statusLabel.textColor = .secondaryLabelColor
 
+    let appearanceTitleLabel = NSTextField(labelWithString: "Appearance")
+    appearanceTitleLabel.font = .systemFont(ofSize: 18, weight: .semibold)
+
+    let appearanceDescriptionLabel = NSTextField(wrappingLabelWithString: "Choose whether Lattice follows macOS or always uses a fixed appearance.")
+    appearanceDescriptionLabel.font = .systemFont(ofSize: 13, weight: .regular)
+    appearanceDescriptionLabel.textColor = .secondaryLabelColor
+
+    appearanceControl.target = self
+    appearanceControl.action = #selector(appearanceControlChanged)
+    appearanceControl.translatesAutoresizingMaskIntoConstraints = false
+    updateAppearanceControl()
+
     let stack = NSStackView(views: [
       titleLabel,
       descriptionLabel,
       recorder,
       buttonStack,
-      statusLabel
+      statusLabel,
+      appearanceTitleLabel,
+      appearanceDescriptionLabel,
+      appearanceControl
     ])
     stack.orientation = .vertical
     stack.alignment = .leading
@@ -739,9 +890,7 @@ final class HotKeySettingsWindowController: NSWindowController {
     stack.edgeInsets = NSEdgeInsets(top: 22, left: 24, bottom: 18, right: 24)
     stack.translatesAutoresizingMaskIntoConstraints = false
 
-    let contentView = NSView()
-    contentView.wantsLayer = true
-    contentView.layer?.backgroundColor = NSColor.windowBackgroundColor.cgColor
+    let contentView = WindowBackgroundView()
     contentView.addSubview(stack)
     window.contentView = contentView
 
@@ -751,7 +900,8 @@ final class HotKeySettingsWindowController: NSWindowController {
       stack.topAnchor.constraint(equalTo: contentView.topAnchor),
       stack.bottomAnchor.constraint(lessThanOrEqualTo: contentView.bottomAnchor),
       recorder.widthAnchor.constraint(equalToConstant: 220),
-      recorder.heightAnchor.constraint(equalToConstant: 36)
+      recorder.heightAnchor.constraint(equalToConstant: 36),
+      appearanceControl.widthAnchor.constraint(equalToConstant: 260)
     ])
 
     updateStatus()
@@ -775,6 +925,23 @@ final class HotKeySettingsWindowController: NSWindowController {
     statusLabel.stringValue = settings.hotKey.isEnabled
       ? "Current: \(settings.hotKey.displayString)"
       : "No global hotkey is set."
+  }
+
+  @objc private func appearanceControlChanged() {
+    guard AppAppearanceMode.allCases.indices.contains(appearanceControl.selectedSegment) else {
+      return
+    }
+
+    settings.appearanceMode = AppAppearanceMode.allCases[appearanceControl.selectedSegment]
+    onAppearanceChange()
+  }
+
+  private func updateAppearanceControl() {
+    guard let index = AppAppearanceMode.allCases.firstIndex(of: settings.appearanceMode) else {
+      appearanceControl.selectedSegment = 0
+      return
+    }
+    appearanceControl.selectedSegment = index
   }
 }
 
@@ -1036,9 +1203,7 @@ final class VaultSetupWindowController: NSWindowController {
     stack.edgeInsets = NSEdgeInsets(top: 28, left: 30, bottom: 24, right: 30)
     stack.translatesAutoresizingMaskIntoConstraints = false
 
-    let contentView = NSView()
-    contentView.wantsLayer = true
-    contentView.layer?.backgroundColor = NSColor.windowBackgroundColor.cgColor
+    let contentView = WindowBackgroundView()
     contentView.addSubview(stack)
     window.contentView = contentView
 
@@ -1233,6 +1398,13 @@ final class MarkdownEditorView: NSView, NSTextViewDelegate {
     true
   }
 
+  override func viewDidChangeEffectiveAppearance() {
+    super.viewDidChangeEffectiveAppearance()
+    updateBackgroundColor()
+    textView.insertionPointColor = .controlAccentColor
+    renderMarkdown()
+  }
+
   func focus() {
     window?.makeFirstResponder(textView)
   }
@@ -1290,7 +1462,7 @@ final class MarkdownEditorView: NSView, NSTextViewDelegate {
 
   private func buildView() {
     wantsLayer = true
-    layer?.backgroundColor = NSColor.windowBackgroundColor.cgColor
+    updateBackgroundColor()
 
     scrollView.drawsBackground = false
     scrollView.hasVerticalScroller = true
@@ -1315,7 +1487,7 @@ final class MarkdownEditorView: NSView, NSTextViewDelegate {
     textView.isHorizontallyResizable = false
     textView.minSize = NSSize(width: 0, height: 0)
     textView.maxSize = NSSize(width: CGFloat.greatestFiniteMagnitude, height: CGFloat.greatestFiniteMagnitude)
-    textView.textContainerInset = NSSize(width: 84, height: 92)
+    textView.textContainerInset = NSSize(width: 36, height: 72)
     textView.textContainer?.widthTracksTextView = true
     textView.textContainer?.containerSize = NSSize(
       width: CGFloat.greatestFiniteMagnitude,
@@ -1342,6 +1514,12 @@ final class MarkdownEditorView: NSView, NSTextViewDelegate {
       characterCountLabel.centerXAnchor.constraint(equalTo: centerXAnchor),
       characterCountLabel.bottomAnchor.constraint(equalTo: bottomAnchor, constant: -18)
     ])
+  }
+
+  private func updateBackgroundColor() {
+    effectiveAppearance.performAsCurrentDrawingAppearance {
+      layer?.backgroundColor = NSColor.windowBackgroundColor.cgColor
+    }
   }
 
   private func editorTypingAttributes() -> [NSAttributedString.Key: Any] {
@@ -1815,6 +1993,17 @@ final class MarkdownEditorView: NSView, NSTextViewDelegate {
 final class MarkdownTextView: NSTextView {
   override var acceptsFirstResponder: Bool {
     true
+  }
+
+  override func performKeyEquivalent(with event: NSEvent) -> Bool {
+    let modifiers = event.modifierFlags.intersection(.deviceIndependentFlagsMask)
+    if modifiers == .command,
+       event.charactersIgnoringModifiers?.lowercased() == "a" {
+      selectAll(nil)
+      return true
+    }
+
+    return super.performKeyEquivalent(with: event)
   }
 
   override func viewDidMoveToSuperview() {
