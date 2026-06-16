@@ -109,6 +109,16 @@ Install a specific release or destination:
 curl -fsSL https://raw.githubusercontent.com/ejohane/lattice/main/scripts/install.sh | LATTICE_VERSION=v0.1.0 LATTICE_INSTALL_DIR=/usr/local/bin sh
 ```
 
+Install the latest released macOS app:
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/ejohane/lattice/main/scripts/install-mac-app.sh | sh
+```
+
+The macOS app installer downloads the matching `Lattice.app` release zip for
+your Mac architecture, verifies the `.sha256` checksum when `shasum` is
+available, and installs it to `~/Applications/Lattice.app` by default.
+
 Build a standalone CLI binary for the current platform:
 
 ```bash
@@ -284,21 +294,26 @@ The release workflow currently builds:
 - `lattice-darwin-arm64.tar.gz` on the native `macos-15` arm64 runner.
 - `lattice-darwin-x64.tar.gz` on the native `macos-15-intel` runner.
 - `lattice-linux-x64.tar.gz` on `ubuntu-latest`.
+- `lattice-macos-app-darwin-arm64.zip` on the native `macos-15` arm64 runner.
+- `lattice-macos-app-darwin-x64.zip` on the native `macos-15-intel` runner.
 - `lattice-raycast-extension-compiled.tar.gz` on `ubuntu-latest`.
 
 Each archive contains `lattice`, `README.md`, and `LICENSE`, plus a matching
 `.sha256` checksum file, except the Raycast archive, which contains the compiled
-extension bundle, `README.md`, and `LICENSE`. The CLI archives also include
-`scripts/install.sh` for auditability. Release publishing uses the standard
-`GITHUB_TOKEN`; no additional secrets are required. The curl installer,
-`lattice update`, and `lattice apps install raycast` consume these release assets
-from the latest GitHub release.
+extension bundle, `README.md`, and `LICENSE`, and the macOS app zips, which
+contain `Lattice.app`. The CLI archives also include `scripts/install.sh` for
+auditability. Release publishing uses the standard `GITHUB_TOKEN`; no additional
+secrets are required. The curl installers, `lattice update`, and
+`lattice apps install raycast` consume these release assets from the latest
+GitHub release.
 
 Install a downloaded archive manually:
 
 ```bash
 tar -xzf lattice-darwin-arm64.tar.gz
 install -m 0755 lattice-darwin-arm64/lattice ~/.local/bin/lattice
+unzip lattice-macos-app-darwin-arm64.zip
+mv Lattice.app ~/Applications/
 ```
 
 The macOS binaries are unsigned and not notarized. They are intended for local
@@ -329,22 +344,12 @@ Raw capture JSON is stable and agent-friendly:
 
 Pending queue entries reference raw files instead of duplicating capture bodies.
 
-## macOS Menu Bar App
+## macOS App
 
-The native macOS capture app lives in `macos/LatticeCapture/`. It is a minimal
-menu bar capture surface over the installed `lattice` CLI:
-
-```text
-Control-Option-Space
--> centered floating input
--> type a note
--> Command-Return
--> lattice capture --stdin --source mac-app --json
-```
-
-The input panel hides before capture and re-activates the previously focused app
-so screenshot and active-window metadata describe the workspace you were using,
-not the capture panel.
+The native macOS app lives in `macos/LatticeCapture/`. It currently opens a
+minimal live-rendered Markdown editor with a quiet writing surface, lightweight
+formatting toolbar, character count, menu bar controls, and a configurable
+global hotkey.
 
 Build and run the app from source:
 
@@ -357,16 +362,8 @@ Build a local `.app` bundle:
 
 ```bash
 bun run mac:bundle
-open "dist/Lattice Capture.app"
+open "dist/Lattice.app"
 ```
-
-The app defaults to finding `lattice` on `PATH`, including common locations such
-as `~/.local/bin`, `/opt/homebrew/bin`, and `/usr/local/bin`. Use the menu bar
-Settings item to override the CLI path or set a vault path. If no vault path is
-set, the CLI uses its normal `LATTICE_VAULT_PATH` or `./LatticeVault` behavior.
-
-The menu bar app defaults to including screenshots. Toggle `Include Screenshot`
-from the menu bar item when you want text-only captures.
 
 ## Raycast Extension
 

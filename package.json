@@ -15,6 +15,7 @@
     "build:binary:darwin-x64": "LATTICE_TARGET=bun-darwin-x64 bash scripts/build-binary.sh",
     "build:binary:linux-x64": "LATTICE_TARGET=bun-linux-x64 bash scripts/build-binary.sh",
     "package:raycast": "bash scripts/package-raycast-extension.sh",
+    "package:mac-app": "bash scripts/package-mac-app.sh",
     "mac:build": "swift build --package-path macos/LatticeCapture",
     "mac:run": "swift run --package-path macos/LatticeCapture",
     "mac:bundle": "bash scripts/build-mac-app.sh",

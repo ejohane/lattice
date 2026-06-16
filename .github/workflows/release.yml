@@ -39,6 +39,11 @@ jobs:
       - name: Validate Raycast package script
         run: bash -n scripts/package-raycast-extension.sh
 
+      - name: Validate macOS app package scripts
+        run: |
+          bash -n scripts/package-mac-app.sh
+          sh -n scripts/install-mac-app.sh
+
   build:
     name: Build ${{ matrix.artifact }}
     needs: verify
@@ -51,12 +56,15 @@ jobs:
           - os: macos-15
             target: bun-darwin-arm64
             artifact: lattice-darwin-arm64
+            mac-app-artifact: lattice-macos-app-darwin-arm64
           - os: macos-15-intel
             target: bun-darwin-x64
             artifact: lattice-darwin-x64
+            mac-app-artifact: lattice-macos-app-darwin-x64
           - os: ubuntu-latest
             target: bun-linux-x64
             artifact: lattice-linux-x64
+            mac-app-artifact: ""
 
     steps:
       - name: Check out repository
@@ -87,6 +95,13 @@ jobs:
           tar -czf "${{ matrix.artifact }}.tar.gz" -C artifacts "${{ matrix.artifact }}"
           shasum -a 256 "${{ matrix.artifact }}.tar.gz" > "${{ matrix.artifact }}.tar.gz.sha256"
 
+      - name: Package macOS app
+        if: runner.os == 'macOS'
+        run: |
+          LATTICE_MAC_APP_ARTIFACT="${{ matrix.mac-app-artifact }}" \
+          LATTICE_ARTIFACT_DIR=. \
+          bun run package:mac-app
+
       - name: Upload artifact
         uses: actions/upload-artifact@v4
         with:
@@ -94,6 +109,15 @@ jobs:
           path: |
             ${{ matrix.artifact }}.tar.gz
             ${{ matrix.artifact }}.tar.gz.sha256
+
+      - name: Upload macOS app artifact
+        if: runner.os == 'macOS'
+        uses: actions/upload-artifact@v4
+        with:
+          name: ${{ matrix.mac-app-artifact }}
+          path: |
+            ${{ matrix.mac-app-artifact }}.zip
+            ${{ matrix.mac-app-artifact }}.zip.sha256
 
   raycast:
     name: Build compiled Raycast extension artifact
