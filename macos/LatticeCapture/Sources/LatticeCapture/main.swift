@@ -9,18 +9,26 @@ app.run()
 
 @MainActor
 final class AppDelegate: NSObject, NSApplicationDelegate {
+  private let vaultService = VaultService()
   private let settings = AppSettings()
   private var windowController: MainWindowController?
   private var settingsWindowController: HotKeySettingsWindowController?
+  private var vaultSetupWindowController: VaultSetupWindowController?
   private var statusItem: NSStatusItem?
   private var hotKey: GlobalHotKey?
 
   func applicationDidFinishLaunching(_ notification: Notification) {
     buildStatusItem()
     registerConfiguredHotKey(showAlertOnFailure: false)
-    if ProcessInfo.processInfo.environment["LATTICE_HIDE_ON_LAUNCH"] != "1" {
+    if hasUsableActiveVault() {
+      if ProcessInfo.processInfo.environment["LATTICE_HIDE_ON_LAUNCH"] != "1" {
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.1) { [weak self] in
+          self?.showMainWindow()
+        }
+      }
+    } else {
       DispatchQueue.main.asyncAfter(deadline: .now() + 0.1) { [weak self] in
-        self?.showMainWindow()
+        self?.showVaultSetup()
       }
     }
     if ProcessInfo.processInfo.environment["LATTICE_OPEN_HOTKEY_SETTINGS"] == "1" {
@@ -66,6 +74,38 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
       keyEquivalent: ""
     ))
 
+    menu.addItem(NSMenuItem.separator())
+
+    let vaultTitle: String
+    if let vault = try? vaultService.currentVault() {
+      vaultTitle = "Vault: \(vault.config.vault.name)"
+    } else {
+      vaultTitle = "Vault: Not Selected"
+    }
+    let vaultItem = NSMenuItem(
+      title: vaultTitle,
+      action: nil,
+      keyEquivalent: ""
+    )
+    vaultItem.isEnabled = false
+    menu.addItem(vaultItem)
+
+    menu.addItem(NSMenuItem(
+      title: "Open Vault",
+      action: #selector(openVault),
+      keyEquivalent: "o"
+    ))
+    menu.addItem(NSMenuItem(
+      title: "Reveal Wiki",
+      action: #selector(revealWiki),
+      keyEquivalent: ""
+    ))
+    menu.addItem(NSMenuItem(
+      title: "Change Vault...",
+      action: #selector(changeVault),
+      keyEquivalent: ""
+    ))
+
     menu.addItem(NSMenuItem(
       title: "Set Hotkey...",
       action: #selector(openHotKeySettings),
@@ -102,6 +142,28 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     toggleMainWindow()
   }
 
+  @objc private func openVault() {
+    guard let vault = try? vaultService.currentVault() else {
+      showVaultSetup()
+      return
+    }
+
+    NSWorkspace.shared.open(vault.rootURL)
+  }
+
+  @objc private func revealWiki() {
+    guard let vault = try? vaultService.currentVault() else {
+      showVaultSetup()
+      return
+    }
+
+    NSWorkspace.shared.open(vault.rootURL.appendingPathComponent("wiki", isDirectory: true))
+  }
+
+  @objc private func changeVault() {
+    showVaultSetup()
+  }
+
   @objc private func openHotKeySettings() {
     if settingsWindowController == nil {
       settingsWindowController = HotKeySettingsWindowController(
@@ -128,10 +190,18 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
   }
 
   private func showMainWindow() {
+    guard hasUsableActiveVault() else {
+      showVaultSetup()
+      return
+    }
+
     if windowController == nil {
-      windowController = MainWindowController(onVisibilityChange: { [weak self] in
-        self?.refreshMenu()
-      })
+      windowController = MainWindowController(
+        vaultService: vaultService,
+        onVisibilityChange: { [weak self] in
+          self?.refreshMenu()
+        }
+      )
     }
 
     windowController?.showWindow(nil)
@@ -139,6 +209,33 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     windowController?.window?.makeKeyAndOrderFront(nil)
     NSApp.activate(ignoringOtherApps: true)
     refreshMenu()
+  }
+
+  private func showVaultSetup() {
+    if vaultSetupWindowController == nil {
+      vaultSetupWindowController = VaultSetupWindowController(
+        vaultService: vaultService,
+        onVaultSelected: { [weak self] in
+          self?.vaultSetupWindowController?.close()
+          self?.vaultSetupWindowController = nil
+          self?.refreshMenu()
+          self?.showMainWindow()
+        }
+      )
+    }
+
+    vaultSetupWindowController?.showWindow(nil)
+    vaultSetupWindowController?.window?.makeKeyAndOrderFront(nil)
+    NSApp.activate(ignoringOtherApps: true)
+    refreshMenu()
+  }
+
+  private func hasUsableActiveVault() -> Bool {
+    guard let url = vaultService.activeVaultURL() else {
+      return false
+    }
+
+    return vaultService.validateVault(at: url).isUsableVault
   }
 
   private func hideMainWindow() {
@@ -179,10 +276,15 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
 @MainActor
 final class MainWindowController: NSWindowController, NSWindowDelegate {
+  private let vaultService: VaultService
   private let editorView = MarkdownEditorView()
   private let onVisibilityChange: () -> Void
 
-  init(onVisibilityChange: @escaping () -> Void) {
+  init(
+    vaultService: VaultService,
+    onVisibilityChange: @escaping () -> Void
+  ) {
+    self.vaultService = vaultService
     self.onVisibilityChange = onVisibilityChange
     let window = NSWindow(
       contentRect: NSRect(x: 0, y: 0, width: 900, height: 640),
@@ -825,9 +927,194 @@ extension MainWindowController: NSToolbarDelegate {
   @objc func insertLink() {
     editorView.applyMarkdown(.link)
   }
+
+  @objc func saveCapture() {
+    do {
+      let capture = try vaultService.saveCapture(body: editorView.text)
+      editorView.clear()
+      editorView.showStatus("Saved \(capture.id)")
+    } catch {
+      presentSaveError(error)
+    }
+  }
+
+  private func presentSaveError(_ error: Error) {
+    let alert = NSAlert()
+    alert.messageText = "Capture not saved"
+    alert.informativeText = error.localizedDescription
+    alert.alertStyle = .warning
+    if let window {
+      alert.beginSheetModal(for: window)
+    } else {
+      alert.runModal()
+    }
+  }
+}
+
+@MainActor
+final class VaultSetupWindowController: NSWindowController {
+  private let vaultService: VaultService
+  private let onVaultSelected: () -> Void
+  private let defaultPathLabel = NSTextField(labelWithString: "")
+
+  init(
+    vaultService: VaultService,
+    onVaultSelected: @escaping () -> Void
+  ) {
+    self.vaultService = vaultService
+    self.onVaultSelected = onVaultSelected
+
+    let window = NSWindow(
+      contentRect: NSRect(x: 0, y: 0, width: 520, height: 300),
+      styleMask: [.titled, .closable],
+      backing: .buffered,
+      defer: false
+    )
+    window.title = "Choose Lattice Vault"
+    window.isReleasedWhenClosed = false
+    window.center()
+
+    super.init(window: window)
+    buildContent()
+  }
+
+  @available(*, unavailable)
+  required init?(coder: NSCoder) {
+    fatalError("init(coder:) has not been implemented")
+  }
+
+  override func showWindow(_ sender: Any?) {
+    defaultPathLabel.stringValue = vaultService.defaultVaultURL.path
+    super.showWindow(sender)
+  }
+
+  private func buildContent() {
+    guard let window else {
+      return
+    }
+
+    let titleLabel = NSTextField(labelWithString: "Choose a vault")
+    titleLabel.font = .systemFont(ofSize: 22, weight: .semibold)
+
+    let descriptionLabel = NSTextField(wrappingLabelWithString: "Lattice stores captures, queues, wiki files, and app state in a local folder. Choose an existing folder or initialize the default location.")
+    descriptionLabel.font = .systemFont(ofSize: 13, weight: .regular)
+    descriptionLabel.textColor = .secondaryLabelColor
+
+    defaultPathLabel.font = .monospacedSystemFont(ofSize: 12, weight: .regular)
+    defaultPathLabel.textColor = .tertiaryLabelColor
+    defaultPathLabel.lineBreakMode = .byTruncatingMiddle
+
+    let useDefaultButton = NSButton(
+      title: "Use ~/Documents/lattice",
+      target: self,
+      action: #selector(useDefaultVault)
+    )
+    useDefaultButton.bezelStyle = .rounded
+    useDefaultButton.keyEquivalent = "\r"
+
+    let chooseButton = NSButton(
+      title: "Choose Folder...",
+      target: self,
+      action: #selector(chooseFolder)
+    )
+    chooseButton.bezelStyle = .rounded
+
+    let buttonStack = NSStackView(views: [useDefaultButton, chooseButton])
+    buttonStack.orientation = .horizontal
+    buttonStack.spacing = 10
+    buttonStack.alignment = .centerY
+
+    let stack = NSStackView(views: [
+      titleLabel,
+      descriptionLabel,
+      defaultPathLabel,
+      buttonStack
+    ])
+    stack.orientation = .vertical
+    stack.alignment = .leading
+    stack.spacing = 14
+    stack.edgeInsets = NSEdgeInsets(top: 28, left: 30, bottom: 24, right: 30)
+    stack.translatesAutoresizingMaskIntoConstraints = false
+
+    let contentView = NSView()
+    contentView.wantsLayer = true
+    contentView.layer?.backgroundColor = NSColor.windowBackgroundColor.cgColor
+    contentView.addSubview(stack)
+    window.contentView = contentView
+
+    NSLayoutConstraint.activate([
+      stack.leadingAnchor.constraint(equalTo: contentView.leadingAnchor),
+      stack.trailingAnchor.constraint(equalTo: contentView.trailingAnchor),
+      stack.topAnchor.constraint(equalTo: contentView.topAnchor),
+      stack.bottomAnchor.constraint(lessThanOrEqualTo: contentView.bottomAnchor),
+      defaultPathLabel.widthAnchor.constraint(equalToConstant: 460)
+    ])
+  }
+
+  @objc private func useDefaultVault() {
+    handleSelectedVault(vaultService.defaultVaultURL)
+  }
+
+  @objc private func chooseFolder() {
+    let panel = NSOpenPanel()
+    panel.title = "Choose Lattice Vault Folder"
+    panel.prompt = "Choose"
+    panel.canChooseFiles = false
+    panel.canChooseDirectories = true
+    panel.canCreateDirectories = true
+    panel.allowsMultipleSelection = false
+
+    guard panel.runModal() == .OK, let url = panel.url else {
+      return
+    }
+
+    handleSelectedVault(url)
+  }
+
+  private func handleSelectedVault(_ url: URL) {
+    switch vaultService.validateVault(at: url) {
+    case .valid:
+      select(url)
+    case .uninitialized:
+      guard confirmInitialization(at: url) else {
+        return
+      }
+      select(url)
+    case .invalid(let message):
+      presentError(message)
+    }
+  }
+
+  private func select(_ url: URL) {
+    do {
+      _ = try vaultService.selectVault(url)
+      onVaultSelected()
+    } catch {
+      presentError(error.localizedDescription)
+    }
+  }
+
+  private func confirmInitialization(at url: URL) -> Bool {
+    let alert = NSAlert()
+    alert.messageText = "Initialize this folder as a Lattice vault?"
+    alert.informativeText = "Lattice will create config, raw capture, queue, wiki, and skills files in:\n\n\(url.path)"
+    alert.alertStyle = .informational
+    alert.addButton(withTitle: "Initialize Vault")
+    alert.addButton(withTitle: "Cancel")
+    return alert.runModal() == .alertFirstButtonReturn
+  }
+
+  private func presentError(_ message: String) {
+    let alert = NSAlert()
+    alert.messageText = "Vault unavailable"
+    alert.informativeText = message
+    alert.alertStyle = .warning
+    alert.runModal()
+  }
 }
 
 private enum EditorToolbarItem: String, CaseIterable {
+  case save
   case heading
   case bold
   case italic
@@ -839,6 +1126,8 @@ private enum EditorToolbarItem: String, CaseIterable {
 private extension EditorToolbarItem {
   var label: String {
     switch self {
+    case .save:
+      "Save Capture"
     case .heading:
       "Heading"
     case .bold:
@@ -856,6 +1145,8 @@ private extension EditorToolbarItem {
 
   var tooltip: String {
     switch self {
+    case .save:
+      "Save note to the active vault"
     case .heading:
       "Insert Markdown heading"
     case .bold:
@@ -873,6 +1164,8 @@ private extension EditorToolbarItem {
 
   var symbolName: String {
     switch self {
+    case .save:
+      "tray.and.arrow.down"
     case .heading:
       "textformat.size"
     case .bold:
@@ -890,6 +1183,8 @@ private extension EditorToolbarItem {
 
   var action: Selector {
     switch self {
+    case .save:
+      #selector(MainWindowController.saveCapture)
     case .heading:
       #selector(MainWindowController.insertHeading)
     case .bold:
@@ -920,6 +1215,7 @@ final class MarkdownEditorView: NSView, NSTextViewDelegate {
   private let textView = MarkdownTextView()
   private let characterCountLabel = NSTextField(labelWithString: "0 characters")
   private var isRenderingMarkdown = false
+  private var statusResetWorkItem: DispatchWorkItem?
 
   override init(frame frameRect: NSRect) {
     super.init(frame: frameRect)
@@ -939,6 +1235,28 @@ final class MarkdownEditorView: NSView, NSTextViewDelegate {
 
   func focus() {
     window?.makeFirstResponder(textView)
+  }
+
+  var text: String {
+    textView.string
+  }
+
+  func clear() {
+    textView.string = ""
+    renderMarkdown()
+    updateCharacterCount()
+  }
+
+  func showStatus(_ status: String) {
+    statusResetWorkItem?.cancel()
+    characterCountLabel.stringValue = status
+    characterCountLabel.textColor = .secondaryLabelColor
+
+    let workItem = DispatchWorkItem { [weak self] in
+      self?.updateCharacterCount()
+    }
+    statusResetWorkItem = workItem
+    DispatchQueue.main.asyncAfter(deadline: .now() + 2.0, execute: workItem)
   }
 
   func applyMarkdown(_ command: MarkdownCommand) {
@@ -961,6 +1279,7 @@ final class MarkdownEditorView: NSView, NSTextViewDelegate {
   }
 
   func textDidChange(_ notification: Notification) {
+    statusResetWorkItem?.cancel()
     renderMarkdown()
     updateCharacterCount()
   }
@@ -1447,6 +1766,7 @@ final class MarkdownEditorView: NSView, NSTextViewDelegate {
     let count = textView.string.count
     let unit = count == 1 ? "character" : "characters"
     characterCountLabel.stringValue = "\(count) \(unit)"
+    characterCountLabel.textColor = .tertiaryLabelColor
   }
 
   private func wrapSelection(prefix: String, suffix: String) {
