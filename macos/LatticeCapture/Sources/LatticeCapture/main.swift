@@ -40,6 +40,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
   }
 
   func applicationWillTerminate(_ notification: Notification) {
+    windowController?.flushAutosave()
     hotKey?.unregister()
   }
 
@@ -325,6 +326,10 @@ final class MainWindowController: NSWindowController, NSWindowDelegate {
   private let vaultService: VaultService
   private let editorView = MarkdownEditorView()
   private let onVisibilityChange: () -> Void
+  private var autosaveWorkItem: DispatchWorkItem?
+  private var activeCapture: CaptureRecord?
+  private var lastAutosavedBody = ""
+  private let autosaveDelay: TimeInterval = 0.8
 
   init(
     vaultService: VaultService,
@@ -351,6 +356,9 @@ final class MainWindowController: NSWindowController, NSWindowDelegate {
     super.init(window: window)
     window.delegate = self
     window.toolbar = makeToolbar()
+    editorView.onTextChange = { [weak self] _ in
+      self?.scheduleAutosave()
+    }
   }
 
   override func windowDidLoad() {
@@ -399,6 +407,53 @@ final class MainWindowController: NSWindowController, NSWindowDelegate {
 
   func windowDidResignKey(_ notification: Notification) {
     onVisibilityChange()
+  }
+
+  func flushAutosave() {
+    autosaveWorkItem?.cancel()
+    autosaveWorkItem = nil
+    _ = autosaveCurrentNote(showStatus: false)
+  }
+
+  private func scheduleAutosave() {
+    autosaveWorkItem?.cancel()
+    let workItem = DispatchWorkItem { [weak self] in
+      _ = self?.autosaveCurrentNote(showStatus: true)
+    }
+    autosaveWorkItem = workItem
+    DispatchQueue.main.asyncAfter(deadline: .now() + autosaveDelay, execute: workItem)
+  }
+
+  @discardableResult
+  private func autosaveCurrentNote(showStatus: Bool) -> Bool {
+    autosaveWorkItem?.cancel()
+    autosaveWorkItem = nil
+
+    let body = editorView.text.trimmingCharacters(in: .whitespacesAndNewlines)
+    guard activeCapture != nil || !body.isEmpty else {
+      return true
+    }
+    guard body != lastAutosavedBody else {
+      return true
+    }
+
+    do {
+      let capture: CaptureRecord
+      if let activeCapture {
+        capture = try vaultService.updateCapture(activeCapture, body: body)
+      } else {
+        capture = try vaultService.saveCapture(body: body)
+      }
+      activeCapture = capture
+      lastAutosavedBody = capture.body
+      if showStatus {
+        editorView.showStatus("Autosaved \(capture.id)")
+      }
+      return true
+    } catch {
+      presentSaveError(error)
+      return false
+    }
   }
 }
 
@@ -1095,14 +1150,15 @@ extension MainWindowController: NSToolbarDelegate {
     editorView.applyMarkdown(.link)
   }
 
-  @objc func saveCapture() {
-    do {
-      let capture = try vaultService.saveCapture(body: editorView.text)
-      editorView.clear()
-      editorView.showStatus("Saved \(capture.id)")
-    } catch {
-      presentSaveError(error)
+  @objc func startNewNote() {
+    guard autosaveCurrentNote(showStatus: false) else {
+      return
     }
+    activeCapture = nil
+    lastAutosavedBody = ""
+    editorView.clear()
+    editorView.showStatus("New note")
+    editorView.focus()
   }
 
   private func presentSaveError(_ error: Error) {
@@ -1279,7 +1335,7 @@ final class VaultSetupWindowController: NSWindowController {
 }
 
 private enum EditorToolbarItem: String, CaseIterable {
-  case save
+  case newNote
   case heading
   case bold
   case italic
@@ -1291,8 +1347,8 @@ private enum EditorToolbarItem: String, CaseIterable {
 private extension EditorToolbarItem {
   var label: String {
     switch self {
-    case .save:
-      "Save Capture"
+    case .newNote:
+      "New Note"
     case .heading:
       "Heading"
     case .bold:
@@ -1310,8 +1366,8 @@ private extension EditorToolbarItem {
 
   var tooltip: String {
     switch self {
-    case .save:
-      "Save note to the active vault"
+    case .newNote:
+      "Start a new autosaved capture"
     case .heading:
       "Insert Markdown heading"
     case .bold:
@@ -1329,8 +1385,8 @@ private extension EditorToolbarItem {
 
   var symbolName: String {
     switch self {
-    case .save:
-      "tray.and.arrow.down"
+    case .newNote:
+      "square.and.pencil"
     case .heading:
       "textformat.size"
     case .bold:
@@ -1348,8 +1404,8 @@ private extension EditorToolbarItem {
 
   var action: Selector {
     switch self {
-    case .save:
-      #selector(MainWindowController.saveCapture)
+    case .newNote:
+      #selector(MainWindowController.startNewNote)
     case .heading:
       #selector(MainWindowController.insertHeading)
     case .bold:
@@ -1381,6 +1437,7 @@ final class MarkdownEditorView: NSView, NSTextViewDelegate {
   private let characterCountLabel = NSTextField(labelWithString: "0 characters")
   private var isRenderingMarkdown = false
   private var statusResetWorkItem: DispatchWorkItem?
+  var onTextChange: ((String) -> Void)?
 
   override init(frame frameRect: NSRect) {
     super.init(frame: frameRect)
@@ -1454,6 +1511,7 @@ final class MarkdownEditorView: NSView, NSTextViewDelegate {
     statusResetWorkItem?.cancel()
     renderMarkdown()
     updateCharacterCount()
+    onTextChange?(textView.string)
   }
 
   func textViewDidChangeSelection(_ notification: Notification) {

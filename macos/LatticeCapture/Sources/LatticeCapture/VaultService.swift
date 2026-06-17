@@ -128,6 +128,7 @@ enum VaultError: LocalizedError {
   case invalidVault(String)
   case emptyCapture
   case duplicateCapture(String)
+  case missingCapture(String)
 
   var errorDescription: String? {
     switch self {
@@ -139,6 +140,8 @@ enum VaultError: LocalizedError {
       return "Cannot save an empty capture."
     case .duplicateCapture(let path):
       return "Raw capture already exists: \(path)"
+    case .missingCapture(let path):
+      return "Raw capture does not exist: \(path)"
     }
   }
 }
@@ -365,6 +368,26 @@ final class VaultService {
     return record
   }
 
+  func updateCapture(_ capture: CaptureRecord, body: String) throws -> CaptureRecord {
+    let vault = try currentVault()
+    let captureURL = captureURL(for: capture, in: vault)
+    if !fileManager.fileExists(atPath: captureURL.path) {
+      throw VaultError.missingCapture(relativePath(from: vault.rootURL, to: captureURL))
+    }
+
+    var updatedRecord = capture
+    updatedRecord.body = body.trimmingCharacters(in: .whitespacesAndNewlines)
+
+    try writeJSON(updatedRecord, to: captureURL, prettyPrinted: true)
+    try replaceCaptureInRawLog(
+      updatedRecord,
+      at: vault.rootURL
+        .appendingPathComponent("raw", isDirectory: true)
+        .appendingPathComponent("log.jsonl")
+    )
+    return updatedRecord
+  }
+
   private func loadConfig(at url: URL) throws -> VaultConfig {
     let data = try Data(contentsOf: url.appendingPathComponent("config.json"))
     return try JSONDecoder().decode(VaultConfig.self, from: data)
@@ -393,12 +416,24 @@ final class VaultService {
     try output.write(to: url, options: .atomic)
   }
 
-  private func appendJSONLine<T: Encodable>(_ value: T, to url: URL) throws {
-    try createDirectory(url.deletingLastPathComponent())
+  private func captureURL(for capture: CaptureRecord, in vault: Vault) -> URL {
+    vault.rootURL
+      .appendingPathComponent("raw", isDirectory: true)
+      .appendingPathComponent("captures", isDirectory: true)
+      .appendingPathComponent(capture.localDate, isDirectory: true)
+      .appendingPathComponent("\(capture.id).json")
+  }
+
+  private func jsonLine<T: Encodable>(for value: T) throws -> String {
     let encoder = JSONEncoder()
     encoder.outputFormatting = [.sortedKeys]
     let data = try encoder.encode(value)
-    let line = String(data: data, encoding: .utf8) ?? "{}"
+    return String(data: data, encoding: .utf8) ?? "{}"
+  }
+
+  private func appendJSONLine<T: Encodable>(_ value: T, to url: URL) throws {
+    try createDirectory(url.deletingLastPathComponent())
+    let line = try jsonLine(for: value)
     if !fileManager.fileExists(atPath: url.path) {
       try Data().write(to: url, options: .atomic)
     }
@@ -408,6 +443,40 @@ final class VaultService {
     }
     try handle.seekToEnd()
     try handle.write(contentsOf: Data("\(line)\n".utf8))
+  }
+
+  private func replaceCaptureInRawLog(_ capture: CaptureRecord, at url: URL) throws {
+    try createDirectory(url.deletingLastPathComponent())
+    let replacementLine = try jsonLine(for: capture)
+    guard fileManager.fileExists(atPath: url.path) else {
+      try "\(replacementLine)\n".write(to: url, atomically: true, encoding: .utf8)
+      return
+    }
+
+    let existing = try String(contentsOf: url, encoding: .utf8)
+    var replaced = false
+    var outputLines: [String] = []
+    let decoder = JSONDecoder()
+
+    for line in existing.split(separator: "\n", omittingEmptySubsequences: true) {
+      let lineString = String(line)
+      if
+        let data = lineString.data(using: .utf8),
+        let decoded = try? decoder.decode(CaptureRecord.self, from: data),
+        decoded.id == capture.id
+      {
+        outputLines.append(replacementLine)
+        replaced = true
+      } else {
+        outputLines.append(lineString)
+      }
+    }
+
+    if !replaced {
+      outputLines.append(replacementLine)
+    }
+
+    try "\(outputLines.joined(separator: "\n"))\n".write(to: url, atomically: true, encoding: .utf8)
   }
 
   private func relativePath(from rootURL: URL, to fileURL: URL) -> String {

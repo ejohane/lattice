@@ -349,7 +349,9 @@ Pending queue entries reference raw files instead of duplicating capture bodies.
 The native macOS app lives in `macos/LatticeCapture/`. It currently opens a
 minimal live-rendered Markdown editor with a quiet writing surface, lightweight
 formatting toolbar, character count, menu bar controls, and a configurable
-global hotkey.
+global hotkey. The editor autosaves the active note into one capture: the first
+autosave creates the capture, subsequent edits update that same capture, and
+the New Note toolbar action starts a fresh capture.
 
 Build and run the app from source:
 
