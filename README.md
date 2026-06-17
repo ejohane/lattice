@@ -117,7 +117,26 @@ curl -fsSL https://raw.githubusercontent.com/ejohane/lattice/main/scripts/instal
 
 The macOS app installer downloads the matching `Lattice.app` release zip for
 your Mac architecture, verifies the `.sha256` checksum when `shasum` is
-available, and installs it to `~/Applications/Lattice.app` by default.
+available, and installs it to `~/Applications/Lattice.app` by default. Released
+apps include Sparkle update support, so subsequent releases can be installed
+from the `Check for Updates...` menu item.
+
+Build a development macOS app with Sparkle updates enabled:
+
+```bash
+swift build --package-path macos/LatticeCapture -c release
+macos/LatticeCapture/.build/artifacts/sparkle/Sparkle/bin/generate_keys --account lattice-dev
+
+LATTICE_SPARKLE_FEED_URL=http://localhost:8000/appcast.xml \
+LATTICE_SPARKLE_PUBLIC_ED_KEY="<public key from generate_keys>" \
+LATTICE_APP_BUILD=1 \
+bash scripts/build-mac-app.sh
+```
+
+Sparkle is only configured when `LATTICE_SPARKLE_FEED_URL` is present at build
+time. These unsigned development builds add a `Check for Updates...` menu item
+and enable Sparkle's automatic checks and automatic update installation. They
+are not the official user distribution channel.
 
 Build a standalone CLI binary for the current platform:
 
@@ -270,9 +289,10 @@ GitHub Actions includes two workflows:
   pushes to `main` and pull requests.
 - `Conventional PR Title`: requires every PR title to use Conventional Commit
   format so squash merges can drive semantic versioning.
-- `Release`: on pushes to `main`, runs tests/typecheck, builds packaged binary
-  archives, packages the compiled Raycast extension, and runs semantic-release
-  to tag and publish GitHub releases.
+- `Release`: on pushes to `main`, runs tests/typecheck, plans the next
+  semantic-release version, builds packaged binary archives, packages the
+  compiled Raycast extension, generates a signed Sparkle appcast for the macOS
+  app, and runs semantic-release to tag and publish GitHub releases.
 
 Use squash merges with Conventional Commit PR titles:
 
@@ -296,16 +316,36 @@ The release workflow currently builds:
 - `lattice-linux-x64.tar.gz` on `ubuntu-latest`.
 - `lattice-macos-app-darwin-arm64.zip` on the native `macos-15` arm64 runner.
 - `lattice-macos-app-darwin-x64.zip` on the native `macos-15-intel` runner.
+- `lattice-macos-appcast-darwin-arm64.xml` on the native `macos-15` arm64 runner.
+- `lattice-macos-appcast-darwin-x64.xml` on the native `macos-15` arm64 runner.
 - `lattice-raycast-extension-compiled.tar.gz` on `ubuntu-latest`.
 
 Each archive contains `lattice`, `README.md`, and `LICENSE`, plus a matching
 `.sha256` checksum file, except the Raycast archive, which contains the compiled
 extension bundle, `README.md`, and `LICENSE`, and the macOS app zips, which
 contain `Lattice.app`. The CLI archives also include `scripts/install.sh` for
-auditability. Release publishing uses the standard `GITHUB_TOKEN`; no additional
-secrets are required. The curl installers, `lattice update`, and
-`lattice apps install raycast` consume these release assets from the latest
-GitHub release.
+auditability. The curl installers, `lattice update`,
+`lattice apps install raycast`, and the macOS app's Sparkle updater consume
+these release assets from the latest GitHub release.
+
+Mac app update publishing requires Sparkle EdDSA keys in GitHub Actions:
+
+- `LATTICE_SPARKLE_PUBLIC_ED_KEY`: the public key embedded in released
+  `Lattice.app` bundles.
+- `LATTICE_SPARKLE_PRIVATE_ED_KEY`: the exported private key used only in CI to
+  sign `lattice-macos-appcast.xml`.
+
+Generate and export the release key on a trusted Mac:
+
+```bash
+swift build --package-path macos/LatticeCapture -c release
+macos/LatticeCapture/.build/artifacts/sparkle/Sparkle/bin/generate_keys --account lattice-release
+macos/LatticeCapture/.build/artifacts/sparkle/Sparkle/bin/generate_keys --account lattice-release -p
+macos/LatticeCapture/.build/artifacts/sparkle/Sparkle/bin/generate_keys --account lattice-release -x sparkle-private-key.txt
+```
+
+Set `LATTICE_SPARKLE_PUBLIC_ED_KEY` to the `-p` output and
+`LATTICE_SPARKLE_PRIVATE_ED_KEY` to the contents of `sparkle-private-key.txt`.
 
 Install a downloaded archive manually:
 
@@ -316,9 +356,37 @@ unzip lattice-macos-app-darwin-arm64.zip
 mv Lattice.app ~/Applications/
 ```
 
-The macOS binaries are unsigned and not notarized. They are intended for local
+The macOS app bundles are ad-hoc signed so Sparkle can validate update archives,
+but they are not Developer ID signed or notarized. They are intended for local
 developer distribution today; a future signed/notarized release would need Apple
-Developer credentials and a separate signing step.
+Developer credentials and a separate signing step. Set `LATTICE_CODESIGN_IDENTITY`
+when building if you want `scripts/build-mac-app.sh` to use a real signing
+identity instead of the default ad-hoc signature.
+
+### Development Mac App Updates
+
+Use Sparkle's development appcast loop to test in-app updates before official
+signing and notarization exist:
+
+```bash
+# Terminal 1: serve the development update directory.
+mkdir -p dist/sparkle-dev
+cd dist/sparkle-dev
+python3 -m http.server 8000
+```
+
+```bash
+# Terminal 2: create a newer update archive and appcast.
+LATTICE_SPARKLE_FEED_URL=http://localhost:8000/appcast.xml \
+LATTICE_SPARKLE_DOWNLOAD_URL_PREFIX=http://localhost:8000 \
+LATTICE_SPARKLE_ACCOUNT=lattice-dev \
+LATTICE_APP_BUILD=2 \
+bun run package:mac-dev-update
+```
+
+Install or launch the older build first, then use `Check for Updates...` from
+the Lattice menu bar menu. Sparkle compares `CFBundleVersion`, so increment
+`LATTICE_APP_BUILD` for each development update.
 
 ## Capture Record
 
@@ -346,12 +414,18 @@ Pending queue entries reference raw files instead of duplicating capture bodies.
 
 ## macOS App
 
-The native macOS app lives in `macos/LatticeCapture/`. It currently opens a
-minimal live-rendered Markdown editor with a quiet writing surface, lightweight
+The native macOS app lives in `macos/LatticeCapture/`. It opens a minimal
+live-rendered Markdown editor with a quiet writing surface, lightweight
 formatting toolbar, character count, menu bar controls, and a configurable
 global hotkey. The editor autosaves the active note into one capture: the first
 autosave creates the capture, subsequent edits update that same capture, and
 the New Note toolbar action starts a fresh capture.
+
+Draft text is persisted automatically under Application Support as you type.
+When the editor loses focus, is hidden, is closed, or the app quits, a non-empty
+draft is committed to the active vault as a `macos-app` capture and then cleared
+after the capture succeeds. If the commit fails, the draft stays on disk for the
+next launch.
 
 Build and run the app from source:
 

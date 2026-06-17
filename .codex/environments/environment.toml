@@ -1,0 +1,15 @@
+version = 1
+name = "lattice"
+
+[setup]
+script = "bun install"
+
+[[actions]]
+name = "Run Mac App"
+icon = "run"
+command = "bun run mac:run"
+
+[[actions]]
+name = "Build Mac App"
+icon = "hammer"
+command = "bun run mac:build"

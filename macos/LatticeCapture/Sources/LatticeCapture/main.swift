@@ -1,5 +1,6 @@
 import AppKit
 import Carbon.HIToolbox
+import Sparkle
 
 let app = NSApplication.shared
 let delegate = AppDelegate()
@@ -16,8 +17,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
   private var vaultSetupWindowController: VaultSetupWindowController?
   private var statusItem: NSStatusItem?
   private var hotKey: GlobalHotKey?
+  private var updaterController: SPUStandardUpdaterController?
 
   func applicationDidFinishLaunching(_ notification: Notification) {
+    configureUpdater()
     applyAppearanceMode()
     buildStatusItem()
     registerConfiguredHotKey(showAlertOnFailure: false)
@@ -114,6 +117,14 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
       keyEquivalent: ","
     ))
 
+    if updaterController != nil {
+      menu.addItem(NSMenuItem(
+        title: "Check for Updates...",
+        action: #selector(checkForUpdates(_:)),
+        keyEquivalent: ""
+      ))
+    }
+
     let appearanceItem = NSMenuItem(
       title: "Appearance",
       action: nil,
@@ -158,6 +169,21 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
   private func refreshMenu() {
     statusItem?.menu = makeMenu()
+  }
+
+  private func configureUpdater() {
+    guard
+      let feedURL = Bundle.main.object(forInfoDictionaryKey: "SUFeedURL") as? String,
+      !feedURL.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+    else {
+      return
+    }
+
+    updaterController = SPUStandardUpdaterController(
+      startingUpdater: true,
+      updaterDelegate: nil,
+      userDriverDelegate: nil
+    )
   }
 
   @objc private func toggleMainWindowFromMenu() {
@@ -205,6 +231,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     settingsWindowController?.showWindow(nil)
     settingsWindowController?.window?.makeKeyAndOrderFront(nil)
     NSApp.activate(ignoringOtherApps: true)
+  }
+
+  @objc private func checkForUpdates(_ sender: Any?) {
+    updaterController?.checkForUpdates(sender)
   }
 
   @objc private func setAppearanceModeFromMenu(_ sender: NSMenuItem) {
@@ -279,6 +309,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
   }
 
   private func hideMainWindow() {
+    windowController?.commitDraft()
     windowController?.window?.orderOut(nil)
     refreshMenu()
   }
@@ -324,7 +355,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 @MainActor
 final class MainWindowController: NSWindowController, NSWindowDelegate {
   private let vaultService: VaultService
-  private let editorView = MarkdownEditorView()
+  private let editorView: MarkdownEditorView
   private let onVisibilityChange: () -> Void
   private var autosaveWorkItem: DispatchWorkItem?
   private var activeCapture: CaptureRecord?
@@ -336,6 +367,7 @@ final class MainWindowController: NSWindowController, NSWindowDelegate {
     onVisibilityChange: @escaping () -> Void
   ) {
     self.vaultService = vaultService
+    self.editorView = MarkdownEditorView()
     self.onVisibilityChange = onVisibilityChange
     let window = NSWindow(
       contentRect: NSRect(x: 0, y: 0, width: 420, height: 780),
@@ -387,7 +419,16 @@ final class MainWindowController: NSWindowController, NSWindowDelegate {
     }
   }
 
+  func commitDraft() {
+    flushAutosave()
+  }
+
+  func commitDraftBeforeExit() {
+    flushAutosave()
+  }
+
   func windowShouldClose(_ sender: NSWindow) -> Bool {
+    commitDraft()
     sender.orderOut(nil)
     onVisibilityChange()
     return false
@@ -406,6 +447,7 @@ final class MainWindowController: NSWindowController, NSWindowDelegate {
   }
 
   func windowDidResignKey(_ notification: Notification) {
+    commitDraft()
     onVisibilityChange()
   }
 
@@ -442,10 +484,11 @@ final class MainWindowController: NSWindowController, NSWindowDelegate {
       if let activeCapture {
         capture = try vaultService.updateCapture(activeCapture, body: body)
       } else {
-        capture = try vaultService.saveCapture(body: body)
+        capture = try vaultService.saveCapture(body: body, source: "macos-app")
       }
       activeCapture = capture
       lastAutosavedBody = capture.body
+      editorView.clearStoredDraftIfUnchanged(capture.body)
       if showStatus {
         editorView.showStatus("Autosaved \(capture.id)")
       }
@@ -1431,10 +1474,46 @@ enum MarkdownCommand {
   case link
 }
 
+final class DraftStore {
+  private let draftURL: URL
+
+  init(fileManager: FileManager = .default) {
+    let baseURL = fileManager.urls(
+      for: .applicationSupportDirectory,
+      in: .userDomainMask
+    ).first ?? fileManager.homeDirectoryForCurrentUser
+
+    let directoryURL = baseURL.appendingPathComponent(
+      "LatticeCapture",
+      isDirectory: true
+    )
+    try? fileManager.createDirectory(
+      at: directoryURL,
+      withIntermediateDirectories: true
+    )
+    draftURL = directoryURL.appendingPathComponent("draft.md")
+  }
+
+  func load() -> String {
+    (try? String(contentsOf: draftURL, encoding: .utf8)) ?? ""
+  }
+
+  func save(_ body: String) throws {
+    try body.write(to: draftURL, atomically: true, encoding: .utf8)
+  }
+
+  func clear() throws {
+    if FileManager.default.fileExists(atPath: draftURL.path) {
+      try FileManager.default.removeItem(at: draftURL)
+    }
+  }
+}
+
 final class MarkdownEditorView: NSView, NSTextViewDelegate {
   private let scrollView = NSScrollView()
   private let textView = MarkdownTextView()
   private let characterCountLabel = NSTextField(labelWithString: "0 characters")
+  private let draftStore = DraftStore()
   private var isRenderingMarkdown = false
   private var statusResetWorkItem: DispatchWorkItem?
   var onTextChange: ((String) -> Void)?
@@ -1442,6 +1521,7 @@ final class MarkdownEditorView: NSView, NSTextViewDelegate {
   override init(frame frameRect: NSRect) {
     super.init(frame: frameRect)
     buildView()
+    textView.string = draftStore.load()
     renderMarkdown()
     updateCharacterCount()
   }
@@ -1472,8 +1552,18 @@ final class MarkdownEditorView: NSView, NSTextViewDelegate {
 
   func clear() {
     textView.string = ""
+    try? draftStore.clear()
     renderMarkdown()
     updateCharacterCount()
+  }
+
+  func clearStoredDraftIfUnchanged(_ savedBody: String) {
+    guard textView.string.trimmingCharacters(in: .whitespacesAndNewlines) == savedBody else {
+      persistCurrentDraft()
+      return
+    }
+
+    try? draftStore.clear()
   }
 
   func showStatus(_ status: String) {
@@ -1509,6 +1599,7 @@ final class MarkdownEditorView: NSView, NSTextViewDelegate {
 
   func textDidChange(_ notification: Notification) {
     statusResetWorkItem?.cancel()
+    persistCurrentDraft()
     renderMarkdown()
     updateCharacterCount()
     onTextChange?(textView.string)
@@ -1632,23 +1723,26 @@ final class MarkdownEditorView: NSView, NSTextViewDelegate {
 
       if range(lineRange, intersectsAny: codeBlockRanges) {
         storage.addAttributes(markdownCodeBlockAttributes(), range: lineRange)
-      } else if let match = firstMatch("^\\s*(#{1,6})\\s+(.+)$", in: line) {
+      } else if let match = firstMatch("^\\s*(#{1,6})(\\s+)(.+)$", in: line) {
         let level = min(match.range(at: 1).length, 6)
         let markerRange = shifted(match.range(at: 1), by: lineRange.location)
-        let contentRange = shifted(match.range(at: 2), by: lineRange.location)
+        let spacingRange = shifted(match.range(at: 2), by: lineRange.location)
+        let contentRange = shifted(match.range(at: 3), by: lineRange.location)
         storage.addAttributes(tokenAttributes, range: markerRange)
+        storage.addAttributes(tokenAttributes, range: spacingRange)
         storage.addAttributes(markdownHeadingAttributes(level: level), range: contentRange)
       } else if let match = firstMatch("^\\s{0,3}>\\s?(.+)$", in: line) {
         storage.addAttributes(markdownBlockQuoteAttributes(), range: lineRange)
         storage.addAttributes(tokenAttributes, range: shifted(NSRange(location: 0, length: 1), by: lineRange.location))
         storage.addAttributes([.font: markdownItalicFont()], range: shifted(match.range(at: 1), by: lineRange.location))
-      } else if let match = firstMatch("^\\s*([-*+])\\s+(\\[[ xX]\\])\\s+(.+)$", in: line) {
+      } else if let match = firstMatch("^\\s*([-*+])\\s+(\\[[ xX]\\])\\s+(.*)$", in: line) {
         let isActive = range(lineRange, containsAnyActive: activeRanges)
         let markerRange = shifted(match.range(at: 1), by: lineRange.location)
         let checkboxRange = shifted(match.range(at: 2), by: lineRange.location)
         let contentRange = shifted(match.range(at: 3), by: lineRange.location)
+        let shouldRenderMarker = !isActive || contentRange.length == 0
         storage.addAttributes(markdownListAttributes(), range: lineRange)
-        storage.addAttributes(isActive ? markdownBulletAttributes() : markdownRenderedBulletAttributes(), range: markerRange)
+        storage.addAttributes(shouldRenderMarker ? markdownRenderedBulletAttributes() : markdownBulletAttributes(), range: markerRange)
         storage.addAttributes(
           isActive ? markdownBulletAttributes() : markdownHiddenTokenAttributes(),
           range: checkboxRange
@@ -1656,14 +1750,16 @@ final class MarkdownEditorView: NSView, NSTextViewDelegate {
         if line.contains("[x]") || line.contains("[X]") {
           storage.addAttributes(markdownCompletedTaskAttributes(), range: contentRange)
         }
-      } else if let match = firstMatch("^\\s*([-*+])\\s+(.+)$", in: line) {
+      } else if let match = firstMatch("^\\s*([-*+])\\s+(.*)$", in: line) {
         storage.addAttributes(markdownListAttributes(), range: lineRange)
         let isActive = range(lineRange, containsAnyActive: activeRanges)
+        let contentRange = match.range(at: 2)
+        let shouldRenderMarker = !isActive || contentRange.length == 0
         storage.addAttributes(
-          isActive ? markdownBulletAttributes() : markdownRenderedBulletAttributes(),
+          shouldRenderMarker ? markdownRenderedBulletAttributes() : markdownBulletAttributes(),
           range: shifted(match.range(at: 1), by: lineRange.location)
         )
-      } else if let match = firstMatch("^\\s*(\\d+[.)])\\s+(.+)$", in: line) {
+      } else if let match = firstMatch("^\\s*(\\d+[.)])\\s+(.*)$", in: line) {
         storage.addAttributes(markdownListAttributes(), range: lineRange)
         storage.addAttributes(
           range(lineRange, containsAnyActive: activeRanges) ? markdownBulletAttributes() : markdownHiddenTokenAttributes(),
@@ -2005,6 +2101,18 @@ final class MarkdownEditorView: NSView, NSTextViewDelegate {
     characterCountLabel.textColor = .tertiaryLabelColor
   }
 
+  private func persistCurrentDraft() {
+    do {
+      if textView.string.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+        try draftStore.clear()
+      } else {
+        try draftStore.save(textView.string)
+      }
+    } catch {
+      characterCountLabel.stringValue = "Draft could not be saved"
+    }
+  }
+
   private func wrapSelection(prefix: String, suffix: String) {
     let range = textView.selectedRange()
     let selectedText = (textView.string as NSString).substring(with: range)
@@ -2049,8 +2157,22 @@ final class MarkdownEditorView: NSView, NSTextViewDelegate {
 }
 
 final class MarkdownTextView: NSTextView {
+  private struct MarkdownListMarker {
+    let lineContentRange: NSRange
+    let continuationPrefix: String
+    let hasContent: Bool
+  }
+
   override var acceptsFirstResponder: Bool {
     true
+  }
+
+  override func insertNewline(_ sender: Any?) {
+    if continueMarkdownList() {
+      return
+    }
+
+    super.insertNewline(sender)
   }
 
   override func performKeyEquivalent(with event: NSEvent) -> Bool {
@@ -2071,5 +2193,117 @@ final class MarkdownTextView: NSTextView {
       minSize = bounds.size
     }
     autoresizingMask = [.width]
+  }
+
+  private func continueMarkdownList() -> Bool {
+    let range = selectedRange()
+    guard let marker = markdownListMarker(at: range.location) else {
+      return false
+    }
+
+    if range.length == 0 && !marker.hasContent {
+      guard shouldChangeText(in: marker.lineContentRange, replacementString: "") else {
+        return true
+      }
+
+      textStorage?.replaceCharacters(in: marker.lineContentRange, with: "")
+      setSelectedRange(NSRange(location: marker.lineContentRange.location, length: 0))
+      didChangeText()
+      return true
+    }
+
+    let replacement = "\n" + marker.continuationPrefix
+    guard shouldChangeText(in: range, replacementString: replacement) else {
+      return true
+    }
+
+    textStorage?.replaceCharacters(in: range, with: replacement)
+    setSelectedRange(NSRange(location: range.location + replacement.utf16.count, length: 0))
+    didChangeText()
+    return true
+  }
+
+  private func markdownListMarker(at location: Int) -> MarkdownListMarker? {
+    let nsString = string as NSString
+    let safeLocation = min(location, nsString.length)
+    let lineRange = nsString.lineRange(for: NSRange(location: safeLocation, length: 0))
+    let lineContentRange = contentRangeWithoutLineEnding(lineRange, in: nsString)
+    let line = nsString.substring(with: lineContentRange)
+
+    if let marker = unorderedListMarker(line: line, lineContentRange: lineContentRange) {
+      return marker
+    }
+
+    return orderedListMarker(line: line, lineContentRange: lineContentRange)
+  }
+
+  private func unorderedListMarker(line: String, lineContentRange: NSRange) -> MarkdownListMarker? {
+    guard let match = firstRegexMatch("^([ \\t]*)([-*+])([ \\t]+)(?:(\\[[ xX]\\])([ \\t]+))?(.*)$", in: line) else {
+      return nil
+    }
+
+    let nsLine = line as NSString
+    let indent = nsLine.substring(with: match.range(at: 1))
+    let bullet = nsLine.substring(with: match.range(at: 2))
+    let spacing = nsLine.substring(with: match.range(at: 3))
+    let contentRange = match.range(at: 6)
+    let content = contentRange.location == NSNotFound ? "" : nsLine.substring(with: contentRange)
+    let taskSpacingRange = match.range(at: 5)
+    let continuationPrefix: String
+
+    if match.range(at: 4).location == NSNotFound {
+      continuationPrefix = indent + bullet + spacing
+    } else {
+      let taskSpacing = taskSpacingRange.location == NSNotFound ? spacing : nsLine.substring(with: taskSpacingRange)
+      continuationPrefix = indent + bullet + spacing + "[ ]" + taskSpacing
+    }
+
+    return MarkdownListMarker(
+      lineContentRange: lineContentRange,
+      continuationPrefix: continuationPrefix,
+      hasContent: !content.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+    )
+  }
+
+  private func orderedListMarker(line: String, lineContentRange: NSRange) -> MarkdownListMarker? {
+    guard let match = firstRegexMatch("^([ \\t]*)(\\d+)([.)])([ \\t]+)(.*)$", in: line) else {
+      return nil
+    }
+
+    let nsLine = line as NSString
+    let indent = nsLine.substring(with: match.range(at: 1))
+    let numberText = nsLine.substring(with: match.range(at: 2))
+    let delimiter = nsLine.substring(with: match.range(at: 3))
+    let spacing = nsLine.substring(with: match.range(at: 4))
+    let content = nsLine.substring(with: match.range(at: 5))
+    let nextNumber = (Int(numberText) ?? 0) + 1
+
+    return MarkdownListMarker(
+      lineContentRange: lineContentRange,
+      continuationPrefix: "\(indent)\(nextNumber)\(delimiter)\(spacing)",
+      hasContent: !content.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+    )
+  }
+
+  private func contentRangeWithoutLineEnding(_ lineRange: NSRange, in nsString: NSString) -> NSRange {
+    var end = NSMaxRange(lineRange)
+    while end > lineRange.location {
+      let character = nsString.character(at: end - 1)
+      if character == 10 || character == 13 {
+        end -= 1
+      } else {
+        break
+      }
+    }
+
+    return NSRange(location: lineRange.location, length: end - lineRange.location)
+  }
+
+  private func firstRegexMatch(_ pattern: String, in string: String) -> NSTextCheckingResult? {
+    guard let regex = try? NSRegularExpression(pattern: pattern) else {
+      return nil
+    }
+
+    return regex.firstMatch(in: string, range: NSRange(location: 0, length: (string as NSString).length))
   }
 }
