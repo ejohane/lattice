@@ -38,6 +38,7 @@ jobs:
       - name: Validate macOS app package scripts
         run: |
           bash -n scripts/package-mac-app.sh
+          bash -n scripts/package-mac-dev-update.sh
           sh -n scripts/install-mac-app.sh
 
       - name: Build local binary
