@@ -43,7 +43,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
   }
 
   func applicationWillTerminate(_ notification: Notification) {
-    windowController?.commitDraftBeforeExit()
+    windowController?.flushAutosave()
     hotKey?.unregister()
   }
 
@@ -357,13 +357,17 @@ final class MainWindowController: NSWindowController, NSWindowDelegate {
   private let vaultService: VaultService
   private let editorView: MarkdownEditorView
   private let onVisibilityChange: () -> Void
+  private var autosaveWorkItem: DispatchWorkItem?
+  private var activeCapture: CaptureRecord?
+  private var lastAutosavedBody = ""
+  private let autosaveDelay: TimeInterval = 0.8
 
   init(
     vaultService: VaultService,
     onVisibilityChange: @escaping () -> Void
   ) {
     self.vaultService = vaultService
-    self.editorView = MarkdownEditorView(vaultService: vaultService)
+    self.editorView = MarkdownEditorView()
     self.onVisibilityChange = onVisibilityChange
     let window = NSWindow(
       contentRect: NSRect(x: 0, y: 0, width: 420, height: 780),
@@ -384,6 +388,9 @@ final class MainWindowController: NSWindowController, NSWindowDelegate {
     super.init(window: window)
     window.delegate = self
     window.toolbar = makeToolbar()
+    editorView.onTextChange = { [weak self] _ in
+      self?.scheduleAutosave()
+    }
   }
 
   override func windowDidLoad() {
@@ -413,11 +420,11 @@ final class MainWindowController: NSWindowController, NSWindowDelegate {
   }
 
   func commitDraft() {
-    editorView.commitDraft()
+    flushAutosave()
   }
 
   func commitDraftBeforeExit() {
-    editorView.commitDraftBeforeExit()
+    flushAutosave()
   }
 
   func windowShouldClose(_ sender: NSWindow) -> Bool {
@@ -442,6 +449,54 @@ final class MainWindowController: NSWindowController, NSWindowDelegate {
   func windowDidResignKey(_ notification: Notification) {
     commitDraft()
     onVisibilityChange()
+  }
+
+  func flushAutosave() {
+    autosaveWorkItem?.cancel()
+    autosaveWorkItem = nil
+    _ = autosaveCurrentNote(showStatus: false)
+  }
+
+  private func scheduleAutosave() {
+    autosaveWorkItem?.cancel()
+    let workItem = DispatchWorkItem { [weak self] in
+      _ = self?.autosaveCurrentNote(showStatus: true)
+    }
+    autosaveWorkItem = workItem
+    DispatchQueue.main.asyncAfter(deadline: .now() + autosaveDelay, execute: workItem)
+  }
+
+  @discardableResult
+  private func autosaveCurrentNote(showStatus: Bool) -> Bool {
+    autosaveWorkItem?.cancel()
+    autosaveWorkItem = nil
+
+    let body = editorView.text.trimmingCharacters(in: .whitespacesAndNewlines)
+    guard activeCapture != nil || !body.isEmpty else {
+      return true
+    }
+    guard body != lastAutosavedBody else {
+      return true
+    }
+
+    do {
+      let capture: CaptureRecord
+      if let activeCapture {
+        capture = try vaultService.updateCapture(activeCapture, body: body)
+      } else {
+        capture = try vaultService.saveCapture(body: body, source: "macos-app")
+      }
+      activeCapture = capture
+      lastAutosavedBody = capture.body
+      editorView.clearStoredDraftIfUnchanged(capture.body)
+      if showStatus {
+        editorView.showStatus("Autosaved \(capture.id)")
+      }
+      return true
+    } catch {
+      presentSaveError(error)
+      return false
+    }
   }
 }
 
@@ -1138,14 +1193,15 @@ extension MainWindowController: NSToolbarDelegate {
     editorView.applyMarkdown(.link)
   }
 
-  @objc func saveCapture() {
-    do {
-      let capture = try vaultService.saveCapture(body: editorView.text, source: "macos-app")
-      editorView.clear()
-      editorView.showStatus("Saved \(capture.id)")
-    } catch {
-      presentSaveError(error)
+  @objc func startNewNote() {
+    guard autosaveCurrentNote(showStatus: false) else {
+      return
     }
+    activeCapture = nil
+    lastAutosavedBody = ""
+    editorView.clear()
+    editorView.showStatus("New note")
+    editorView.focus()
   }
 
   private func presentSaveError(_ error: Error) {
@@ -1322,7 +1378,7 @@ final class VaultSetupWindowController: NSWindowController {
 }
 
 private enum EditorToolbarItem: String, CaseIterable {
-  case save
+  case newNote
   case heading
   case bold
   case italic
@@ -1334,8 +1390,8 @@ private enum EditorToolbarItem: String, CaseIterable {
 private extension EditorToolbarItem {
   var label: String {
     switch self {
-    case .save:
-      "Save Capture"
+    case .newNote:
+      "New Note"
     case .heading:
       "Heading"
     case .bold:
@@ -1353,8 +1409,8 @@ private extension EditorToolbarItem {
 
   var tooltip: String {
     switch self {
-    case .save:
-      "Save note to the active vault"
+    case .newNote:
+      "Start a new autosaved capture"
     case .heading:
       "Insert Markdown heading"
     case .bold:
@@ -1372,8 +1428,8 @@ private extension EditorToolbarItem {
 
   var symbolName: String {
     switch self {
-    case .save:
-      "tray.and.arrow.down"
+    case .newNote:
+      "square.and.pencil"
     case .heading:
       "textformat.size"
     case .bold:
@@ -1391,8 +1447,8 @@ private extension EditorToolbarItem {
 
   var action: Selector {
     switch self {
-    case .save:
-      #selector(MainWindowController.saveCapture)
+    case .newNote:
+      #selector(MainWindowController.startNewNote)
     case .heading:
       #selector(MainWindowController.insertHeading)
     case .bold:
@@ -1454,17 +1510,15 @@ final class DraftStore {
 }
 
 final class MarkdownEditorView: NSView, NSTextViewDelegate {
-  private let vaultService: VaultService
   private let scrollView = NSScrollView()
   private let textView = MarkdownTextView()
   private let characterCountLabel = NSTextField(labelWithString: "0 characters")
   private let draftStore = DraftStore()
   private var isRenderingMarkdown = false
   private var statusResetWorkItem: DispatchWorkItem?
-  private var isCommittingDraft = false
+  var onTextChange: ((String) -> Void)?
 
-  init(vaultService: VaultService, frame frameRect: NSRect = .zero) {
-    self.vaultService = vaultService
+  override init(frame frameRect: NSRect) {
     super.init(frame: frameRect)
     buildView()
     textView.string = draftStore.load()
@@ -1503,6 +1557,15 @@ final class MarkdownEditorView: NSView, NSTextViewDelegate {
     updateCharacterCount()
   }
 
+  func clearStoredDraftIfUnchanged(_ savedBody: String) {
+    guard textView.string.trimmingCharacters(in: .whitespacesAndNewlines) == savedBody else {
+      persistCurrentDraft()
+      return
+    }
+
+    try? draftStore.clear()
+  }
+
   func showStatus(_ status: String) {
     statusResetWorkItem?.cancel()
     characterCountLabel.stringValue = status
@@ -1539,58 +1602,11 @@ final class MarkdownEditorView: NSView, NSTextViewDelegate {
     persistCurrentDraft()
     renderMarkdown()
     updateCharacterCount()
+    onTextChange?(textView.string)
   }
 
   func textViewDidChangeSelection(_ notification: Notification) {
     renderMarkdown()
-  }
-
-  func commitDraft() {
-    guard !isCommittingDraft else {
-      return
-    }
-
-    persistCurrentDraft()
-    let body = textView.string
-    guard !body.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {
-      try? draftStore.clear()
-      return
-    }
-
-    isCommittingDraft = true
-    defer {
-      isCommittingDraft = false
-    }
-    characterCountLabel.stringValue = "Saving..."
-
-    do {
-      let result = try vaultService.saveCapture(body: body, source: "macos-app")
-      clearDraftIfUnchanged(body)
-      updateSaveStatus(result)
-    } catch {
-      updateSaveFailure(error)
-    }
-  }
-
-  func commitDraftBeforeExit() {
-    guard !isCommittingDraft else {
-      return
-    }
-
-    persistCurrentDraft()
-    let body = textView.string
-    guard !body.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {
-      try? draftStore.clear()
-      return
-    }
-
-    do {
-      let result = try vaultService.saveCapture(body: body, source: "macos-app")
-      clearDraftIfUnchanged(body)
-      updateSaveStatus(result)
-    } catch {
-      updateSaveFailure(error)
-    }
   }
 
   private func buildView() {
@@ -2095,28 +2111,6 @@ final class MarkdownEditorView: NSView, NSTextViewDelegate {
     } catch {
       characterCountLabel.stringValue = "Draft could not be saved"
     }
-  }
-
-  private func clearDraftIfUnchanged(_ committedBody: String) {
-    guard textView.string == committedBody else {
-      persistCurrentDraft()
-      return
-    }
-
-    textView.string = ""
-    try? draftStore.clear()
-    renderMarkdown()
-  }
-
-  private func updateSaveStatus(_ result: CaptureRecord) {
-    characterCountLabel.stringValue = "Saved \(result.id)"
-  }
-
-  private func updateSaveFailure(_ error: Error) {
-    let message = (error as? LocalizedError)?.errorDescription ?? error.localizedDescription
-    characterCountLabel.stringValue = message.isEmpty
-      ? "Could not save. Draft kept."
-      : "Could not save. Draft kept."
   }
 
   private func wrapSelection(prefix: String, suffix: String) {
