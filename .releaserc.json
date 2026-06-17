@@ -101,6 +101,14 @@
             "label": "lattice-macos-app-darwin-x64.zip.sha256"
           },
           {
+            "path": "release-artifacts/lattice-macos-appcast-darwin-arm64.xml",
+            "label": "lattice-macos-appcast-darwin-arm64.xml"
+          },
+          {
+            "path": "release-artifacts/lattice-macos-appcast-darwin-x64.xml",
+            "label": "lattice-macos-appcast-darwin-x64.xml"
+          },
+          {
             "path": "release-artifacts/lattice-linux-x64.tar.gz",
             "label": "lattice-linux-x64.tar.gz"
           },

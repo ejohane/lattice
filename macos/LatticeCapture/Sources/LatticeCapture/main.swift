@@ -1,5 +1,6 @@
 import AppKit
 import Carbon.HIToolbox
+import Sparkle
 
 let app = NSApplication.shared
 let delegate = AppDelegate()
@@ -16,8 +17,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
   private var vaultSetupWindowController: VaultSetupWindowController?
   private var statusItem: NSStatusItem?
   private var hotKey: GlobalHotKey?
+  private var updaterController: SPUStandardUpdaterController?
 
   func applicationDidFinishLaunching(_ notification: Notification) {
+    configureUpdater()
     applyAppearanceMode()
     buildStatusItem()
     registerConfiguredHotKey(showAlertOnFailure: false)
@@ -114,6 +117,14 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
       keyEquivalent: ","
     ))
 
+    if updaterController != nil {
+      menu.addItem(NSMenuItem(
+        title: "Check for Updates...",
+        action: #selector(checkForUpdates(_:)),
+        keyEquivalent: ""
+      ))
+    }
+
     let appearanceItem = NSMenuItem(
       title: "Appearance",
       action: nil,
@@ -158,6 +169,21 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
   private func refreshMenu() {
     statusItem?.menu = makeMenu()
+  }
+
+  private func configureUpdater() {
+    guard
+      let feedURL = Bundle.main.object(forInfoDictionaryKey: "SUFeedURL") as? String,
+      !feedURL.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+    else {
+      return
+    }
+
+    updaterController = SPUStandardUpdaterController(
+      startingUpdater: true,
+      updaterDelegate: nil,
+      userDriverDelegate: nil
+    )
   }
 
   @objc private func toggleMainWindowFromMenu() {
@@ -205,6 +231,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     settingsWindowController?.showWindow(nil)
     settingsWindowController?.window?.makeKeyAndOrderFront(nil)
     NSApp.activate(ignoringOtherApps: true)
+  }
+
+  @objc private func checkForUpdates(_ sender: Any?) {
+    updaterController?.checkForUpdates(sender)
   }
 
   @objc private func setAppearanceModeFromMenu(_ sender: NSMenuItem) {

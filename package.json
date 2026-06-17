@@ -16,6 +16,7 @@
     "build:binary:linux-x64": "LATTICE_TARGET=bun-linux-x64 bash scripts/build-binary.sh",
     "package:raycast": "bash scripts/package-raycast-extension.sh",
     "package:mac-app": "bash scripts/package-mac-app.sh",
+    "package:mac-dev-update": "bash scripts/package-mac-dev-update.sh",
     "mac:build": "swift build --package-path macos/LatticeCapture",
     "mac:run": "swift run --package-path macos/LatticeCapture",
     "mac:bundle": "bash scripts/build-mac-app.sh",
@@ -27,6 +28,7 @@
     "test": "bun test",
     "typecheck": "tsc --noEmit",
     "verify": "bun test && bun run typecheck",
+    "release:plan": "node scripts/plan-release.mjs",
     "release": "semantic-release",
     "release:dry-run": "semantic-release --dry-run --no-ci"
   },
