@@ -346,10 +346,16 @@ Pending queue entries reference raw files instead of duplicating capture bodies.
 
 ## macOS App
 
-The native macOS app lives in `macos/LatticeCapture/`. It currently opens a
-minimal live-rendered Markdown editor with a quiet writing surface, lightweight
+The native macOS app lives in `macos/LatticeCapture/`. It opens a minimal
+live-rendered Markdown editor with a quiet writing surface, lightweight
 formatting toolbar, character count, menu bar controls, and a configurable
 global hotkey.
+
+Draft text is persisted automatically under Application Support as you type.
+When the editor loses focus, is hidden, is closed, or the app quits, a non-empty
+draft is committed to the active vault as a `macos-app` capture and then cleared
+after the capture succeeds. If the commit fails, the draft stays on disk for the
+next launch.
 
 Build and run the app from source:
 

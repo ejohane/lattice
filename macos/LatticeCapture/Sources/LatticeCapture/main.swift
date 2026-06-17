@@ -40,6 +40,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
   }
 
   func applicationWillTerminate(_ notification: Notification) {
+    windowController?.commitDraftBeforeExit()
     hotKey?.unregister()
   }
 
@@ -278,6 +279,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
   }
 
   private func hideMainWindow() {
+    windowController?.commitDraft()
     windowController?.window?.orderOut(nil)
     refreshMenu()
   }
@@ -323,7 +325,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 @MainActor
 final class MainWindowController: NSWindowController, NSWindowDelegate {
   private let vaultService: VaultService
-  private let editorView = MarkdownEditorView()
+  private let editorView: MarkdownEditorView
   private let onVisibilityChange: () -> Void
 
   init(
@@ -331,6 +333,7 @@ final class MainWindowController: NSWindowController, NSWindowDelegate {
     onVisibilityChange: @escaping () -> Void
   ) {
     self.vaultService = vaultService
+    self.editorView = MarkdownEditorView(vaultService: vaultService)
     self.onVisibilityChange = onVisibilityChange
     let window = NSWindow(
       contentRect: NSRect(x: 0, y: 0, width: 420, height: 780),
@@ -379,7 +382,16 @@ final class MainWindowController: NSWindowController, NSWindowDelegate {
     }
   }
 
+  func commitDraft() {
+    editorView.commitDraft()
+  }
+
+  func commitDraftBeforeExit() {
+    editorView.commitDraftBeforeExit()
+  }
+
   func windowShouldClose(_ sender: NSWindow) -> Bool {
+    commitDraft()
     sender.orderOut(nil)
     onVisibilityChange()
     return false
@@ -398,6 +410,7 @@ final class MainWindowController: NSWindowController, NSWindowDelegate {
   }
 
   func windowDidResignKey(_ notification: Notification) {
+    commitDraft()
     onVisibilityChange()
   }
 }
@@ -1097,7 +1110,7 @@ extension MainWindowController: NSToolbarDelegate {
 
   @objc func saveCapture() {
     do {
-      let capture = try vaultService.saveCapture(body: editorView.text)
+      let capture = try vaultService.saveCapture(body: editorView.text, source: "macos-app")
       editorView.clear()
       editorView.showStatus("Saved \(capture.id)")
     } catch {
@@ -1375,16 +1388,56 @@ enum MarkdownCommand {
   case link
 }
 
+final class DraftStore {
+  private let draftURL: URL
+
+  init(fileManager: FileManager = .default) {
+    let baseURL = fileManager.urls(
+      for: .applicationSupportDirectory,
+      in: .userDomainMask
+    ).first ?? fileManager.homeDirectoryForCurrentUser
+
+    let directoryURL = baseURL.appendingPathComponent(
+      "LatticeCapture",
+      isDirectory: true
+    )
+    try? fileManager.createDirectory(
+      at: directoryURL,
+      withIntermediateDirectories: true
+    )
+    draftURL = directoryURL.appendingPathComponent("draft.md")
+  }
+
+  func load() -> String {
+    (try? String(contentsOf: draftURL, encoding: .utf8)) ?? ""
+  }
+
+  func save(_ body: String) throws {
+    try body.write(to: draftURL, atomically: true, encoding: .utf8)
+  }
+
+  func clear() throws {
+    if FileManager.default.fileExists(atPath: draftURL.path) {
+      try FileManager.default.removeItem(at: draftURL)
+    }
+  }
+}
+
 final class MarkdownEditorView: NSView, NSTextViewDelegate {
+  private let vaultService: VaultService
   private let scrollView = NSScrollView()
   private let textView = MarkdownTextView()
   private let characterCountLabel = NSTextField(labelWithString: "0 characters")
+  private let draftStore = DraftStore()
   private var isRenderingMarkdown = false
   private var statusResetWorkItem: DispatchWorkItem?
+  private var isCommittingDraft = false
 
-  override init(frame frameRect: NSRect) {
+  init(vaultService: VaultService, frame frameRect: NSRect = .zero) {
+    self.vaultService = vaultService
     super.init(frame: frameRect)
     buildView()
+    textView.string = draftStore.load()
     renderMarkdown()
     updateCharacterCount()
   }
@@ -1415,6 +1468,7 @@ final class MarkdownEditorView: NSView, NSTextViewDelegate {
 
   func clear() {
     textView.string = ""
+    try? draftStore.clear()
     renderMarkdown()
     updateCharacterCount()
   }
@@ -1452,12 +1506,61 @@ final class MarkdownEditorView: NSView, NSTextViewDelegate {
 
   func textDidChange(_ notification: Notification) {
     statusResetWorkItem?.cancel()
+    persistCurrentDraft()
     renderMarkdown()
     updateCharacterCount()
   }
 
   func textViewDidChangeSelection(_ notification: Notification) {
     renderMarkdown()
+  }
+
+  func commitDraft() {
+    guard !isCommittingDraft else {
+      return
+    }
+
+    persistCurrentDraft()
+    let body = textView.string
+    guard !body.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {
+      try? draftStore.clear()
+      return
+    }
+
+    isCommittingDraft = true
+    defer {
+      isCommittingDraft = false
+    }
+    characterCountLabel.stringValue = "Saving..."
+
+    do {
+      let result = try vaultService.saveCapture(body: body, source: "macos-app")
+      clearDraftIfUnchanged(body)
+      updateSaveStatus(result)
+    } catch {
+      updateSaveFailure(error)
+    }
+  }
+
+  func commitDraftBeforeExit() {
+    guard !isCommittingDraft else {
+      return
+    }
+
+    persistCurrentDraft()
+    let body = textView.string
+    guard !body.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {
+      try? draftStore.clear()
+      return
+    }
+
+    do {
+      let result = try vaultService.saveCapture(body: body, source: "macos-app")
+      clearDraftIfUnchanged(body)
+      updateSaveStatus(result)
+    } catch {
+      updateSaveFailure(error)
+    }
   }
 
   private func buildView() {
@@ -1945,6 +2048,40 @@ final class MarkdownEditorView: NSView, NSTextViewDelegate {
     let unit = count == 1 ? "character" : "characters"
     characterCountLabel.stringValue = "\(count) \(unit)"
     characterCountLabel.textColor = .tertiaryLabelColor
+  }
+
+  private func persistCurrentDraft() {
+    do {
+      if textView.string.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+        try draftStore.clear()
+      } else {
+        try draftStore.save(textView.string)
+      }
+    } catch {
+      characterCountLabel.stringValue = "Draft could not be saved"
+    }
+  }
+
+  private func clearDraftIfUnchanged(_ committedBody: String) {
+    guard textView.string == committedBody else {
+      persistCurrentDraft()
+      return
+    }
+
+    textView.string = ""
+    try? draftStore.clear()
+    renderMarkdown()
+  }
+
+  private func updateSaveStatus(_ result: CaptureRecord) {
+    characterCountLabel.stringValue = "Saved \(result.id)"
+  }
+
+  private func updateSaveFailure(_ error: Error) {
+    let message = (error as? LocalizedError)?.errorDescription ?? error.localizedDescription
+    characterCountLabel.stringValue = message.isEmpty
+      ? "Could not save. Draft kept."
+      : "Could not save. Draft kept."
   }
 
   private func wrapSelection(prefix: String, suffix: String) {
