@@ -16,7 +16,7 @@ concurrency:
 jobs:
   verify:
     name: Verify
-    runs-on: ubuntu-latest
+    runs-on: macos-15
 
     steps:
       - name: Check out repository
@@ -30,17 +30,12 @@ jobs:
       - name: Install dependencies
         run: bun install --frozen-lockfile
 
-      - name: Run tests and typecheck
+      - name: Run Swift tests and build
         run: bun run verify
-
-      - name: Validate installer script
-        run: sh -n scripts/install.sh
-
-      - name: Validate Raycast package script
-        run: bash -n scripts/package-raycast-extension.sh
 
       - name: Validate macOS app package scripts
         run: |
+          bash -n scripts/build-mac-app.sh
           bash -n scripts/package-mac-app.sh
           bash -n scripts/package-mac-dev-update.sh
           sh -n scripts/install-mac-app.sh
@@ -86,7 +81,7 @@ jobs:
         run: node scripts/plan-release.mjs
 
   build:
-    name: Build ${{ matrix.artifact }}
+    name: Build ${{ matrix.mac-app-artifact }}
     needs:
       - verify
       - plan-release
@@ -98,20 +93,11 @@ jobs:
       matrix:
         include:
           - os: macos-15
-            target: bun-darwin-arm64
-            artifact: lattice-darwin-arm64
             mac-app-artifact: lattice-macos-app-darwin-arm64
             mac-appcast: lattice-macos-appcast-darwin-arm64.xml
           - os: macos-15-intel
-            target: bun-darwin-x64
-            artifact: lattice-darwin-x64
             mac-app-artifact: lattice-macos-app-darwin-x64
             mac-appcast: lattice-macos-appcast-darwin-x64.xml
-          - os: ubuntu-latest
-            target: bun-linux-x64
-            artifact: lattice-linux-x64
-            mac-app-artifact: ""
-            mac-appcast: ""
 
     steps:
       - name: Check out repository
@@ -125,25 +111,7 @@ jobs:
       - name: Install dependencies
         run: bun install --frozen-lockfile
 
-      - name: Build binary
-        run: |
-          LATTICE_TARGET="${{ matrix.target }}" \
-          LATTICE_OUTFILE="dist/${{ matrix.artifact }}/lattice" \
-          bun run build:binary
-
-      - name: Smoke test binary
-        run: ./dist/${{ matrix.artifact }}/lattice --help
-
-      - name: Package artifact
-        run: |
-          mkdir -p "artifacts/${{ matrix.artifact }}"
-          cp "dist/${{ matrix.artifact }}/lattice" "artifacts/${{ matrix.artifact }}/lattice"
-          cp README.md LICENSE scripts/install.sh "artifacts/${{ matrix.artifact }}/"
-          tar -czf "${{ matrix.artifact }}.tar.gz" -C artifacts "${{ matrix.artifact }}"
-          shasum -a 256 "${{ matrix.artifact }}.tar.gz" > "${{ matrix.artifact }}.tar.gz.sha256"
-
       - name: Package macOS app
-        if: runner.os == 'macOS'
         env:
           LATTICE_APP_VERSION: ${{ needs.plan-release.outputs.version }}
           LATTICE_APP_BUILD: ${{ needs.plan-release.outputs.app_build }}
@@ -158,63 +126,13 @@ jobs:
           LATTICE_ARTIFACT_DIR=. \
           bun run package:mac-app
 
-      - name: Upload artifact
-        uses: actions/upload-artifact@v4
-        with:
-          name: ${{ matrix.artifact }}
-          path: |
-            ${{ matrix.artifact }}.tar.gz
-            ${{ matrix.artifact }}.tar.gz.sha256
-
       - name: Upload macOS app artifact
-        if: runner.os == 'macOS'
         uses: actions/upload-artifact@v4
         with:
           name: ${{ matrix.mac-app-artifact }}
           path: |
             ${{ matrix.mac-app-artifact }}.zip
             ${{ matrix.mac-app-artifact }}.zip.sha256
-
-  raycast:
-    name: Build compiled Raycast extension artifact
-    needs:
-      - verify
-      - plan-release
-    if: needs.plan-release.outputs.release_created == 'true'
-    runs-on: ubuntu-latest
-
-    steps:
-      - name: Check out repository
-        uses: actions/checkout@v4
-
-      - name: Set up Bun
-        uses: oven-sh/setup-bun@v2
-        with:
-          bun-version: 1.3.4
-
-      - name: Install root dependencies
-        run: bun install --frozen-lockfile
-
-      - name: Install Raycast extension dependencies
-        working-directory: raycast-extension
-        run: bun install --frozen-lockfile
-
-      - name: Typecheck Raycast extension
-        working-directory: raycast-extension
-        run: bun run typecheck
-
-      - name: Package compiled Raycast extension
-        run: |
-          LATTICE_ARTIFACT_DIR=. \
-          bun run package:raycast
-
-      - name: Upload compiled Raycast artifact
-        uses: actions/upload-artifact@v4
-        with:
-          name: lattice-raycast-extension-compiled
-          path: |
-            lattice-raycast-extension-compiled.tar.gz
-            lattice-raycast-extension-compiled.tar.gz.sha256
 
   mac-appcast:
     name: Generate macOS appcast
@@ -236,7 +154,7 @@ jobs:
           path: release-artifacts
 
       - name: Resolve Sparkle tools
-        run: swift build --package-path macos/LatticeCapture -c release
+        run: swift build --package-path apps/mac -c release
 
       - name: Generate signed appcast
         env:
@@ -248,7 +166,7 @@ jobs:
             exit 1
           fi
 
-          generate_appcast="macos/LatticeCapture/.build/artifacts/sparkle/Sparkle/bin/generate_appcast"
+          generate_appcast="apps/mac/.build/artifacts/sparkle/Sparkle/bin/generate_appcast"
           for artifact in lattice-macos-app-darwin-arm64 lattice-macos-app-darwin-x64; do
             appcast_dir="release-artifacts/appcast-$artifact"
             mkdir -p "$appcast_dir"
@@ -274,7 +192,6 @@ jobs:
     needs:
       - plan-release
       - build
-      - raycast
       - mac-appcast
     if: needs.plan-release.outputs.release_created == 'true'
     runs-on: ubuntu-latest

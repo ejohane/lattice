@@ -2,7 +2,7 @@
 set -euo pipefail
 
 repo_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
-package_path="$repo_root/macos/LatticeCapture"
+package_path="$repo_root/apps/mac"
 sparkle_account="${LATTICE_SPARKLE_ACCOUNT:-lattice-dev}"
 sparkle_feed_url="${LATTICE_SPARKLE_FEED_URL:-}"
 sparkle_public_ed_key="${LATTICE_SPARKLE_PUBLIC_ED_KEY:-}"

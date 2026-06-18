@@ -2,8 +2,6 @@
 
 `icon.svg` is the canonical Lattice product icon. Product surfaces should reference this file where possible instead of keeping separate icon copies.
 
-The Raycast extension references this shared icon from `raycast-extension/package.json`.
-
 `png/` contains bitmap exports for surfaces that cannot use SVG:
 
 - `icon.png`: 512 px

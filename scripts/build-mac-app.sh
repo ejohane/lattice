@@ -2,9 +2,10 @@
 set -euo pipefail
 
 repo_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
-package_path="$repo_root/macos/LatticeCapture"
+package_path="$repo_root/apps/mac"
 configuration="${CONFIGURATION:-release}"
 app_name="Lattice"
+executable_name="Lattice"
 bundle_id="${LATTICE_BUNDLE_ID:-com.ejohane.lattice}"
 if [[ -n "${LATTICE_APP_VERSION:-}" ]]; then
   app_version="$LATTICE_APP_VERSION"
@@ -27,7 +28,7 @@ frameworks_dir="$contents_dir/Frameworks"
 swift build --package-path "$package_path" -c "$configuration"
 build_dir="$(swift build --package-path "$package_path" -c "$configuration" --show-bin-path)"
 
-binary="$build_dir/LatticeCapture"
+binary="$build_dir/$executable_name"
 if [[ ! -x "$binary" ]]; then
   printf 'Missing built executable: %s\n' "$binary" >&2
   exit 1
@@ -35,8 +36,8 @@ fi
 
 rm -rf "$app_dir"
 mkdir -p "$macos_dir" "$resources_dir" "$frameworks_dir"
-cp "$binary" "$macos_dir/LatticeCapture"
-chmod 0755 "$macos_dir/LatticeCapture"
+cp "$binary" "$macos_dir/$executable_name"
+chmod 0755 "$macos_dir/$executable_name"
 
 sparkle_framework="$build_dir/Sparkle.framework"
 if [[ ! -d "$sparkle_framework" ]]; then
@@ -45,8 +46,8 @@ if [[ ! -d "$sparkle_framework" ]]; then
 fi
 
 ditto "$sparkle_framework" "$frameworks_dir/Sparkle.framework"
-if ! otool -l "$macos_dir/LatticeCapture" | grep -q '@executable_path/../Frameworks'; then
-  install_name_tool -add_rpath "@executable_path/../Frameworks" "$macos_dir/LatticeCapture"
+if ! otool -l "$macos_dir/$executable_name" | grep -q '@executable_path/../Frameworks'; then
+  install_name_tool -add_rpath "@executable_path/../Frameworks" "$macos_dir/$executable_name"
 fi
 
 xml_escape() {
@@ -66,7 +67,7 @@ cat <<PLIST
 <plist version="1.0">
 <dict>
   <key>CFBundleExecutable</key>
-  <string>LatticeCapture</string>
+  <string>$executable_name</string>
   <key>CFBundleIdentifier</key>
   <string>$bundle_id</string>
   <key>CFBundleName</key>

@@ -30,8 +30,8 @@ jobs:
           titles drive semantic versioning and automated releases.
 
           Examples:
-            feat: add update command
-            fix(cli): handle missing vault
+            feat(mac): add recent notes menu
+            fix(notes): handle deleted active note
             ci!: replace release pipeline
           EOF
             printf '\nReceived title: %s\n' "$PR_TITLE" >&2
