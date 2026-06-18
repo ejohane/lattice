@@ -9,42 +9,24 @@
     "url": "https://github.com/ejohane/lattice.git"
   },
   "scripts": {
-    "build": "bun run build:binary",
-    "build:binary": "bash scripts/build-binary.sh",
-    "build:binary:darwin-arm64": "LATTICE_TARGET=bun-darwin-arm64 bash scripts/build-binary.sh",
-    "build:binary:darwin-x64": "LATTICE_TARGET=bun-darwin-x64 bash scripts/build-binary.sh",
-    "build:binary:linux-x64": "LATTICE_TARGET=bun-linux-x64 bash scripts/build-binary.sh",
-    "package:raycast": "bash scripts/package-raycast-extension.sh",
+    "build": "bun run mac:bundle",
     "package:mac-app": "bash scripts/package-mac-app.sh",
     "package:mac-dev-update": "bash scripts/package-mac-dev-update.sh",
-    "mac:build": "swift build --package-path macos/LatticeCapture",
-    "mac:run": "swift run --package-path macos/LatticeCapture",
+    "mac:build": "swift build --package-path apps/mac",
+    "mac:run": "swift run --package-path apps/mac",
+    "mac:test": "swift test --package-path apps/mac",
     "mac:bundle": "bash scripts/build-mac-app.sh",
-    "install:local": "bash scripts/install-local.sh",
-    "cli": "bun run src/cli.ts",
-    "capture": "bun run src/cli.ts capture",
-    "pending": "bun run src/cli.ts pending",
-    "doctor": "bun run src/cli.ts doctor",
-    "test": "bun test",
-    "typecheck": "tsc --noEmit",
-    "verify": "bun test && bun run typecheck",
+    "test": "bun run mac:test",
+    "verify": "bun run mac:test && bun run mac:build",
     "release:plan": "node scripts/plan-release.mjs",
     "release": "semantic-release",
     "release:dry-run": "semantic-release --dry-run --no-ci"
-  },
-  "dependencies": {
-    "@github/copilot-sdk": "^1.0.0",
-    "commander": "^15.0.0",
-    "openai": "^6.42.0",
-    "zod": "^4.4.3"
   },
   "devDependencies": {
     "@semantic-release/commit-analyzer": "^13.0.1",
     "@semantic-release/github": "11.0.6",
     "@semantic-release/release-notes-generator": "^14.1.1",
-    "@types/bun": "^1.3.14",
     "conventional-changelog-conventionalcommits": "^9.3.1",
-    "semantic-release": "^25.0.3",
-    "typescript": "^6.0.3"
+    "semantic-release": "^25.0.3"
   }
 }

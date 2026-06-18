@@ -2,11 +2,10 @@ node_modules/
 dist/
 .build/
 bun.lockb
-ContextVault/
-LatticeVault/
+*.zip
+*.zip.sha256
+/Lattice/
 work/
 tmp/
-raycast-extension/raycast-env.d.ts
-raycast-extension/com.*.raycast-dev.plist
 .DS_Store
 *.log
