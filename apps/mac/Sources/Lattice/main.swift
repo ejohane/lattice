@@ -1536,6 +1536,32 @@ final class DraftStore {
 }
 
 final class MarkdownEditorView: NSView, NSTextViewDelegate {
+  private struct MarkdownTableCell {
+    let contentRange: NSRange
+  }
+
+  private struct MarkdownTableRow {
+    let lineRange: NSRange
+    let cells: [MarkdownTableCell]
+    let pipeRanges: [NSRange]
+  }
+
+  private struct MarkdownTableBlock {
+    let rows: [MarkdownTableRow]
+    let alignments: [NSTextAlignment]
+
+    var fullRange: NSRange {
+      guard let first = rows.first, let last = rows.last else {
+        return NSRange(location: 0, length: 0)
+      }
+
+      return NSRange(
+        location: first.lineRange.location,
+        length: NSMaxRange(last.lineRange) - first.lineRange.location
+      )
+    }
+  }
+
   private let scrollView = NSScrollView()
   private let textView = MarkdownTextView()
   private let characterCountLabel = NSTextField(labelWithString: "0 characters")
@@ -1653,6 +1679,9 @@ final class MarkdownEditorView: NSView, NSTextViewDelegate {
     scrollView.translatesAutoresizingMaskIntoConstraints = false
 
     textView.delegate = self
+    textView.onRenderedTableActivation = { [weak self] in
+      self?.renderMarkdown()
+    }
     textView.string = ""
     textView.font = .systemFont(ofSize: 21, weight: .regular)
     textView.textColor = .labelColor
@@ -1726,15 +1755,18 @@ final class MarkdownEditorView: NSView, NSTextViewDelegate {
     let activeRanges = selectedRanges.map(\.rangeValue)
     let fullRange = NSRange(location: 0, length: storage.length)
     let codeBlockRanges = markdownCodeBlockRanges(in: storage.string as NSString)
+    var renderedTables: [MarkdownTextView.RenderedTable] = []
 
     storage.beginEditing()
     if storage.length > 0 {
       storage.setAttributes(editorTypingAttributes(), range: fullRange)
-      renderMarkdownBlocks(in: storage, codeBlockRanges: codeBlockRanges, activeRanges: activeRanges)
-      renderMarkdownInline(in: storage, skipping: codeBlockRanges, activeRanges: activeRanges)
+      renderedTables = renderMarkdownBlocks(in: storage, codeBlockRanges: codeBlockRanges, activeRanges: activeRanges)
+      let skippedRanges = codeBlockRanges + renderedTables.map(\.sourceRange)
+      renderMarkdownInline(in: storage, skipping: skippedRanges, activeRanges: activeRanges)
     }
     storage.endEditing()
 
+    textView.renderedTables = renderedTables
     textView.typingAttributes = editorTypingAttributes()
     isRenderingMarkdown = false
   }
@@ -1743,9 +1775,10 @@ final class MarkdownEditorView: NSView, NSTextViewDelegate {
     in storage: NSTextStorage,
     codeBlockRanges: [NSRange],
     activeRanges: [NSRange]
-  ) {
+  ) -> [MarkdownTextView.RenderedTable] {
     let nsString = storage.string as NSString
     var location = 0
+    var renderedTables: [MarkdownTextView.RenderedTable] = []
 
     while location < nsString.length {
       let lineRange = nsString.lineRange(for: NSRange(location: location, length: 0))
@@ -1756,6 +1789,17 @@ final class MarkdownEditorView: NSView, NSTextViewDelegate {
 
       if range(lineRange, intersectsAny: codeBlockRanges) {
         storage.addAttributes(markdownCodeBlockAttributes(), range: lineRange)
+      } else if let table = markdownTableBlock(in: nsString, from: location, codeBlockRanges: codeBlockRanges) {
+        if let renderedTable = renderMarkdownTable(
+          table,
+          in: storage,
+          nsString: nsString,
+          isActive: range(table.fullRange, containsOrTouchesAnyActive: activeRanges)
+        ) {
+          renderedTables.append(renderedTable)
+        }
+        location = NSMaxRange(table.fullRange)
+        continue
       } else if let match = firstMatch("^\\s*(#{1,6})(\\s+)(.+)$", in: line) {
         let level = min(match.range(at: 1).length, 6)
         let markerRange = shifted(match.range(at: 1), by: lineRange.location)
@@ -1806,6 +1850,212 @@ final class MarkdownEditorView: NSView, NSTextViewDelegate {
       }
 
       location = NSMaxRange(lineRange)
+    }
+
+    return renderedTables
+  }
+
+  private func markdownTableBlock(
+    in nsString: NSString,
+    from location: Int,
+    codeBlockRanges: [NSRange]
+  ) -> MarkdownTableBlock? {
+    let headerRange = nsString.lineRange(for: NSRange(location: location, length: 0))
+    guard
+      !range(headerRange, intersectsAny: codeBlockRanges),
+      let header = markdownTableRow(in: nsString, lineRange: headerRange),
+      header.cells.count >= 2
+    else {
+      return nil
+    }
+
+    let delimiterLocation = NSMaxRange(headerRange)
+    guard delimiterLocation < nsString.length else {
+      return nil
+    }
+
+    let delimiterRange = nsString.lineRange(for: NSRange(location: delimiterLocation, length: 0))
+    guard
+      !range(delimiterRange, intersectsAny: codeBlockRanges),
+      let delimiter = markdownTableRow(in: nsString, lineRange: delimiterRange),
+      delimiter.cells.count == header.cells.count,
+      let alignments = markdownTableAlignments(in: nsString, row: delimiter)
+    else {
+      return nil
+    }
+
+    var rows = [header, delimiter]
+    var nextLocation = NSMaxRange(delimiterRange)
+
+    while nextLocation < nsString.length {
+      let rowRange = nsString.lineRange(for: NSRange(location: nextLocation, length: 0))
+      guard
+        !range(rowRange, intersectsAny: codeBlockRanges),
+        let row = markdownTableRow(in: nsString, lineRange: rowRange),
+        row.cells.count > 0
+      else {
+        break
+      }
+
+      rows.append(row)
+      nextLocation = NSMaxRange(rowRange)
+    }
+
+    return MarkdownTableBlock(rows: rows, alignments: alignments)
+  }
+
+  private func markdownTableRow(in nsString: NSString, lineRange: NSRange) -> MarkdownTableRow? {
+    var bodyLength = lineRange.length
+    while bodyLength > 0 {
+      let character = nsString.character(at: lineRange.location + bodyLength - 1)
+      if character == 10 || character == 13 {
+        bodyLength -= 1
+      } else {
+        break
+      }
+    }
+
+    guard bodyLength > 0 else {
+      return nil
+    }
+
+    var pipeOffsets: [Int] = []
+    for offset in 0..<bodyLength where nsString.character(at: lineRange.location + offset) == 124 {
+      pipeOffsets.append(offset)
+    }
+
+    guard !pipeOffsets.isEmpty else {
+      return nil
+    }
+
+    var boundaries: [Int] = []
+    if pipeOffsets.first == 0 {
+      boundaries.append(contentsOf: pipeOffsets)
+    } else {
+      boundaries.append(-1)
+      boundaries.append(contentsOf: pipeOffsets)
+    }
+
+    if pipeOffsets.last != bodyLength - 1 {
+      boundaries.append(bodyLength)
+    }
+
+    guard boundaries.count >= 3 else {
+      return nil
+    }
+
+    var cells: [MarkdownTableCell] = []
+    for index in 0..<(boundaries.count - 1) {
+      let rawStart = boundaries[index] + 1
+      let rawEnd = boundaries[index + 1]
+      guard rawEnd >= rawStart else {
+        continue
+      }
+
+      let rawRange = NSRange(
+        location: lineRange.location + rawStart,
+        length: rawEnd - rawStart
+      )
+      let contentRange = trimmedRange(rawRange, in: nsString)
+      cells.append(MarkdownTableCell(contentRange: contentRange))
+    }
+
+    guard cells.count >= 2 else {
+      return nil
+    }
+
+    let pipeRanges = pipeOffsets.map {
+      NSRange(location: lineRange.location + $0, length: 1)
+    }
+    return MarkdownTableRow(lineRange: lineRange, cells: cells, pipeRanges: pipeRanges)
+  }
+
+  private func markdownTableAlignments(
+    in nsString: NSString,
+    row: MarkdownTableRow
+  ) -> [NSTextAlignment]? {
+    var alignments: [NSTextAlignment] = []
+
+    for cell in row.cells {
+      let marker = nsString.substring(with: cell.contentRange)
+      guard firstMatch("^:?-{3,}:?$", in: marker) != nil else {
+        return nil
+      }
+
+      let isLeftAligned = marker.hasPrefix(":")
+      let isRightAligned = marker.hasSuffix(":")
+      switch (isLeftAligned, isRightAligned) {
+      case (true, true):
+        alignments.append(.center)
+      case (false, true):
+        alignments.append(.right)
+      default:
+        alignments.append(.left)
+      }
+    }
+
+    return alignments
+  }
+
+  private func renderMarkdownTable(
+    _ table: MarkdownTableBlock,
+    in storage: NSTextStorage,
+    nsString: NSString,
+    isActive: Bool
+  ) -> MarkdownTextView.RenderedTable? {
+    if isActive {
+      storage.addAttributes(markdownTableEditingSourceAttributes(), range: table.fullRange)
+      return nil
+    }
+
+    var renderedRows: [MarkdownTextView.RenderedTable.Row] = []
+
+    for (rowIndex, row) in table.rows.enumerated() {
+      let rowKind = markdownTableRowKind(at: rowIndex)
+      storage.addAttributes(
+        rowKind == .delimiter ? markdownCollapsedTableDelimiterAttributes() : markdownHiddenTableSourceAttributes(),
+        range: row.lineRange
+      )
+
+      guard rowKind != .delimiter else {
+        continue
+      }
+
+      let cells = row.cells.map { cell in
+        nsString.substring(with: cell.contentRange)
+      }
+      renderedRows.append(MarkdownTextView.RenderedTable.Row(
+        lineRange: row.lineRange,
+        cells: cells,
+        isHeader: rowKind == .header
+      ))
+    }
+
+    guard !renderedRows.isEmpty else {
+      return nil
+    }
+
+    return MarkdownTextView.RenderedTable(
+      sourceRange: table.fullRange,
+      rows: renderedRows,
+      alignments: table.alignments
+    )
+  }
+
+  private enum MarkdownTableRowKind {
+    case header
+    case delimiter
+    case body
+  }
+
+  private func markdownTableRowKind(at rowIndex: Int) -> MarkdownTableRowKind {
+    switch rowIndex {
+    case 0:
+      return .header
+    case 1:
+      return .delimiter
+    default:
+      return .body
     }
   }
 
@@ -1979,6 +2229,25 @@ final class MarkdownEditorView: NSView, NSTextViewDelegate {
     NSRange(location: range.location + offset, length: range.length)
   }
 
+  private func trimmedRange(_ range: NSRange, in nsString: NSString) -> NSRange {
+    var location = range.location
+    var end = NSMaxRange(range)
+
+    while location < end && isMarkdownTablePadding(nsString.character(at: location)) {
+      location += 1
+    }
+
+    while end > location && isMarkdownTablePadding(nsString.character(at: end - 1)) {
+      end -= 1
+    }
+
+    return NSRange(location: location, length: end - location)
+  }
+
+  private func isMarkdownTablePadding(_ character: unichar) -> Bool {
+    character == 32 || character == 9
+  }
+
   private func range(_ range: NSRange, intersectsAny ranges: [NSRange]) -> Bool {
     ranges.contains { NSIntersectionRange(range, $0).length > 0 }
   }
@@ -1990,6 +2259,16 @@ final class MarkdownEditorView: NSView, NSTextViewDelegate {
       }
 
       return activeRange.location > range.location && activeRange.location < NSMaxRange(range)
+    }
+  }
+
+  private func range(_ range: NSRange, containsOrTouchesAnyActive activeRanges: [NSRange]) -> Bool {
+    activeRanges.contains { activeRange in
+      if activeRange.length > 0 {
+        return NSIntersectionRange(range, activeRange).length > 0
+      }
+
+      return activeRange.location >= range.location && activeRange.location <= NSMaxRange(range)
     }
   }
 
@@ -2091,6 +2370,48 @@ final class MarkdownEditorView: NSView, NSTextViewDelegate {
     ]
   }
 
+  private func markdownHiddenTableSourceAttributes() -> [NSAttributedString.Key: Any] {
+    let paragraphStyle = NSMutableParagraphStyle()
+    paragraphStyle.lineSpacing = 8
+    paragraphStyle.paragraphSpacing = 0
+
+    return [
+      .font: markdownTableFont(weight: .regular),
+      .foregroundColor: NSColor.clear,
+      .paragraphStyle: paragraphStyle
+    ]
+  }
+
+  private func markdownCollapsedTableDelimiterAttributes() -> [NSAttributedString.Key: Any] {
+    let paragraphStyle = NSMutableParagraphStyle()
+    paragraphStyle.minimumLineHeight = 1
+    paragraphStyle.maximumLineHeight = 1
+    paragraphStyle.lineSpacing = 0
+    paragraphStyle.paragraphSpacing = 0
+
+    return [
+      .font: NSFont.systemFont(ofSize: 1, weight: .regular),
+      .foregroundColor: NSColor.clear,
+      .paragraphStyle: paragraphStyle
+    ]
+  }
+
+  private func markdownTableEditingSourceAttributes() -> [NSAttributedString.Key: Any] {
+    let paragraphStyle = NSMutableParagraphStyle()
+    paragraphStyle.lineSpacing = 4
+    paragraphStyle.paragraphSpacing = 8
+
+    return [
+      .font: markdownTableFont(weight: .regular),
+      .foregroundColor: NSColor.labelColor,
+      .paragraphStyle: paragraphStyle
+    ]
+  }
+
+  private func markdownTableFont(weight: NSFont.Weight) -> NSFont {
+    NSFont.monospacedSystemFont(ofSize: 19, weight: weight)
+  }
+
   private func markdownInlineCodeAttributes() -> [NSAttributedString.Key: Any] {
     [
       .font: markdownMonospaceFont(),
@@ -2190,14 +2511,51 @@ final class MarkdownEditorView: NSView, NSTextViewDelegate {
 }
 
 final class MarkdownTextView: NSTextView {
+  struct RenderedTable {
+    struct Row {
+      let lineRange: NSRange
+      let cells: [String]
+      let isHeader: Bool
+    }
+
+    let sourceRange: NSRange
+    let rows: [Row]
+    let alignments: [NSTextAlignment]
+  }
+
   private struct MarkdownListMarker {
     let lineContentRange: NSRange
     let continuationPrefix: String
     let hasContent: Bool
   }
 
+  var renderedTables: [RenderedTable] = [] {
+    didSet {
+      needsDisplay = true
+    }
+  }
+  var onRenderedTableActivation: (() -> Void)?
+
   override var acceptsFirstResponder: Bool {
     true
+  }
+
+  override func draw(_ dirtyRect: NSRect) {
+    super.draw(dirtyRect)
+    drawRenderedTables()
+  }
+
+  override func mouseDown(with event: NSEvent) {
+    let point = convert(event.locationInWindow, from: nil)
+    let flippedPoint = NSPoint(x: point.x, y: bounds.height - point.y)
+    if let table = renderedTable(at: point) ?? renderedTable(at: flippedPoint) {
+      window?.makeFirstResponder(self)
+      setSelectedRange(NSRange(location: table.sourceRange.location, length: 0))
+      onRenderedTableActivation?()
+      return
+    }
+
+    super.mouseDown(with: event)
   }
 
   override func insertNewline(_ sender: Any?) {
@@ -2338,5 +2696,230 @@ final class MarkdownTextView: NSTextView {
     }
 
     return regex.firstMatch(in: string, range: NSRange(location: 0, length: (string as NSString).length))
+  }
+
+  private func drawRenderedTables() {
+    guard
+      !renderedTables.isEmpty,
+      let layoutManager,
+      let textContainer
+    else {
+      return
+    }
+
+    let origin = textContainerOrigin
+    for table in renderedTables {
+      guard let metrics = renderedTableMetrics(
+        table,
+        layoutManager: layoutManager,
+        textContainer: textContainer,
+        origin: origin
+      ) else {
+        continue
+      }
+
+      var rowY = metrics.frame.minY
+
+      for (rowIndex, row) in table.rows.enumerated() {
+        let rowRect = NSRect(
+          x: metrics.frame.minX,
+          y: rowY,
+          width: metrics.frame.width,
+          height: metrics.rowHeight
+        )
+        drawRenderedTableRowBackground(row, rowIndex: rowIndex, in: rowRect)
+        drawRenderedTableGrid(row: row, columnWidths: metrics.columnWidths, in: rowRect)
+        drawRenderedTableCells(row, alignments: table.alignments, columnWidths: metrics.columnWidths, in: rowRect)
+        rowY += metrics.rowHeight
+      }
+    }
+  }
+
+  private struct RenderedTableMetrics {
+    let frame: NSRect
+    let rowHeight: CGFloat
+    let columnWidths: [CGFloat]
+  }
+
+  private func renderedTable(
+    at point: NSPoint
+  ) -> RenderedTable? {
+    guard let layoutManager, let textContainer else {
+      return nil
+    }
+
+    let origin = textContainerOrigin
+    return renderedTables.first { table in
+      guard let metrics = renderedTableMetrics(
+        table,
+        layoutManager: layoutManager,
+        textContainer: textContainer,
+        origin: origin
+      ) else {
+        return false
+      }
+
+      return metrics.frame.contains(point)
+    }
+  }
+
+  private func renderedTableMetrics(
+    _ table: RenderedTable,
+    layoutManager: NSLayoutManager,
+    textContainer: NSTextContainer,
+    origin: NSPoint
+  ) -> RenderedTableMetrics? {
+    let rowRects = table.rows.map {
+      lineRect(for: $0.lineRange, layoutManager: layoutManager, textContainer: textContainer, origin: origin)
+    }
+    guard rowRects.count == table.rows.count, let firstRect = rowRects.first else {
+      return nil
+    }
+
+    let columnWidths = renderedTableColumnWidths(table)
+    let tableWidth = columnWidths.reduce(0, +)
+    let rowHeight = max(firstRect.height, 30)
+    return RenderedTableMetrics(
+      frame: NSRect(
+        x: firstRect.minX,
+        y: firstRect.minY,
+        width: tableWidth,
+        height: rowHeight * CGFloat(table.rows.count)
+      ),
+      rowHeight: rowHeight,
+      columnWidths: columnWidths
+    )
+  }
+
+  private func lineRect(
+    for characterRange: NSRange,
+    layoutManager: NSLayoutManager,
+    textContainer: NSTextContainer,
+    origin: NSPoint
+  ) -> NSRect {
+    let glyphRange = layoutManager.glyphRange(forCharacterRange: characterRange, actualCharacterRange: nil)
+    guard glyphRange.location != NSNotFound, glyphRange.length > 0 else {
+      return .zero
+    }
+
+    var effectiveRange = NSRange(location: 0, length: 0)
+    let rect = layoutManager.lineFragmentUsedRect(
+      forGlyphAt: glyphRange.location,
+      effectiveRange: &effectiveRange
+    )
+
+    return rect.offsetBy(dx: origin.x, dy: origin.y)
+  }
+
+  private func renderedTableColumnWidths(_ table: RenderedTable) -> [CGFloat] {
+    let bodyFont = renderedTableBodyFont()
+    let headerFont = renderedTableHeaderFont()
+    let columnCount = table.rows.map(\.cells.count).max() ?? 0
+
+    return (0..<columnCount).map { columnIndex in
+      let widest = table.rows.reduce(CGFloat(0)) { width, row in
+        guard columnIndex < row.cells.count else {
+          return width
+        }
+
+        let font = row.isHeader ? headerFont : bodyFont
+        let size = (row.cells[columnIndex] as NSString).size(withAttributes: [.font: font])
+        return max(width, ceil(size.width))
+      }
+
+      return max(widest + 34, 72)
+    }
+  }
+
+  private func drawRenderedTableRowBackground(
+    _ row: RenderedTable.Row,
+    rowIndex: Int,
+    in rect: NSRect
+  ) {
+    let fillColor: NSColor
+    if row.isHeader {
+      fillColor = NSColor.controlAccentColor.withAlphaComponent(0.15)
+    } else {
+      fillColor = rowIndex.isMultiple(of: 2)
+        ? NSColor.controlBackgroundColor.withAlphaComponent(0.42)
+        : NSColor.controlBackgroundColor.withAlphaComponent(0.24)
+    }
+
+    fillColor.setFill()
+    rect.fill()
+  }
+
+  private func drawRenderedTableGrid(
+    row: RenderedTable.Row,
+    columnWidths: [CGFloat],
+    in rect: NSRect
+  ) {
+    let path = NSBezierPath()
+    path.lineWidth = 1
+
+    path.move(to: NSPoint(x: rect.minX, y: rect.minY))
+    path.line(to: NSPoint(x: rect.maxX, y: rect.minY))
+    path.move(to: NSPoint(x: rect.minX, y: rect.maxY))
+    path.line(to: NSPoint(x: rect.maxX, y: rect.maxY))
+
+    var x = rect.minX
+    path.move(to: NSPoint(x: x, y: rect.minY))
+    path.line(to: NSPoint(x: x, y: rect.maxY))
+    for width in columnWidths {
+      x += width
+      path.move(to: NSPoint(x: x, y: rect.minY))
+      path.line(to: NSPoint(x: x, y: rect.maxY))
+    }
+
+    NSColor.separatorColor.withAlphaComponent(row.isHeader ? 0.8 : 0.55).setStroke()
+    path.stroke()
+  }
+
+  private func drawRenderedTableCells(
+    _ row: RenderedTable.Row,
+    alignments: [NSTextAlignment],
+    columnWidths: [CGFloat],
+    in rect: NSRect
+  ) {
+    let font = row.isHeader ? renderedTableHeaderFont() : renderedTableBodyFont()
+    let attributes: [NSAttributedString.Key: Any] = [
+      .font: font,
+      .foregroundColor: NSColor.labelColor
+    ]
+    let padding: CGFloat = 14
+    var x = rect.minX
+
+    for columnIndex in columnWidths.indices {
+      defer {
+        x += columnWidths[columnIndex]
+      }
+
+      guard columnIndex < row.cells.count else {
+        continue
+      }
+
+      let text = row.cells[columnIndex] as NSString
+      let size = text.size(withAttributes: attributes)
+      let alignment = alignments.indices.contains(columnIndex) ? alignments[columnIndex] : .left
+      let textX: CGFloat
+      switch alignment {
+      case .right:
+        textX = x + columnWidths[columnIndex] - padding - size.width
+      case .center:
+        textX = x + (columnWidths[columnIndex] - size.width) / 2
+      default:
+        textX = x + padding
+      }
+      let textY = rect.midY - size.height / 2
+      text.draw(at: NSPoint(x: textX, y: textY), withAttributes: attributes)
+    }
+  }
+
+  private func renderedTableBodyFont() -> NSFont {
+    NSFont.monospacedSystemFont(ofSize: 19, weight: .regular)
+  }
+
+  private func renderedTableHeaderFont() -> NSFont {
+    NSFont.monospacedSystemFont(ofSize: 19, weight: .semibold)
   }
 }
