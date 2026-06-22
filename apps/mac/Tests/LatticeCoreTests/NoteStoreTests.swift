@@ -98,6 +98,20 @@ struct NoteStoreTests {
     #expect(fixture.store.activeNoteURL()?.path == note.url.path)
   }
 
+  @Test("allows clearing an existing markdown note")
+  func allowsClearingExistingMarkdownNote() throws {
+    let fixture = try Fixture()
+    defer { fixture.cleanup() }
+
+    try fixture.store.selectNotesFolder(fixture.root)
+    let note = try fixture.store.createNote(body: "First", now: fixture.date)
+    let updated = try fixture.store.updateNote(note, body: "")
+
+    #expect(updated.url == note.url)
+    #expect(try String(contentsOf: note.url, encoding: .utf8) == "")
+    #expect(fixture.store.activeNoteURL()?.path == note.url.path)
+  }
+
   @Test("restores active note when the file exists")
   func restoresActiveNote() throws {
     let fixture = try Fixture()
@@ -133,6 +147,23 @@ struct NoteStoreTests {
     #expect(updated == note)
     #expect(try String(contentsOf: note.url, encoding: .utf8) == "Second\n")
     #expect(try session.save(body: "Second") == .unchanged)
+  }
+
+  @Test("editing session allows clearing an active note")
+  func editingSessionAllowsClearingActiveNote() throws {
+    let fixture = try Fixture()
+    defer { fixture.cleanup() }
+
+    try fixture.store.selectNotesFolder(fixture.root)
+    let session = NoteEditingSession(store: fixture.store)
+    guard case .saved(let note) = try session.save(body: "First") else {
+      Issue.record("Expected first non-empty save to create a note")
+      return
+    }
+
+    #expect(try session.save(body: "") == .saved(note))
+    #expect(try String(contentsOf: note.url, encoding: .utf8) == "")
+    #expect(session.savedBody == "")
   }
 
   @Test("editing session restores the active note body")

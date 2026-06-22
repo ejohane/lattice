@@ -366,9 +366,6 @@ public final class NoteStore {
   @discardableResult
   public func updateNote(_ note: SavedNote, body: String) throws -> SavedNote {
     let trimmedBody = body.trimmingCharacters(in: .whitespacesAndNewlines)
-    guard !trimmedBody.isEmpty else {
-      throw NoteStoreError.emptyNote
-    }
     guard fileManager.fileExists(atPath: note.url.path) else {
       throw NoteStoreError.missingNote(note.url.path)
     }
@@ -431,7 +428,7 @@ public final class NoteStore {
 
   private func writeNoteBody(_ body: String, to url: URL) throws {
     try createDirectory(url.deletingLastPathComponent())
-    let output = body.hasSuffix("\n") ? body : "\(body)\n"
+    let output = body.isEmpty || body.hasSuffix("\n") ? body : "\(body)\n"
     try output.write(to: url, atomically: true, encoding: .utf8)
   }
 
