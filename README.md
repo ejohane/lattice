@@ -36,9 +36,13 @@ installs the app to `~/Applications` by default.
 Override the destination or version with environment variables:
 
 ```bash
-LATTICE_VERSION=v1.7.0 LATTICE_APP_INSTALL_DIR=/Applications \
-  curl -fsSL https://raw.githubusercontent.com/ejohane/lattice/main/scripts/install-mac-app.sh | sh
+curl -fsSL https://raw.githubusercontent.com/ejohane/lattice/main/scripts/install-mac-app.sh \
+  | LATTICE_VERSION=v1.7.0 LATTICE_APP_INSTALL_DIR=/Applications sh
 ```
+
+The installer always downloads a GitHub release. To build and run the current
+checkout instead, use `bun run mac:run` or build a local app bundle with
+`bun run mac:bundle`.
 
 ## Develop
 
