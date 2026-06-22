@@ -179,6 +179,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
 @MainActor
 final class MainWindowController: NSWindowController, NSWindowDelegate {
+  private let workspaceView = EditorWorkspaceView()
   private let editorView = MarkdownEditorView()
   private let onVisibilityChange: () -> Void
 
@@ -198,7 +199,8 @@ final class MainWindowController: NSWindowController, NSWindowDelegate {
     window.minSize = NSSize(width: 520, height: 360)
     window.center()
     window.collectionBehavior = [.canJoinAllSpaces, .fullScreenAuxiliary]
-    window.contentView = editorView
+    workspaceView.editorView = editorView
+    window.contentView = workspaceView
 
     super.init(window: window)
     window.delegate = self
@@ -776,11 +778,13 @@ final class ShortcutRecorderField: NSTextField {
 
 extension MainWindowController: NSToolbarDelegate {
   func toolbarAllowedItemIdentifiers(_ toolbar: NSToolbar) -> [NSToolbarItem.Identifier] {
-    EditorToolbarItem.allCases.map { NSToolbarItem.Identifier($0.rawValue) }
+    [NSToolbarItem.Identifier("toggleSidebar"), .flexibleSpace]
+      + EditorToolbarItem.allCases.map { NSToolbarItem.Identifier($0.rawValue) }
   }
 
   func toolbarDefaultItemIdentifiers(_ toolbar: NSToolbar) -> [NSToolbarItem.Identifier] {
-    toolbarAllowedItemIdentifiers(toolbar)
+    [NSToolbarItem.Identifier("toggleSidebar"), .flexibleSpace]
+      + EditorToolbarItem.allCases.map { NSToolbarItem.Identifier($0.rawValue) }
   }
 
   func toolbar(
@@ -788,6 +792,17 @@ extension MainWindowController: NSToolbarDelegate {
     itemForItemIdentifier itemIdentifier: NSToolbarItem.Identifier,
     willBeInsertedIntoToolbar flag: Bool
   ) -> NSToolbarItem? {
+    if itemIdentifier.rawValue == "toggleSidebar" {
+      let item = NSToolbarItem(itemIdentifier: itemIdentifier)
+      item.label = "Sidebar"
+      item.paletteLabel = "Sidebar"
+      item.toolTip = "Show or hide notes sidebar"
+      item.image = NSImage(systemSymbolName: "sidebar.left", accessibilityDescription: "Sidebar")
+      item.target = self
+      item.action = #selector(toggleSidebar)
+      return item
+    }
+
     guard let itemKind = EditorToolbarItem(rawValue: itemIdentifier.rawValue) else {
       return nil
     }
@@ -800,6 +815,10 @@ extension MainWindowController: NSToolbarDelegate {
     item.target = self
     item.action = itemKind.action
     return item
+  }
+
+  @objc func toggleSidebar() {
+    workspaceView.toggleSidebar()
   }
 
   @objc func insertHeading() {
@@ -913,6 +932,135 @@ enum MarkdownCommand {
   case bulletList
   case code
   case link
+}
+
+final class EditorWorkspaceView: NSView {
+  private let sidebarView = NotesSidebarView()
+  private let separatorView = NSBox()
+  private var sidebarWidthConstraint: NSLayoutConstraint?
+  private var sidebarVisible = false
+
+  var editorView: MarkdownEditorView? {
+    didSet {
+      oldValue?.removeFromSuperview()
+      guard let editorView else {
+        return
+      }
+
+      editorView.translatesAutoresizingMaskIntoConstraints = false
+      addSubview(editorView)
+      NSLayoutConstraint.activate([
+        editorView.leadingAnchor.constraint(equalTo: separatorView.trailingAnchor),
+        editorView.trailingAnchor.constraint(equalTo: trailingAnchor),
+        editorView.topAnchor.constraint(equalTo: topAnchor),
+        editorView.bottomAnchor.constraint(equalTo: bottomAnchor)
+      ])
+    }
+  }
+
+  override init(frame frameRect: NSRect) {
+    super.init(frame: frameRect)
+    buildView()
+    setSidebarVisible(false, animate: false)
+  }
+
+  @available(*, unavailable)
+  required init?(coder: NSCoder) {
+    fatalError("init(coder:) has not been implemented")
+  }
+
+  override var isFlipped: Bool {
+    true
+  }
+
+  func toggleSidebar() {
+    setSidebarVisible(!sidebarVisible, animate: true)
+  }
+
+  private func buildView() {
+    wantsLayer = true
+    layer?.backgroundColor = NSColor.windowBackgroundColor.cgColor
+
+    sidebarView.translatesAutoresizingMaskIntoConstraints = false
+    separatorView.boxType = .separator
+    separatorView.translatesAutoresizingMaskIntoConstraints = false
+
+    addSubview(sidebarView)
+    addSubview(separatorView)
+
+    let widthConstraint = sidebarView.widthAnchor.constraint(equalToConstant: 0)
+    sidebarWidthConstraint = widthConstraint
+
+    NSLayoutConstraint.activate([
+      sidebarView.leadingAnchor.constraint(equalTo: leadingAnchor),
+      sidebarView.topAnchor.constraint(equalTo: topAnchor),
+      sidebarView.bottomAnchor.constraint(equalTo: bottomAnchor),
+      widthConstraint,
+
+      separatorView.leadingAnchor.constraint(equalTo: sidebarView.trailingAnchor),
+      separatorView.topAnchor.constraint(equalTo: topAnchor),
+      separatorView.bottomAnchor.constraint(equalTo: bottomAnchor),
+      separatorView.widthAnchor.constraint(equalToConstant: 1)
+    ])
+  }
+
+  private func setSidebarVisible(_ visible: Bool, animate: Bool) {
+    sidebarVisible = visible
+    sidebarWidthConstraint?.constant = visible ? 236 : 0
+    sidebarView.isHidden = !visible
+    separatorView.isHidden = !visible
+
+    guard animate else {
+      return
+    }
+
+    NSAnimationContext.runAnimationGroup { context in
+      context.duration = 0.18
+      context.allowsImplicitAnimation = true
+      layoutSubtreeIfNeeded()
+    }
+  }
+}
+
+final class NotesSidebarView: NSView {
+  override init(frame frameRect: NSRect) {
+    super.init(frame: frameRect)
+    buildView()
+  }
+
+  @available(*, unavailable)
+  required init?(coder: NSCoder) {
+    fatalError("init(coder:) has not been implemented")
+  }
+
+  private func buildView() {
+    wantsLayer = true
+    layer?.backgroundColor = NSColor.controlBackgroundColor.withAlphaComponent(0.72).cgColor
+
+    let titleLabel = NSTextField(labelWithString: "Notes")
+    titleLabel.font = .systemFont(ofSize: 15, weight: .semibold)
+    titleLabel.textColor = .secondaryLabelColor
+
+    let currentNoteLabel = NSTextField(labelWithString: "Current Note")
+    currentNoteLabel.font = .systemFont(ofSize: 13, weight: .medium)
+    currentNoteLabel.textColor = .labelColor
+
+    let stack = NSStackView(views: [titleLabel, currentNoteLabel])
+    stack.orientation = .vertical
+    stack.alignment = .leading
+    stack.spacing = 14
+    stack.edgeInsets = NSEdgeInsets(top: 72, left: 18, bottom: 18, right: 14)
+    stack.translatesAutoresizingMaskIntoConstraints = false
+
+    addSubview(stack)
+
+    NSLayoutConstraint.activate([
+      stack.leadingAnchor.constraint(equalTo: leadingAnchor),
+      stack.trailingAnchor.constraint(equalTo: trailingAnchor),
+      stack.topAnchor.constraint(equalTo: topAnchor),
+      stack.bottomAnchor.constraint(lessThanOrEqualTo: bottomAnchor)
+    ])
+  }
 }
 
 final class MarkdownEditorView: NSView, NSTextViewDelegate {
