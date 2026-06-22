@@ -359,11 +359,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 @MainActor
 final class MainWindowController: NSWindowController, NSWindowDelegate {
   private let noteStore: NoteStore
+  private let session: NoteEditingSession
+  private let browserView = NotesBrowserView()
   private let editorView: MarkdownEditorView
   private let onVisibilityChange: () -> Void
   private var autosaveWorkItem: DispatchWorkItem?
-  private var activeNote: SavedNote?
-  private var lastAutosavedBody = ""
   private let autosaveDelay: TimeInterval = 0.8
 
   init(
@@ -371,10 +371,11 @@ final class MainWindowController: NSWindowController, NSWindowDelegate {
     onVisibilityChange: @escaping () -> Void
   ) {
     self.noteStore = noteStore
+    self.session = NoteEditingSession(store: noteStore)
     self.editorView = MarkdownEditorView()
     self.onVisibilityChange = onVisibilityChange
     let window = NSWindow(
-      contentRect: NSRect(x: 0, y: 0, width: 420, height: 780),
+      contentRect: NSRect(x: 0, y: 0, width: 760, height: 780),
       styleMask: [.titled, .closable, .miniaturizable, .resizable, .fullSizeContentView],
       backing: .buffered,
       defer: false
@@ -384,15 +385,19 @@ final class MainWindowController: NSWindowController, NSWindowDelegate {
     window.titleVisibility = .hidden
     window.titlebarAppearsTransparent = true
     window.isReleasedWhenClosed = false
-    window.minSize = NSSize(width: 380, height: 420)
+    window.minSize = NSSize(width: 640, height: 420)
     window.center()
     window.collectionBehavior = [.canJoinAllSpaces, .fullScreenAuxiliary]
-    window.contentView = editorView
 
     super.init(window: window)
+    window.contentView = makeContentView()
     window.delegate = self
     window.toolbar = makeToolbar()
     restoreActiveNote()
+    reloadNotes()
+    browserView.onSelectNote = { [weak self] note in
+      self?.open(note)
+    }
     editorView.onTextChange = { [weak self] _ in
       self?.scheduleAutosave()
     }
@@ -415,6 +420,33 @@ final class MainWindowController: NSWindowController, NSWindowDelegate {
     toolbar.allowsUserCustomization = false
     toolbar.showsBaselineSeparator = false
     return toolbar
+  }
+
+  private func makeContentView() -> NSView {
+    let contentView = WindowBackgroundView()
+    let splitView = NSSplitView()
+    splitView.isVertical = true
+    splitView.dividerStyle = .thin
+    splitView.translatesAutoresizingMaskIntoConstraints = false
+
+    browserView.translatesAutoresizingMaskIntoConstraints = false
+    editorView.translatesAutoresizingMaskIntoConstraints = false
+
+    splitView.addArrangedSubview(browserView)
+    splitView.addArrangedSubview(editorView)
+    contentView.addSubview(splitView)
+
+    NSLayoutConstraint.activate([
+      splitView.leadingAnchor.constraint(equalTo: contentView.leadingAnchor),
+      splitView.trailingAnchor.constraint(equalTo: contentView.trailingAnchor),
+      splitView.topAnchor.constraint(equalTo: contentView.topAnchor),
+      splitView.bottomAnchor.constraint(equalTo: contentView.bottomAnchor),
+      browserView.widthAnchor.constraint(equalToConstant: 220),
+      browserView.widthAnchor.constraint(greaterThanOrEqualToConstant: 180),
+      editorView.widthAnchor.constraint(greaterThanOrEqualToConstant: 360)
+    ])
+
+    return contentView
   }
 
   override func showWindow(_ sender: Any?) {
@@ -476,28 +508,18 @@ final class MainWindowController: NSWindowController, NSWindowDelegate {
     autosaveWorkItem?.cancel()
     autosaveWorkItem = nil
 
-    let body = normalizedBody(editorView.text)
-    guard activeNote != nil || !body.isEmpty else {
-      return true
-    }
-    guard body != lastAutosavedBody else {
-      return true
-    }
-
     do {
-      let note: SavedNote
-      if let activeNote {
-        note = try noteStore.updateNote(activeNote, body: body)
-      } else {
-        note = try noteStore.createNote(body: body)
-      }
-      activeNote = note
-      lastAutosavedBody = body
-      editorView.clearStoredDraftIfUnchanged(body)
-      if showStatus {
+      switch try session.save(body: editorView.text) {
+      case .skippedEmptyDraft, .unchanged:
+        return true
+      case .saved(let note):
+        editorView.clearStoredDraftIfUnchanged(session.savedBody)
+        reloadNotes(selecting: note)
+        if showStatus {
         editorView.showStatus("Autosaved \(note.title)")
+        }
+        return true
       }
-      return true
     } catch {
       presentSaveError(error)
       return false
@@ -505,23 +527,196 @@ final class MainWindowController: NSWindowController, NSWindowDelegate {
   }
 
   private func restoreActiveNote() {
-    guard let note = noteStore.restoreActiveNote() else {
+    do {
+      guard let restored = try session.restoreActiveNote() else {
+        return
+      }
+      editorView.setText(restored.body)
+      editorView.clearStoredDraftIfUnchanged(session.savedBody)
+    } catch {
+      presentSaveError(error)
+    }
+  }
+
+  private func open(_ note: SavedNote) {
+    guard autosaveCurrentNote(showStatus: false) else {
       return
     }
 
     do {
-      let body = try noteStore.body(for: note)
-      activeNote = note
-      lastAutosavedBody = normalizedBody(body)
-      editorView.setText(body)
-      editorView.clearStoredDraftIfUnchanged(lastAutosavedBody)
+      let restored = try session.open(note)
+      editorView.setText(restored.body)
+      editorView.clearStoredDraftIfUnchanged(session.savedBody)
+      reloadNotes(selecting: restored.note)
+      editorView.showStatus("Opened \(restored.note.title)")
+      editorView.focus()
     } catch {
-      noteStore.clearActiveNote()
+      presentSaveError(error)
     }
   }
 
-  private func normalizedBody(_ body: String) -> String {
-    body.trimmingCharacters(in: .whitespacesAndNewlines)
+  private func reloadNotes(selecting selectedNote: SavedNote? = nil) {
+    do {
+      let sections = try noteStore.listNotes()
+      browserView.reload(sections: sections, selectedNote: selectedNote ?? session.currentNote)
+    } catch {
+      browserView.showError(error.localizedDescription)
+    }
+  }
+}
+
+@MainActor
+final class NotesBrowserView: NSView, NSTableViewDataSource, NSTableViewDelegate {
+  private enum Row {
+    case date(String)
+    case note(SavedNote)
+  }
+
+  private let scrollView = NSScrollView()
+  private let tableView = NSTableView()
+  private var rows: [Row] = []
+  private var isUpdatingSelection = false
+  var onSelectNote: ((SavedNote) -> Void)?
+
+  override init(frame frameRect: NSRect) {
+    super.init(frame: frameRect)
+    buildView()
+  }
+
+  @available(*, unavailable)
+  required init?(coder: NSCoder) {
+    fatalError("init(coder:) has not been implemented")
+  }
+
+  func reload(sections: [NoteSection], selectedNote: SavedNote?) {
+    rows = sections.flatMap { section -> [Row] in
+      [.date(section.dateString)] + section.notes.map { .note($0) }
+    }
+    tableView.reloadData()
+
+    guard let selectedNote,
+          let rowIndex = rows.firstIndex(where: { row in
+            if case .note(let note) = row {
+              return note == selectedNote
+            }
+            return false
+          })
+    else {
+      isUpdatingSelection = true
+      tableView.deselectAll(nil)
+      isUpdatingSelection = false
+      return
+    }
+    isUpdatingSelection = true
+    tableView.selectRowIndexes(IndexSet(integer: rowIndex), byExtendingSelection: false)
+    tableView.scrollRowToVisible(rowIndex)
+    isUpdatingSelection = false
+  }
+
+  func showError(_ message: String) {
+    rows = [.date(message)]
+    tableView.reloadData()
+  }
+
+  func numberOfRows(in tableView: NSTableView) -> Int {
+    rows.count
+  }
+
+  func tableView(
+    _ tableView: NSTableView,
+    viewFor tableColumn: NSTableColumn?,
+    row: Int
+  ) -> NSView? {
+    guard rows.indices.contains(row) else {
+      return nil
+    }
+
+    let identifier = NSUserInterfaceItemIdentifier("NoteBrowserCell")
+    let textField = tableView.makeView(withIdentifier: identifier, owner: self) as? NSTextField
+      ?? NSTextField(labelWithString: "")
+    textField.identifier = identifier
+    textField.lineBreakMode = .byTruncatingMiddle
+    textField.maximumNumberOfLines = 1
+
+    switch rows[row] {
+    case .date(let dateString):
+      textField.stringValue = formattedDate(dateString)
+      textField.font = .systemFont(ofSize: 11, weight: .semibold)
+      textField.textColor = .secondaryLabelColor
+    case .note(let note):
+      textField.stringValue = note.title
+      textField.font = .systemFont(ofSize: 13, weight: .regular)
+      textField.textColor = .labelColor
+    }
+
+    return textField
+  }
+
+  func tableView(_ tableView: NSTableView, isGroupRow row: Int) -> Bool {
+    guard rows.indices.contains(row) else {
+      return false
+    }
+    if case .date = rows[row] {
+      return true
+    }
+    return false
+  }
+
+  func tableViewSelectionDidChange(_ notification: Notification) {
+    guard !isUpdatingSelection else {
+      return
+    }
+    let row = tableView.selectedRow
+    guard rows.indices.contains(row), case .note(let note) = rows[row] else {
+      return
+    }
+    onSelectNote?(note)
+  }
+
+  private func buildView() {
+    wantsLayer = true
+    updateBackgroundColor()
+
+    let column = NSTableColumn(identifier: NSUserInterfaceItemIdentifier("Notes"))
+    column.title = "Notes"
+    tableView.addTableColumn(column)
+    tableView.headerView = nil
+    tableView.dataSource = self
+    tableView.delegate = self
+    tableView.rowHeight = 28
+    tableView.intercellSpacing = NSSize(width: 0, height: 4)
+    tableView.selectionHighlightStyle = .regular
+    tableView.backgroundColor = .clear
+
+    scrollView.drawsBackground = false
+    scrollView.hasVerticalScroller = true
+    scrollView.autohidesScrollers = true
+    scrollView.documentView = tableView
+    scrollView.translatesAutoresizingMaskIntoConstraints = false
+
+    addSubview(scrollView)
+    NSLayoutConstraint.activate([
+      scrollView.leadingAnchor.constraint(equalTo: leadingAnchor, constant: 12),
+      scrollView.trailingAnchor.constraint(equalTo: trailingAnchor, constant: -8),
+      scrollView.topAnchor.constraint(equalTo: topAnchor, constant: 64),
+      scrollView.bottomAnchor.constraint(equalTo: bottomAnchor, constant: -12)
+    ])
+  }
+
+  override func viewDidChangeEffectiveAppearance() {
+    super.viewDidChangeEffectiveAppearance()
+    updateBackgroundColor()
+    tableView.reloadData()
+  }
+
+  private func updateBackgroundColor() {
+    effectiveAppearance.performAsCurrentDrawingAppearance {
+      layer?.backgroundColor = NSColor.windowBackgroundColor.cgColor
+    }
+  }
+
+  private func formattedDate(_ dateString: String) -> String {
+    dateString
   }
 }
 
@@ -1222,10 +1417,9 @@ extension MainWindowController: NSToolbarDelegate {
     guard autosaveCurrentNote(showStatus: false) else {
       return
     }
-    activeNote = nil
-    lastAutosavedBody = ""
-    noteStore.clearActiveNote()
+    session.resetForNewNote()
     editorView.clear()
+    reloadNotes()
     editorView.showStatus("New note")
     editorView.focus()
   }
@@ -1491,15 +1685,6 @@ private extension EditorToolbarItem {
   }
 }
 
-enum MarkdownCommand {
-  case heading
-  case bold
-  case italic
-  case bulletList
-  case code
-  case link
-}
-
 final class DraftStore {
   private let draftURL: URL
 
@@ -1639,21 +1824,16 @@ final class MarkdownEditorView: NSView, NSTextViewDelegate {
 
   func applyMarkdown(_ command: MarkdownCommand) {
     focus()
-
-    switch command {
-    case .heading:
-      insertLinePrefix("# ")
-    case .bold:
-      wrapSelection(prefix: "**", suffix: "**")
-    case .italic:
-      wrapSelection(prefix: "*", suffix: "*")
-    case .bulletList:
-      insertLinePrefix("- ")
-    case .code:
-      wrapSelection(prefix: "`", suffix: "`")
-    case .link:
-      insertLink()
-    }
+    let result = MarkdownTextEditing.apply(
+      command,
+      to: textView.string,
+      selection: textView.selectedRange()
+    )
+    replace(
+      NSRange(location: 0, length: (textView.string as NSString).length),
+      with: result.body
+    )
+    textView.setSelectedRange(result.selection)
   }
 
   func textDidChange(_ notification: Notification) {

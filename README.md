@@ -49,6 +49,32 @@ bun run mac:build
 bun run mac:run
 ```
 
+Build, install, and run the iOS app in Simulator:
+
+```bash
+bun run ios:run
+bun run ios:run:ipad
+```
+
+Use another installed simulator by name:
+
+```bash
+SIMULATOR_NAME="iPhone Air" bun run ios:run
+```
+
+Build the iOS app for Simulator without launching it:
+
+```bash
+bun run ios:build
+bun run ios:build:ipad
+```
+
+Create a local iOS archive when signing is configured in Xcode:
+
+```bash
+bun run ios:archive
+```
+
 Run tests:
 
 ```bash
