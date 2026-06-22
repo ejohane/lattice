@@ -1,14 +1,48 @@
 import Foundation
 
-public struct SavedNote: Equatable {
+public struct SavedNote: Identifiable, Hashable {
   public let url: URL
+  public let dateString: String
+  public let modifiedAt: Date?
 
-  public init(url: URL) {
-    self.url = url
+  public init(
+    url: URL,
+    dateString: String? = nil,
+    modifiedAt: Date? = nil
+  ) {
+    self.url = url.standardizedFileURL
+    self.dateString = dateString ?? url.deletingLastPathComponent().lastPathComponent
+    self.modifiedAt = modifiedAt
+  }
+
+  public var id: String {
+    url.standardizedFileURL.path
   }
 
   public var title: String {
     url.deletingPathExtension().lastPathComponent
+  }
+
+  public static func == (lhs: SavedNote, rhs: SavedNote) -> Bool {
+    lhs.id == rhs.id
+  }
+
+  public func hash(into hasher: inout Hasher) {
+    hasher.combine(id)
+  }
+}
+
+public struct NoteSection: Identifiable, Equatable {
+  public let dateString: String
+  public let notes: [SavedNote]
+
+  public init(dateString: String, notes: [SavedNote]) {
+    self.dateString = dateString
+    self.notes = notes
+  }
+
+  public var id: String {
+    dateString
   }
 }
 
@@ -45,6 +79,108 @@ public enum NoteStoreError: LocalizedError, Equatable {
   }
 }
 
+public enum MarkdownCommand: CaseIterable, Equatable {
+  case heading
+  case bold
+  case italic
+  case bulletList
+  case code
+  case link
+}
+
+public enum NoteSaveResult: Equatable {
+  case unchanged
+  case skippedEmptyDraft
+  case saved(SavedNote)
+}
+
+public struct RestoredNote: Equatable {
+  public let note: SavedNote
+  public let body: String
+
+  public init(note: SavedNote, body: String) {
+    self.note = note
+    self.body = body
+  }
+}
+
+public final class NoteEditingSession {
+  private let store: NoteStore
+  private var activeNote: SavedNote?
+  private var lastSavedBody = ""
+
+  public init(store: NoteStore) {
+    self.store = store
+  }
+
+  public var currentNote: SavedNote? {
+    activeNote
+  }
+
+  public var savedBody: String {
+    lastSavedBody
+  }
+
+  public func restoreActiveNote() throws -> RestoredNote? {
+    guard let note = store.restoreActiveNote() else {
+      activeNote = nil
+      lastSavedBody = ""
+      return nil
+    }
+
+    do {
+      let body = try store.body(for: note)
+      activeNote = note
+      lastSavedBody = Self.normalizedBody(body)
+      return RestoredNote(note: note, body: body)
+    } catch {
+      store.clearActiveNote()
+      activeNote = nil
+      lastSavedBody = ""
+      throw error
+    }
+  }
+
+  public func open(_ note: SavedNote) throws -> RestoredNote {
+    let opened = try store.openNote(note)
+    let body = try store.body(for: opened)
+    activeNote = opened
+    lastSavedBody = Self.normalizedBody(body)
+    return RestoredNote(note: opened, body: body)
+  }
+
+  public func resetForNewNote() {
+    activeNote = nil
+    lastSavedBody = ""
+    store.clearActiveNote()
+  }
+
+  @discardableResult
+  public func save(body: String) throws -> NoteSaveResult {
+    let normalizedBody = Self.normalizedBody(body)
+    guard activeNote != nil || !normalizedBody.isEmpty else {
+      return .skippedEmptyDraft
+    }
+    guard normalizedBody != lastSavedBody else {
+      return .unchanged
+    }
+
+    let note: SavedNote
+    if let activeNote {
+      note = try store.updateNote(activeNote, body: normalizedBody)
+    } else {
+      note = try store.createNote(body: normalizedBody)
+    }
+    activeNote = note
+    lastSavedBody = normalizedBody
+    return .saved(note)
+  }
+
+  public static func normalizedBody(_ body: String) -> String {
+    body.trimmingCharacters(in: .whitespacesAndNewlines)
+  }
+}
+
 public final class NoteStore {
   public static let activeNotesFolderPathKey = "activeNotesFolderPath"
   public static let activeNotePathKey = "activeNotePath"
@@ -61,9 +197,16 @@ public final class NoteStore {
   }
 
   public var defaultNotesFolderURL: URL {
-    fileManager.homeDirectoryForCurrentUser
-      .appendingPathComponent("Documents", isDirectory: true)
+    (fileManager.urls(for: .documentDirectory, in: .userDomainMask).first
+      ?? URL(fileURLWithPath: NSHomeDirectory()).appendingPathComponent("Documents", isDirectory: true))
       .appendingPathComponent("Lattice", isDirectory: true)
+  }
+
+  public func notesDirectoryURL() throws -> URL {
+    guard let folderURL = activeNotesFolderURL() else {
+      throw NoteStoreError.noActiveNotesFolder
+    }
+    return notesDirectory(in: folderURL)
   }
 
   public func activeNotesFolderURL() -> URL? {
@@ -94,11 +237,21 @@ public final class NoteStore {
       clearActiveNote()
       return nil
     }
-    return SavedNote(url: url)
+    return note(at: url)
   }
 
   public func body(for note: SavedNote) throws -> String {
     try String(contentsOf: note.url, encoding: .utf8)
+  }
+
+  @discardableResult
+  public func openNote(_ note: SavedNote) throws -> SavedNote {
+    guard fileManager.fileExists(atPath: note.url.path) else {
+      throw NoteStoreError.missingNote(note.url.path)
+    }
+    let opened = self.note(at: note.url)
+    defaults.set(opened.url.standardizedFileURL.path, forKey: Self.activeNotePathKey)
+    return opened
   }
 
   public func selectNotesFolder(_ url: URL) throws {
@@ -142,6 +295,52 @@ public final class NoteStore {
     try createDirectory(notesDirectory(in: url))
   }
 
+  public func listNotes() throws -> [NoteSection] {
+    guard let folderURL = activeNotesFolderURL() else {
+      throw NoteStoreError.noActiveNotesFolder
+    }
+
+    try initializeNotesFolder(at: folderURL)
+    let notesURL = notesDirectory(in: folderURL)
+    let dateURLs = try fileManager.contentsOfDirectory(
+      at: notesURL,
+      includingPropertiesForKeys: [.isDirectoryKey],
+      options: [.skipsHiddenFiles]
+    )
+
+    var sections: [NoteSection] = []
+    for dateURL in dateURLs {
+      let resourceValues = try dateURL.resourceValues(forKeys: [.isDirectoryKey])
+      guard resourceValues.isDirectory == true else {
+        continue
+      }
+
+      let noteURLs = try fileManager.contentsOfDirectory(
+        at: dateURL,
+        includingPropertiesForKeys: [.contentModificationDateKey, .isRegularFileKey],
+        options: [.skipsHiddenFiles]
+      )
+
+      let notes = noteURLs
+        .filter { $0.pathExtension.lowercased() == "md" }
+        .compactMap { noteURL -> SavedNote? in
+          guard (try? noteURL.resourceValues(forKeys: [.isRegularFileKey]).isRegularFile) == true else {
+            return nil
+          }
+          return note(at: noteURL, dateString: dateURL.lastPathComponent)
+        }
+        .sorted(by: compareNotesDescending)
+
+      if !notes.isEmpty {
+        sections.append(NoteSection(dateString: dateURL.lastPathComponent, notes: notes))
+      }
+    }
+
+    return sections.sorted { lhs, rhs in
+      lhs.dateString > rhs.dateString
+    }
+  }
+
   @discardableResult
   public func createNote(body: String, now: Date = Date()) throws -> SavedNote {
     let trimmedBody = body.trimmingCharacters(in: .whitespacesAndNewlines)
@@ -179,8 +378,33 @@ public final class NoteStore {
     return note
   }
 
-  private func notesDirectory(in rootURL: URL) -> URL {
+  public func notesDirectory(in rootURL: URL) -> URL {
     rootURL.appendingPathComponent("notes", isDirectory: true)
+  }
+
+  private func note(at url: URL, dateString: String? = nil) -> SavedNote {
+    let resourceValues = try? url.resourceValues(forKeys: [.contentModificationDateKey])
+    return SavedNote(
+      url: url,
+      dateString: dateString,
+      modifiedAt: resourceValues?.contentModificationDate
+    )
+  }
+
+  private func compareNotesDescending(_ lhs: SavedNote, _ rhs: SavedNote) -> Bool {
+    if lhs.title != rhs.title {
+      return lhs.title > rhs.title
+    }
+    switch (lhs.modifiedAt, rhs.modifiedAt) {
+    case let (lhsDate?, rhsDate?):
+      return lhsDate > rhsDate
+    case (_?, nil):
+      return true
+    case (nil, _?):
+      return false
+    case (nil, nil):
+      return lhs.url.path > rhs.url.path
+    }
   }
 
   private func availableNoteURL(in directoryURL: URL, now: Date) throws -> URL {

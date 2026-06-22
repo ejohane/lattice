@@ -43,6 +43,61 @@ struct NoteStoreTests {
     #expect(try String(contentsOf: note.url, encoding: .utf8) == "Second\n")
   }
 
+  @Test("lists markdown notes grouped by date newest first")
+  func listsNotesGroupedByDate() throws {
+    let fixture = try Fixture()
+    defer { fixture.cleanup() }
+
+    try fixture.store.selectNotesFolder(fixture.root)
+    let notesURL = fixture.root.appendingPathComponent("notes", isDirectory: true)
+    let olderDateURL = notesURL.appendingPathComponent("2026-06-16", isDirectory: true)
+    let newerDateURL = notesURL.appendingPathComponent("2026-06-17", isDirectory: true)
+    try fixture.fileManager.createDirectory(at: olderDateURL, withIntermediateDirectories: true)
+    try fixture.fileManager.createDirectory(at: newerDateURL, withIntermediateDirectories: true)
+    try "Older\n".write(
+      to: olderDateURL.appendingPathComponent("2026-06-16T10-00-00.md"),
+      atomically: true,
+      encoding: .utf8
+    )
+    try "Newest\n".write(
+      to: newerDateURL.appendingPathComponent("2026-06-17T15-00-00.md"),
+      atomically: true,
+      encoding: .utf8
+    )
+    try "Earlier\n".write(
+      to: newerDateURL.appendingPathComponent("2026-06-17T09-00-00.md"),
+      atomically: true,
+      encoding: .utf8
+    )
+    try "Ignored\n".write(
+      to: newerDateURL.appendingPathComponent("not-markdown.txt"),
+      atomically: true,
+      encoding: .utf8
+    )
+
+    let sections = try fixture.store.listNotes()
+
+    #expect(sections.map(\.dateString) == ["2026-06-17", "2026-06-16"])
+    #expect(sections[0].notes.map(\.title) == ["2026-06-17T15-00-00", "2026-06-17T09-00-00"])
+    #expect(sections[1].notes.map(\.title) == ["2026-06-16T10-00-00"])
+  }
+
+  @Test("opens an existing note and marks it active")
+  func opensExistingNote() throws {
+    let fixture = try Fixture()
+    defer { fixture.cleanup() }
+
+    try fixture.store.selectNotesFolder(fixture.root)
+    let note = try fixture.store.createNote(body: "Open me", now: fixture.date)
+    fixture.store.clearActiveNote()
+
+    let opened = try fixture.store.openNote(note)
+
+    #expect(opened == note)
+    #expect(try fixture.store.body(for: opened) == "Open me\n")
+    #expect(fixture.store.activeNoteURL()?.path == note.url.path)
+  }
+
   @Test("restores active note when the file exists")
   func restoresActiveNote() throws {
     let fixture = try Fixture()
@@ -55,6 +110,46 @@ struct NoteStoreTests {
 
     #expect(restored == note)
     #expect(try fixture.store.body(for: note) == "Restored\n")
+  }
+
+  @Test("editing session creates once and then updates in place")
+  func editingSessionCreatesAndUpdatesNote() throws {
+    let fixture = try Fixture()
+    defer { fixture.cleanup() }
+
+    try fixture.store.selectNotesFolder(fixture.root)
+    let session = NoteEditingSession(store: fixture.store)
+
+    #expect(try session.save(body: "   \n") == .skippedEmptyDraft)
+    guard case .saved(let note) = try session.save(body: "First") else {
+      Issue.record("Expected first non-empty save to create a note")
+      return
+    }
+    guard case .saved(let updated) = try session.save(body: "Second") else {
+      Issue.record("Expected changed body to update the active note")
+      return
+    }
+
+    #expect(updated == note)
+    #expect(try String(contentsOf: note.url, encoding: .utf8) == "Second\n")
+    #expect(try session.save(body: "Second") == .unchanged)
+  }
+
+  @Test("editing session restores the active note body")
+  func editingSessionRestoresActiveNote() throws {
+    let fixture = try Fixture()
+    defer { fixture.cleanup() }
+
+    try fixture.store.selectNotesFolder(fixture.root)
+    let note = try fixture.store.createNote(body: "Restored session", now: fixture.date)
+    let session = NoteEditingSession(store: fixture.store)
+
+    let restored = try session.restoreActiveNote()
+
+    #expect(restored?.note == note)
+    #expect(restored?.body == "Restored session\n")
+    #expect(session.currentNote == note)
+    #expect(session.savedBody == "Restored session")
   }
 
   @Test("rejects empty notes")
@@ -112,4 +207,31 @@ private struct Fixture {
 private enum FixtureError: Error {
   case defaultsUnavailable
   case dateUnavailable
+}
+
+@Suite("MarkdownTextEditing")
+struct MarkdownTextEditingTests {
+  @Test("wraps a selected range")
+  func wrapsSelection() {
+    let result = MarkdownTextEditing.apply(
+      .bold,
+      to: "Hello world",
+      selection: NSRange(location: 6, length: 5)
+    )
+
+    #expect(result.body == "Hello **world**")
+    #expect(result.selection == NSRange(location: 6, length: 9))
+  }
+
+  @Test("inserts line prefixes at the active line")
+  func insertsLinePrefix() {
+    let result = MarkdownTextEditing.apply(
+      .bulletList,
+      to: "One\nTwo",
+      selection: NSRange(location: 5, length: 0)
+    )
+
+    #expect(result.body == "One\n- Two")
+    #expect(result.selection == NSRange(location: 7, length: 0))
+  }
 }
