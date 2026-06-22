@@ -1,22 +1,25 @@
 # Lattice Repository Agent Guide
 
-This file is for agents working on the Lattice source repository. It is not the
-same as `skills/AGENTS.md`, which is copied into user vaults by the CLI.
+Lattice is centered on the native Apple app project in `apps/Lattice`. The app writes
+portable Markdown notes into a local notes folder.
 
 ## Scope
 
-- Keep protocol, vault, Raycast, packaging, and release changes scoped to the
-  requested workstream.
-- Do not edit `skills/AGENTS.md` unless the task is specifically changing the
-  vault skill instructions that Lattice installs for users.
-- Preserve local-first behavior. Release automation should publish binaries, not
-  add remote service dependencies to normal CLI operation.
+- Keep the macOS app, Markdown note storage, packaging, and release automation
+  scoped to the requested workstream.
+- Do not reintroduce CLI, Raycast, bundled skills, wiki, queue, JSON capture,
+  screenshot, or context-metadata systems unless the task explicitly asks for
+  that work.
+- Preserve local-first behavior. Notes should remain ordinary Markdown files on
+  disk.
+- Keep Sparkle update changes app-native and release-artifact based.
 
 ## Verification
 
-- Run `bun run verify` before handing off code changes.
-- Run `bun run build:binary` when changing CLI startup, packaging, installer,
-  update, or release behavior.
+- Run `bun run verify` before handing off code changes. This covers Swift tests,
+  the macOS app build, and the iOS Simulator build.
+- Run `bun run mac:bundle` when changing app startup, packaging, installer, or
+  update behavior.
 - For updater or installer changes, test against a local release-style archive
   and checksum when possible.
 
@@ -29,12 +32,11 @@ releases.
 Use:
 
 ```text
-feat: add capture search
-fix(cli): handle missing vault config
-perf(index): speed up wiki scan
+feat(mac): add recent notes menu
+fix(notes): handle deleted active note
 docs: explain local install
-ci: publish release binaries
-feat!: change vault protocol layout
+ci: publish Sparkle appcast
+feat!: change note folder layout
 ```
 
 Release impact:
@@ -42,7 +44,7 @@ Release impact:
 - `feat` creates a minor release.
 - `!` after the type or scope creates a major release.
 - All other accepted types create a patch release so every merge to `main`
-  produces updateable binary artifacts.
+  produces updateable app artifacts.
 
 Prefer squash merges so the validated PR/MR title becomes the commit message on
 `main`.

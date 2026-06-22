@@ -69,28 +69,12 @@
       {
         "assets": [
           {
-            "path": "release-artifacts/lattice-darwin-arm64.tar.gz",
-            "label": "lattice-darwin-arm64.tar.gz"
-          },
-          {
-            "path": "release-artifacts/lattice-darwin-arm64.tar.gz.sha256",
-            "label": "lattice-darwin-arm64.tar.gz.sha256"
-          },
-          {
             "path": "release-artifacts/lattice-macos-app-darwin-arm64.zip",
             "label": "lattice-macos-app-darwin-arm64.zip"
           },
           {
             "path": "release-artifacts/lattice-macos-app-darwin-arm64.zip.sha256",
             "label": "lattice-macos-app-darwin-arm64.zip.sha256"
-          },
-          {
-            "path": "release-artifacts/lattice-darwin-x64.tar.gz",
-            "label": "lattice-darwin-x64.tar.gz"
-          },
-          {
-            "path": "release-artifacts/lattice-darwin-x64.tar.gz.sha256",
-            "label": "lattice-darwin-x64.tar.gz.sha256"
           },
           {
             "path": "release-artifacts/lattice-macos-app-darwin-x64.zip",
@@ -101,20 +85,12 @@
             "label": "lattice-macos-app-darwin-x64.zip.sha256"
           },
           {
-            "path": "release-artifacts/lattice-linux-x64.tar.gz",
-            "label": "lattice-linux-x64.tar.gz"
+            "path": "release-artifacts/lattice-macos-appcast-darwin-arm64.xml",
+            "label": "lattice-macos-appcast-darwin-arm64.xml"
           },
           {
-            "path": "release-artifacts/lattice-linux-x64.tar.gz.sha256",
-            "label": "lattice-linux-x64.tar.gz.sha256"
-          },
-          {
-            "path": "release-artifacts/lattice-raycast-extension-compiled.tar.gz",
-            "label": "lattice-raycast-extension-compiled.tar.gz"
-          },
-          {
-            "path": "release-artifacts/lattice-raycast-extension-compiled.tar.gz.sha256",
-            "label": "lattice-raycast-extension-compiled.tar.gz.sha256"
+            "path": "release-artifacts/lattice-macos-appcast-darwin-x64.xml",
+            "label": "lattice-macos-appcast-darwin-x64.xml"
           }
         ]
       }

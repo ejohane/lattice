@@ -1,0 +1,556 @@
+// !$*UTF8*$!
+{
+  archiveVersion = 1;
+  classes = {
+  };
+  objectVersion = 77;
+  objects = {
+
+/* Begin PBXBuildFile section */
+    B10000000000000000000005 /* LatticeMacApp.swift in Mac Sources */ = {isa = PBXBuildFile; fileRef = B10000000000000000000105 /* LatticeMacApp.swift */; };
+    B10000000000000000000006 /* MacNoteWorkspaceModel.swift in Mac Sources */ = {isa = PBXBuildFile; fileRef = B10000000000000000000106 /* MacNoteWorkspaceModel.swift */; };
+    B10000000000000000000007 /* MacNotesLocationStore.swift in Mac Sources */ = {isa = PBXBuildFile; fileRef = B10000000000000000000107 /* MacNotesLocationStore.swift */; };
+    B10000000000000000000008 /* MacAppSettings.swift in Mac Sources */ = {isa = PBXBuildFile; fileRef = B10000000000000000000108 /* MacAppSettings.swift */; };
+    B10000000000000000000009 /* MacRootView.swift in Mac Sources */ = {isa = PBXBuildFile; fileRef = B10000000000000000000109 /* MacRootView.swift */; };
+    B1000000000000000000000A /* MacAppCommands.swift in Mac Sources */ = {isa = PBXBuildFile; fileRef = B1000000000000000000010A /* MacAppCommands.swift */; };
+    B1000000000000000000000B /* MacMarkdownEditorView.swift in Mac Sources */ = {isa = PBXBuildFile; fileRef = B1000000000000000000010B /* MacMarkdownEditorView.swift */; };
+    B1000000000000000000000C /* Sparkle in Mac Frameworks */ = {isa = PBXBuildFile; productRef = B10000000000000000000301 /* Sparkle */; };
+    B1000000000000000000000D /* LatticeCore in Mac Frameworks */ = {isa = PBXBuildFile; productRef = B10000000000000000000311 /* LatticeCore */; };
+    B1000000000000000000000E /* LatticeEditor in Mac Frameworks */ = {isa = PBXBuildFile; productRef = B10000000000000000000312 /* LatticeEditor */; };
+    B10000000000000000000025 /* LatticeiOSApp.swift in iOS Sources */ = {isa = PBXBuildFile; fileRef = B10000000000000000000125 /* LatticeiOSApp.swift */; };
+    B10000000000000000000026 /* IOSNotesLocationStore.swift in iOS Sources */ = {isa = PBXBuildFile; fileRef = B10000000000000000000126 /* IOSNotesLocationStore.swift */; };
+    B10000000000000000000027 /* IOSNoteWorkspaceModel.swift in iOS Sources */ = {isa = PBXBuildFile; fileRef = B10000000000000000000127 /* IOSNoteWorkspaceModel.swift */; };
+    B10000000000000000000028 /* IOSRootView.swift in iOS Sources */ = {isa = PBXBuildFile; fileRef = B10000000000000000000128 /* IOSRootView.swift */; };
+    B10000000000000000000029 /* IOSMarkdownEditorView.swift in iOS Sources */ = {isa = PBXBuildFile; fileRef = B10000000000000000000129 /* IOSMarkdownEditorView.swift */; };
+    B1000000000000000000002A /* LatticeCore in iOS Frameworks */ = {isa = PBXBuildFile; productRef = B10000000000000000000311 /* LatticeCore */; };
+    B1000000000000000000002B /* LatticeEditor in iOS Frameworks */ = {isa = PBXBuildFile; productRef = B10000000000000000000312 /* LatticeEditor */; };
+/* End PBXBuildFile section */
+
+/* Begin PBXFileReference section */
+    B10000000000000000000101 /* NoteStore.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Sources/LatticeCore/NoteStore.swift; sourceTree = "<group>"; };
+    B10000000000000000000102 /* MarkdownCommand.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Sources/LatticeEditor/MarkdownCommand.swift; sourceTree = "<group>"; };
+    B10000000000000000000103 /* MarkdownRenderEngine.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Sources/LatticeEditor/MarkdownRenderEngine.swift; sourceTree = "<group>"; };
+    B10000000000000000000104 /* MarkdownListContinuation.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Sources/LatticeEditor/MarkdownListContinuation.swift; sourceTree = "<group>"; };
+    B10000000000000000000105 /* LatticeMacApp.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = LatticeMacApp.swift; sourceTree = "<group>"; };
+    B10000000000000000000106 /* MacNoteWorkspaceModel.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MacNoteWorkspaceModel.swift; sourceTree = "<group>"; };
+    B10000000000000000000107 /* MacNotesLocationStore.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MacNotesLocationStore.swift; sourceTree = "<group>"; };
+    B10000000000000000000108 /* MacAppSettings.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MacAppSettings.swift; sourceTree = "<group>"; };
+    B10000000000000000000109 /* MacRootView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MacRootView.swift; sourceTree = "<group>"; };
+    B1000000000000000000010A /* MacAppCommands.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MacAppCommands.swift; sourceTree = "<group>"; };
+    B1000000000000000000010B /* MacMarkdownEditorView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MacMarkdownEditorView.swift; sourceTree = "<group>"; };
+    B10000000000000000000125 /* LatticeiOSApp.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = LatticeiOSApp.swift; sourceTree = "<group>"; };
+    B10000000000000000000126 /* IOSNotesLocationStore.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = IOSNotesLocationStore.swift; sourceTree = "<group>"; };
+    B10000000000000000000127 /* IOSNoteWorkspaceModel.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = IOSNoteWorkspaceModel.swift; sourceTree = "<group>"; };
+    B10000000000000000000128 /* IOSRootView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = IOSRootView.swift; sourceTree = "<group>"; };
+    B10000000000000000000129 /* IOSMarkdownEditorView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = IOSMarkdownEditorView.swift; sourceTree = "<group>"; };
+    B100000000000000000001F1 /* Lattice.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = Lattice.app; sourceTree = BUILT_PRODUCTS_DIR; };
+    B100000000000000000001F2 /* Lattice.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = Lattice.app; sourceTree = BUILT_PRODUCTS_DIR; };
+/* End PBXFileReference section */
+
+/* Begin PBXFrameworksBuildPhase section */
+    B100000000000000000000C1 /* Frameworks */ = {
+      isa = PBXFrameworksBuildPhase;
+      buildActionMask = 2147483647;
+      files = (
+        B1000000000000000000000D /* LatticeCore in Mac Frameworks */,
+        B1000000000000000000000E /* LatticeEditor in Mac Frameworks */,
+        B1000000000000000000000C /* Sparkle in Mac Frameworks */,
+      );
+      runOnlyForDeploymentPostprocessing = 0;
+    };
+    B100000000000000000000C2 /* Frameworks */ = {
+      isa = PBXFrameworksBuildPhase;
+      buildActionMask = 2147483647;
+      files = (
+        B1000000000000000000002A /* LatticeCore in iOS Frameworks */,
+        B1000000000000000000002B /* LatticeEditor in iOS Frameworks */,
+      );
+      runOnlyForDeploymentPostprocessing = 0;
+    };
+/* End PBXFrameworksBuildPhase section */
+
+/* Begin PBXGroup section */
+    B10000000000000000000200 = {
+      isa = PBXGroup;
+      children = (
+        B10000000000000000000201 /* Shared */,
+        B10000000000000000000202 /* LatticeMac */,
+        B10000000000000000000203 /* LatticeiOS */,
+        B10000000000000000000204 /* Products */,
+      );
+      sourceTree = "<group>";
+    };
+    B10000000000000000000201 /* Shared */ = {
+      isa = PBXGroup;
+      children = (
+        B10000000000000000000101 /* NoteStore.swift */,
+        B10000000000000000000102 /* MarkdownCommand.swift */,
+        B10000000000000000000103 /* MarkdownRenderEngine.swift */,
+        B10000000000000000000104 /* MarkdownListContinuation.swift */,
+      );
+      name = Shared;
+      sourceTree = "<group>";
+    };
+    B10000000000000000000202 /* LatticeMac */ = {
+      isa = PBXGroup;
+      children = (
+        B10000000000000000000105 /* LatticeMacApp.swift */,
+        B10000000000000000000106 /* MacNoteWorkspaceModel.swift */,
+        B10000000000000000000107 /* MacNotesLocationStore.swift */,
+        B10000000000000000000108 /* MacAppSettings.swift */,
+        B10000000000000000000109 /* MacRootView.swift */,
+        B1000000000000000000010A /* MacAppCommands.swift */,
+        B1000000000000000000010B /* MacMarkdownEditorView.swift */,
+      );
+      path = Sources/LatticeMac;
+      sourceTree = "<group>";
+    };
+    B10000000000000000000203 /* LatticeiOS */ = {
+      isa = PBXGroup;
+      children = (
+        B10000000000000000000125 /* LatticeiOSApp.swift */,
+        B10000000000000000000126 /* IOSNotesLocationStore.swift */,
+        B10000000000000000000127 /* IOSNoteWorkspaceModel.swift */,
+        B10000000000000000000128 /* IOSRootView.swift */,
+        B10000000000000000000129 /* IOSMarkdownEditorView.swift */,
+      );
+      path = Sources/LatticeiOS;
+      sourceTree = "<group>";
+    };
+    B10000000000000000000204 /* Products */ = {
+      isa = PBXGroup;
+      children = (
+        B100000000000000000001F1 /* Lattice.app */,
+        B100000000000000000001F2 /* Lattice.app */,
+      );
+      name = Products;
+      sourceTree = "<group>";
+    };
+/* End PBXGroup section */
+
+/* Begin PBXNativeTarget section */
+    B100000000000000000000A1 /* LatticeMac */ = {
+      isa = PBXNativeTarget;
+      buildConfigurationList = B10000000000000000000410 /* Build configuration list for PBXNativeTarget "LatticeMac" */;
+      buildPhases = (
+        B100000000000000000000B1 /* Sources */,
+        B100000000000000000000C1 /* Frameworks */,
+        B100000000000000000000E1 /* Resources */,
+      );
+      buildRules = (
+      );
+      dependencies = (
+      );
+      name = LatticeMac;
+      packageProductDependencies = (
+        B10000000000000000000301 /* Sparkle */,
+        B10000000000000000000311 /* LatticeCore */,
+        B10000000000000000000312 /* LatticeEditor */,
+      );
+      productName = Lattice;
+      productReference = B100000000000000000001F1 /* Lattice.app */;
+      productType = "com.apple.product-type.application";
+    };
+    B100000000000000000000A2 /* LatticeiOS */ = {
+      isa = PBXNativeTarget;
+      buildConfigurationList = B10000000000000000000420 /* Build configuration list for PBXNativeTarget "LatticeiOS" */;
+      buildPhases = (
+        B100000000000000000000B2 /* Sources */,
+        B100000000000000000000C2 /* Frameworks */,
+        B100000000000000000000E2 /* Resources */,
+      );
+      buildRules = (
+      );
+      dependencies = (
+      );
+      name = LatticeiOS;
+      packageProductDependencies = (
+        B10000000000000000000311 /* LatticeCore */,
+        B10000000000000000000312 /* LatticeEditor */,
+      );
+      productName = Lattice;
+      productReference = B100000000000000000001F2 /* Lattice.app */;
+      productType = "com.apple.product-type.application";
+    };
+/* End PBXNativeTarget section */
+
+/* Begin PBXProject section */
+    B10000000000000000000AA1 /* Project object */ = {
+      isa = PBXProject;
+      attributes = {
+        BuildIndependentTargetsInParallel = 1;
+        LastSwiftUpdateCheck = 2620;
+        LastUpgradeCheck = 2620;
+        TargetAttributes = {
+          B100000000000000000000A1 = {
+            CreatedOnToolsVersion = 26.2;
+          };
+          B100000000000000000000A2 = {
+            CreatedOnToolsVersion = 26.2;
+          };
+        };
+      };
+      buildConfigurationList = B10000000000000000000400 /* Build configuration list for PBXProject "Lattice" */;
+      compatibilityVersion = "Xcode 16.0";
+      developmentRegion = en;
+      hasScannedForEncodings = 0;
+      knownRegions = (
+        en,
+        Base,
+      );
+      mainGroup = B10000000000000000000200;
+      minimizedProjectReferenceProxies = 1;
+      packageReferences = (
+        B10000000000000000000300 /* XCRemoteSwiftPackageReference "Sparkle" */,
+        B10000000000000000000310 /* XCLocalSwiftPackageReference "." */,
+      );
+      preferredProjectObjectVersion = 77;
+      productRefGroup = B10000000000000000000204 /* Products */;
+      projectDirPath = "";
+      projectRoot = "";
+      targets = (
+        B100000000000000000000A1 /* LatticeMac */,
+        B100000000000000000000A2 /* LatticeiOS */,
+      );
+    };
+/* End PBXProject section */
+
+/* Begin PBXResourcesBuildPhase section */
+    B100000000000000000000E1 /* Resources */ = {
+      isa = PBXResourcesBuildPhase;
+      buildActionMask = 2147483647;
+      files = (
+      );
+      runOnlyForDeploymentPostprocessing = 0;
+    };
+    B100000000000000000000E2 /* Resources */ = {
+      isa = PBXResourcesBuildPhase;
+      buildActionMask = 2147483647;
+      files = (
+      );
+      runOnlyForDeploymentPostprocessing = 0;
+    };
+/* End PBXResourcesBuildPhase section */
+
+/* Begin PBXSourcesBuildPhase section */
+    B100000000000000000000B1 /* Sources */ = {
+      isa = PBXSourcesBuildPhase;
+      buildActionMask = 2147483647;
+      files = (
+        B10000000000000000000005 /* LatticeMacApp.swift in Mac Sources */,
+        B10000000000000000000006 /* MacNoteWorkspaceModel.swift in Mac Sources */,
+        B10000000000000000000007 /* MacNotesLocationStore.swift in Mac Sources */,
+        B10000000000000000000008 /* MacAppSettings.swift in Mac Sources */,
+        B10000000000000000000009 /* MacRootView.swift in Mac Sources */,
+        B1000000000000000000000A /* MacAppCommands.swift in Mac Sources */,
+        B1000000000000000000000B /* MacMarkdownEditorView.swift in Mac Sources */,
+      );
+      runOnlyForDeploymentPostprocessing = 0;
+    };
+    B100000000000000000000B2 /* Sources */ = {
+      isa = PBXSourcesBuildPhase;
+      buildActionMask = 2147483647;
+      files = (
+        B10000000000000000000025 /* LatticeiOSApp.swift in iOS Sources */,
+        B10000000000000000000026 /* IOSNotesLocationStore.swift in iOS Sources */,
+        B10000000000000000000027 /* IOSNoteWorkspaceModel.swift in iOS Sources */,
+        B10000000000000000000028 /* IOSRootView.swift in iOS Sources */,
+        B10000000000000000000029 /* IOSMarkdownEditorView.swift in iOS Sources */,
+      );
+      runOnlyForDeploymentPostprocessing = 0;
+    };
+/* End PBXSourcesBuildPhase section */
+
+/* Begin XCBuildConfiguration section */
+    B10000000000000000000401 /* Debug */ = {
+      isa = XCBuildConfiguration;
+      buildSettings = {
+        ALWAYS_SEARCH_USER_PATHS = NO;
+        CLANG_ANALYZER_NONNULL = YES;
+        CLANG_ANALYZER_NUMBER_OBJECT_CONVERSION = YES_AGGRESSIVE;
+        CLANG_CXX_LANGUAGE_STANDARD = "gnu++20";
+        CLANG_ENABLE_MODULES = YES;
+        CLANG_ENABLE_OBJC_ARC = YES;
+        CLANG_ENABLE_OBJC_WEAK = YES;
+        CLANG_WARN_BLOCK_CAPTURE_AUTORELEASING = YES;
+        CLANG_WARN_BOOL_CONVERSION = YES;
+        CLANG_WARN_COMMA = YES;
+        CLANG_WARN_CONSTANT_CONVERSION = YES;
+        CLANG_WARN_DEPRECATED_OBJC_IMPLEMENTATIONS = YES;
+        CLANG_WARN_DIRECT_OBJC_ISA_USAGE = YES_ERROR;
+        CLANG_WARN_DOCUMENTATION_COMMENTS = YES;
+        CLANG_WARN_EMPTY_BODY = YES;
+        CLANG_WARN_ENUM_CONVERSION = YES;
+        CLANG_WARN_INFINITE_RECURSION = YES;
+        CLANG_WARN_INT_CONVERSION = YES;
+        CLANG_WARN_NON_LITERAL_NULL_CONVERSION = YES;
+        CLANG_WARN_OBJC_IMPLICIT_RETAIN_SELF = YES;
+        CLANG_WARN_OBJC_LITERAL_CONVERSION = YES;
+        CLANG_WARN_OBJC_ROOT_CLASS = YES_ERROR;
+        CLANG_WARN_QUOTED_INCLUDE_IN_FRAMEWORK_HEADER = YES;
+        CLANG_WARN_RANGE_LOOP_ANALYSIS = YES;
+        CLANG_WARN_STRICT_PROTOTYPES = YES;
+        CLANG_WARN_SUSPICIOUS_MOVE = YES;
+        CLANG_WARN_UNGUARDED_AVAILABILITY = YES_AGGRESSIVE;
+        CLANG_WARN_UNREACHABLE_CODE = YES;
+        CLANG_WARN__DUPLICATE_METHOD_MATCH = YES;
+        COPY_PHASE_STRIP = NO;
+        DEBUG_INFORMATION_FORMAT = dwarf;
+        ENABLE_STRICT_OBJC_MSGSEND = YES;
+        ENABLE_TESTABILITY = YES;
+        GCC_C_LANGUAGE_STANDARD = gnu17;
+        GCC_DYNAMIC_NO_PIC = NO;
+        GCC_NO_COMMON_BLOCKS = YES;
+        GCC_OPTIMIZATION_LEVEL = 0;
+        GCC_PREPROCESSOR_DEFINITIONS = (
+          "DEBUG=1",
+          "$(inherited)",
+        );
+        GCC_WARN_64_TO_32_BIT_CONVERSION = YES;
+        GCC_WARN_ABOUT_RETURN_TYPE = YES_ERROR;
+        GCC_WARN_UNDECLARED_SELECTOR = YES;
+        GCC_WARN_UNINITIALIZED_AUTOS = YES_AGGRESSIVE;
+        GCC_WARN_UNUSED_FUNCTION = YES;
+        GCC_WARN_UNUSED_VARIABLE = YES;
+        LOCALIZATION_PREFERS_STRING_CATALOGS = YES;
+        MTL_ENABLE_DEBUG_INFO = INCLUDE_SOURCE;
+        MTL_FAST_MATH = YES;
+        ONLY_ACTIVE_ARCH = YES;
+        SWIFT_ACTIVE_COMPILATION_CONDITIONS = "DEBUG $(inherited)";
+        SWIFT_OPTIMIZATION_LEVEL = "-Onone";
+      };
+      name = Debug;
+    };
+    B10000000000000000000402 /* Release */ = {
+      isa = XCBuildConfiguration;
+      buildSettings = {
+        ALWAYS_SEARCH_USER_PATHS = NO;
+        CLANG_ANALYZER_NONNULL = YES;
+        CLANG_ANALYZER_NUMBER_OBJECT_CONVERSION = YES_AGGRESSIVE;
+        CLANG_CXX_LANGUAGE_STANDARD = "gnu++20";
+        CLANG_ENABLE_MODULES = YES;
+        CLANG_ENABLE_OBJC_ARC = YES;
+        CLANG_ENABLE_OBJC_WEAK = YES;
+        CLANG_WARN_BLOCK_CAPTURE_AUTORELEASING = YES;
+        CLANG_WARN_BOOL_CONVERSION = YES;
+        CLANG_WARN_COMMA = YES;
+        CLANG_WARN_CONSTANT_CONVERSION = YES;
+        CLANG_WARN_DEPRECATED_OBJC_IMPLEMENTATIONS = YES;
+        CLANG_WARN_DIRECT_OBJC_ISA_USAGE = YES_ERROR;
+        CLANG_WARN_DOCUMENTATION_COMMENTS = YES;
+        CLANG_WARN_EMPTY_BODY = YES;
+        CLANG_WARN_ENUM_CONVERSION = YES;
+        CLANG_WARN_INFINITE_RECURSION = YES;
+        CLANG_WARN_INT_CONVERSION = YES;
+        CLANG_WARN_NON_LITERAL_NULL_CONVERSION = YES;
+        CLANG_WARN_OBJC_IMPLICIT_RETAIN_SELF = YES;
+        CLANG_WARN_OBJC_LITERAL_CONVERSION = YES;
+        CLANG_WARN_OBJC_ROOT_CLASS = YES_ERROR;
+        CLANG_WARN_QUOTED_INCLUDE_IN_FRAMEWORK_HEADER = YES;
+        CLANG_WARN_RANGE_LOOP_ANALYSIS = YES;
+        CLANG_WARN_STRICT_PROTOTYPES = YES;
+        CLANG_WARN_SUSPICIOUS_MOVE = YES;
+        CLANG_WARN_UNGUARDED_AVAILABILITY = YES_AGGRESSIVE;
+        CLANG_WARN_UNREACHABLE_CODE = YES;
+        CLANG_WARN__DUPLICATE_METHOD_MATCH = YES;
+        COPY_PHASE_STRIP = NO;
+        DEBUG_INFORMATION_FORMAT = "dwarf-with-dsym";
+        ENABLE_NS_ASSERTIONS = NO;
+        ENABLE_STRICT_OBJC_MSGSEND = YES;
+        GCC_C_LANGUAGE_STANDARD = gnu17;
+        GCC_NO_COMMON_BLOCKS = YES;
+        GCC_WARN_64_TO_32_BIT_CONVERSION = YES;
+        GCC_WARN_ABOUT_RETURN_TYPE = YES_ERROR;
+        GCC_WARN_UNDECLARED_SELECTOR = YES;
+        GCC_WARN_UNINITIALIZED_AUTOS = YES_AGGRESSIVE;
+        GCC_WARN_UNUSED_FUNCTION = YES;
+        GCC_WARN_UNUSED_VARIABLE = YES;
+        LOCALIZATION_PREFERS_STRING_CATALOGS = YES;
+        MTL_ENABLE_DEBUG_INFO = NO;
+        MTL_FAST_MATH = YES;
+        SWIFT_COMPILATION_MODE = wholemodule;
+      };
+      name = Release;
+    };
+    B10000000000000000000411 /* Debug */ = {
+      isa = XCBuildConfiguration;
+      buildSettings = {
+        CODE_SIGN_IDENTITY = "-";
+        CODE_SIGN_STYLE = Manual;
+        COMBINE_HIDPI_IMAGES = YES;
+        CURRENT_PROJECT_VERSION = 1;
+        ENABLE_HARDENED_RUNTIME = YES;
+        GENERATE_INFOPLIST_FILE = YES;
+        INFOPLIST_KEY_CFBundleDisplayName = Lattice;
+        INFOPLIST_KEY_CFBundleName = Lattice;
+        INFOPLIST_KEY_LSMinimumSystemVersion = 14.0;
+        INFOPLIST_KEY_NSHighResolutionCapable = YES;
+        INFOPLIST_KEY_SUAllowsAutomaticUpdates = YES;
+        INFOPLIST_KEY_SUAutomaticallyUpdate = YES;
+        INFOPLIST_KEY_SUEnableAutomaticChecks = YES;
+        INFOPLIST_KEY_SUFeedURL = "$(LATTICE_SPARKLE_FEED_URL)";
+        INFOPLIST_KEY_SUPublicEDKey = "$(LATTICE_SPARKLE_PUBLIC_ED_KEY)";
+        INFOPLIST_KEY_SUVerifyUpdateBeforeExtraction = YES;
+        LD_RUNPATH_SEARCH_PATHS = "$(inherited) @executable_path/../Frameworks";
+        MACOSX_DEPLOYMENT_TARGET = 14.0;
+        MARKETING_VERSION = 0.1.0;
+        PRODUCT_BUNDLE_IDENTIFIER = com.ejohane.lattice;
+        PRODUCT_NAME = Lattice;
+        SDKROOT = macosx;
+        SUPPORTED_PLATFORMS = macosx;
+        SWIFT_VERSION = 6.0;
+      };
+      name = Debug;
+    };
+    B10000000000000000000412 /* Release */ = {
+      isa = XCBuildConfiguration;
+      buildSettings = {
+        CODE_SIGN_IDENTITY = "-";
+        CODE_SIGN_STYLE = Manual;
+        COMBINE_HIDPI_IMAGES = YES;
+        CURRENT_PROJECT_VERSION = 1;
+        ENABLE_HARDENED_RUNTIME = YES;
+        GENERATE_INFOPLIST_FILE = YES;
+        INFOPLIST_KEY_CFBundleDisplayName = Lattice;
+        INFOPLIST_KEY_CFBundleName = Lattice;
+        INFOPLIST_KEY_LSMinimumSystemVersion = 14.0;
+        INFOPLIST_KEY_NSHighResolutionCapable = YES;
+        INFOPLIST_KEY_SUAllowsAutomaticUpdates = YES;
+        INFOPLIST_KEY_SUAutomaticallyUpdate = YES;
+        INFOPLIST_KEY_SUEnableAutomaticChecks = YES;
+        INFOPLIST_KEY_SUFeedURL = "$(LATTICE_SPARKLE_FEED_URL)";
+        INFOPLIST_KEY_SUPublicEDKey = "$(LATTICE_SPARKLE_PUBLIC_ED_KEY)";
+        INFOPLIST_KEY_SUVerifyUpdateBeforeExtraction = YES;
+        LD_RUNPATH_SEARCH_PATHS = "$(inherited) @executable_path/../Frameworks";
+        MACOSX_DEPLOYMENT_TARGET = 14.0;
+        MARKETING_VERSION = 0.1.0;
+        PRODUCT_BUNDLE_IDENTIFIER = com.ejohane.lattice;
+        PRODUCT_NAME = Lattice;
+        SDKROOT = macosx;
+        SUPPORTED_PLATFORMS = macosx;
+        SWIFT_COMPILATION_MODE = wholemodule;
+        SWIFT_VERSION = 6.0;
+      };
+      name = Release;
+    };
+    B10000000000000000000421 /* Debug */ = {
+      isa = XCBuildConfiguration;
+      buildSettings = {
+        ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
+        CODE_SIGN_STYLE = Automatic;
+        CURRENT_PROJECT_VERSION = 1;
+        DEVELOPMENT_TEAM = TRA7965NM5;
+        GENERATE_INFOPLIST_FILE = YES;
+        INFOPLIST_KEY_CFBundleDisplayName = Lattice;
+        INFOPLIST_KEY_UIApplicationSceneManifest_Generation = YES;
+        INFOPLIST_KEY_UIApplicationSupportsIndirectInputEvents = YES;
+        INFOPLIST_KEY_UILaunchScreen_Generation = YES;
+        INFOPLIST_KEY_UISupportedInterfaceOrientations_iPad = "UIInterfaceOrientationPortrait UIInterfaceOrientationPortraitUpsideDown UIInterfaceOrientationLandscapeLeft UIInterfaceOrientationLandscapeRight";
+        INFOPLIST_KEY_UISupportedInterfaceOrientations_iPhone = "UIInterfaceOrientationPortrait UIInterfaceOrientationLandscapeLeft UIInterfaceOrientationLandscapeRight";
+        IPHONEOS_DEPLOYMENT_TARGET = 17.0;
+        MARKETING_VERSION = 0.1.0;
+        PRODUCT_BUNDLE_IDENTIFIER = com.ejohane.lattice.ios;
+        PRODUCT_NAME = Lattice;
+        SDKROOT = iphoneos;
+        SUPPORTED_PLATFORMS = "iphoneos iphonesimulator";
+        SWIFT_VERSION = 6.0;
+        TARGETED_DEVICE_FAMILY = "1,2";
+      };
+      name = Debug;
+    };
+    B10000000000000000000422 /* Release */ = {
+      isa = XCBuildConfiguration;
+      buildSettings = {
+        ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
+        CODE_SIGN_STYLE = Automatic;
+        CURRENT_PROJECT_VERSION = 1;
+        DEVELOPMENT_TEAM = TRA7965NM5;
+        GENERATE_INFOPLIST_FILE = YES;
+        INFOPLIST_KEY_CFBundleDisplayName = Lattice;
+        INFOPLIST_KEY_UIApplicationSceneManifest_Generation = YES;
+        INFOPLIST_KEY_UIApplicationSupportsIndirectInputEvents = YES;
+        INFOPLIST_KEY_UILaunchScreen_Generation = YES;
+        INFOPLIST_KEY_UISupportedInterfaceOrientations_iPad = "UIInterfaceOrientationPortrait UIInterfaceOrientationPortraitUpsideDown UIInterfaceOrientationLandscapeLeft UIInterfaceOrientationLandscapeRight";
+        INFOPLIST_KEY_UISupportedInterfaceOrientations_iPhone = "UIInterfaceOrientationPortrait UIInterfaceOrientationLandscapeLeft UIInterfaceOrientationLandscapeRight";
+        IPHONEOS_DEPLOYMENT_TARGET = 17.0;
+        MARKETING_VERSION = 0.1.0;
+        PRODUCT_BUNDLE_IDENTIFIER = com.ejohane.lattice.ios;
+        PRODUCT_NAME = Lattice;
+        SDKROOT = iphoneos;
+        SUPPORTED_PLATFORMS = "iphoneos iphonesimulator";
+        SWIFT_COMPILATION_MODE = wholemodule;
+        SWIFT_VERSION = 6.0;
+        TARGETED_DEVICE_FAMILY = "1,2";
+      };
+      name = Release;
+    };
+/* End XCBuildConfiguration section */
+
+/* Begin XCConfigurationList section */
+    B10000000000000000000400 /* Build configuration list for PBXProject "Lattice" */ = {
+      isa = XCConfigurationList;
+      buildConfigurations = (
+        B10000000000000000000401 /* Debug */,
+        B10000000000000000000402 /* Release */,
+      );
+      defaultConfigurationIsVisible = 0;
+      defaultConfigurationName = Release;
+    };
+    B10000000000000000000410 /* Build configuration list for PBXNativeTarget "LatticeMac" */ = {
+      isa = XCConfigurationList;
+      buildConfigurations = (
+        B10000000000000000000411 /* Debug */,
+        B10000000000000000000412 /* Release */,
+      );
+      defaultConfigurationIsVisible = 0;
+      defaultConfigurationName = Release;
+    };
+    B10000000000000000000420 /* Build configuration list for PBXNativeTarget "LatticeiOS" */ = {
+      isa = XCConfigurationList;
+      buildConfigurations = (
+        B10000000000000000000421 /* Debug */,
+        B10000000000000000000422 /* Release */,
+      );
+      defaultConfigurationIsVisible = 0;
+      defaultConfigurationName = Release;
+    };
+/* End XCConfigurationList section */
+
+/* Begin XCLocalSwiftPackageReference section */
+    B10000000000000000000310 /* XCLocalSwiftPackageReference "." */ = {
+      isa = XCLocalSwiftPackageReference;
+      relativePath = .;
+    };
+/* End XCLocalSwiftPackageReference section */
+
+/* Begin XCRemoteSwiftPackageReference section */
+    B10000000000000000000300 /* XCRemoteSwiftPackageReference "Sparkle" */ = {
+      isa = XCRemoteSwiftPackageReference;
+      repositoryURL = "https://github.com/sparkle-project/Sparkle";
+      requirement = {
+        kind = upToNextMajorVersion;
+        minimumVersion = 2.9.3;
+      };
+    };
+/* End XCRemoteSwiftPackageReference section */
+
+/* Begin XCSwiftPackageProductDependency section */
+    B10000000000000000000301 /* Sparkle */ = {
+      isa = XCSwiftPackageProductDependency;
+      package = B10000000000000000000300 /* XCRemoteSwiftPackageReference "Sparkle" */;
+      productName = Sparkle;
+    };
+    B10000000000000000000311 /* LatticeCore */ = {
+      isa = XCSwiftPackageProductDependency;
+      package = B10000000000000000000310 /* XCLocalSwiftPackageReference "." */;
+      productName = LatticeCore;
+    };
+    B10000000000000000000312 /* LatticeEditor */ = {
+      isa = XCSwiftPackageProductDependency;
+      package = B10000000000000000000310 /* XCLocalSwiftPackageReference "." */;
+      productName = LatticeEditor;
+    };
+/* End XCSwiftPackageProductDependency section */
+  };
+  rootObject = B10000000000000000000AA1 /* Project object */;
+}

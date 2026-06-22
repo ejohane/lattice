@@ -16,7 +16,7 @@ concurrency:
 jobs:
   verify:
     name: Verify
-    runs-on: ubuntu-latest
+    runs-on: macos-15
 
     steps:
       - name: Check out repository
@@ -30,23 +30,62 @@ jobs:
       - name: Install dependencies
         run: bun install --frozen-lockfile
 
-      - name: Run tests and typecheck
+      - name: Run Swift tests and Apple app builds
         run: bun run verify
-
-      - name: Validate installer script
-        run: sh -n scripts/install.sh
-
-      - name: Validate Raycast package script
-        run: bash -n scripts/package-raycast-extension.sh
 
       - name: Validate macOS app package scripts
         run: |
+          bash -n scripts/build-mac-app.sh
           bash -n scripts/package-mac-app.sh
+          bash -n scripts/package-mac-dev-update.sh
           sh -n scripts/install-mac-app.sh
 
-  build:
-    name: Build ${{ matrix.artifact }}
+  plan-release:
+    name: Plan release
     needs: verify
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+      issues: write
+      pull-requests: write
+    outputs:
+      release_created: ${{ steps.plan.outputs.release_created }}
+      version: ${{ steps.plan.outputs.version }}
+      git_tag: ${{ steps.plan.outputs.git_tag }}
+      app_build: ${{ steps.plan.outputs.app_build }}
+
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22.14.0
+
+      - name: Set up Bun
+        uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: 1.3.4
+
+      - name: Install dependencies
+        run: bun install --frozen-lockfile
+
+      - name: Plan semantic release
+        id: plan
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+        run: node scripts/plan-release.mjs
+
+  build:
+    name: Build ${{ matrix.mac-app-artifact }}
+    needs:
+      - verify
+      - plan-release
+    if: needs.plan-release.outputs.release_created == 'true'
     runs-on: ${{ matrix.os }}
 
     strategy:
@@ -54,17 +93,11 @@ jobs:
       matrix:
         include:
           - os: macos-15
-            target: bun-darwin-arm64
-            artifact: lattice-darwin-arm64
             mac-app-artifact: lattice-macos-app-darwin-arm64
+            mac-appcast: lattice-macos-appcast-darwin-arm64.xml
           - os: macos-15-intel
-            target: bun-darwin-x64
-            artifact: lattice-darwin-x64
             mac-app-artifact: lattice-macos-app-darwin-x64
-          - os: ubuntu-latest
-            target: bun-linux-x64
-            artifact: lattice-linux-x64
-            mac-app-artifact: ""
+            mac-appcast: lattice-macos-appcast-darwin-x64.xml
 
     steps:
       - name: Check out repository
@@ -78,40 +111,22 @@ jobs:
       - name: Install dependencies
         run: bun install --frozen-lockfile
 
-      - name: Build binary
-        run: |
-          LATTICE_TARGET="${{ matrix.target }}" \
-          LATTICE_OUTFILE="dist/${{ matrix.artifact }}/lattice" \
-          bun run build:binary
-
-      - name: Smoke test binary
-        run: ./dist/${{ matrix.artifact }}/lattice --help
-
-      - name: Package artifact
-        run: |
-          mkdir -p "artifacts/${{ matrix.artifact }}"
-          cp "dist/${{ matrix.artifact }}/lattice" "artifacts/${{ matrix.artifact }}/lattice"
-          cp README.md LICENSE scripts/install.sh "artifacts/${{ matrix.artifact }}/"
-          tar -czf "${{ matrix.artifact }}.tar.gz" -C artifacts "${{ matrix.artifact }}"
-          shasum -a 256 "${{ matrix.artifact }}.tar.gz" > "${{ matrix.artifact }}.tar.gz.sha256"
-
       - name: Package macOS app
-        if: runner.os == 'macOS'
+        env:
+          LATTICE_APP_VERSION: ${{ needs.plan-release.outputs.version }}
+          LATTICE_APP_BUILD: ${{ needs.plan-release.outputs.app_build }}
+          LATTICE_SPARKLE_FEED_URL: https://github.com/${{ github.repository }}/releases/latest/download/${{ matrix.mac-appcast }}
+          LATTICE_SPARKLE_PUBLIC_ED_KEY: ${{ secrets.LATTICE_SPARKLE_PUBLIC_ED_KEY }}
         run: |
+          if [[ -z "$LATTICE_SPARKLE_PUBLIC_ED_KEY" ]]; then
+            printf 'error: missing LATTICE_SPARKLE_PUBLIC_ED_KEY secret for updater-enabled macOS releases.\n' >&2
+            exit 1
+          fi
           LATTICE_MAC_APP_ARTIFACT="${{ matrix.mac-app-artifact }}" \
           LATTICE_ARTIFACT_DIR=. \
           bun run package:mac-app
 
-      - name: Upload artifact
-        uses: actions/upload-artifact@v4
-        with:
-          name: ${{ matrix.artifact }}
-          path: |
-            ${{ matrix.artifact }}.tar.gz
-            ${{ matrix.artifact }}.tar.gz.sha256
-
       - name: Upload macOS app artifact
-        if: runner.os == 'macOS'
         uses: actions/upload-artifact@v4
         with:
           name: ${{ matrix.mac-app-artifact }}
@@ -119,50 +134,76 @@ jobs:
             ${{ matrix.mac-app-artifact }}.zip
             ${{ matrix.mac-app-artifact }}.zip.sha256
 
-  raycast:
-    name: Build compiled Raycast extension artifact
-    needs: verify
-    runs-on: ubuntu-latest
+  mac-appcast:
+    name: Generate macOS appcast
+    needs:
+      - build
+      - plan-release
+    if: needs.plan-release.outputs.release_created == 'true'
+    runs-on: macos-15
 
     steps:
       - name: Check out repository
         uses: actions/checkout@v4
 
-      - name: Set up Bun
-        uses: oven-sh/setup-bun@v2
+      - name: Download macOS app artifacts
+        uses: actions/download-artifact@v4
         with:
-          bun-version: 1.3.4
+          pattern: lattice-macos-app-darwin-*
+          merge-multiple: true
+          path: release-artifacts
 
-      - name: Install root dependencies
-        run: bun install --frozen-lockfile
-
-      - name: Install Raycast extension dependencies
-        working-directory: raycast-extension
-        run: bun install --frozen-lockfile
-
-      - name: Typecheck Raycast extension
-        working-directory: raycast-extension
-        run: bun run typecheck
-
-      - name: Package compiled Raycast extension
+      - name: Resolve Sparkle tools
         run: |
-          LATTICE_ARTIFACT_DIR=. \
-          bun run package:raycast
+          xcodebuild \
+            -resolvePackageDependencies \
+            -workspace apps/Lattice/Lattice.xcworkspace \
+            -scheme LatticeMac \
+            -derivedDataPath .build/xcode
 
-      - name: Upload compiled Raycast artifact
+      - name: Generate signed appcast
+        env:
+          LATTICE_SPARKLE_PRIVATE_ED_KEY: ${{ secrets.LATTICE_SPARKLE_PRIVATE_ED_KEY }}
+          LATTICE_SPARKLE_DOWNLOAD_URL_PREFIX: https://github.com/${{ github.repository }}/releases/latest/download/
+        run: |
+          if [[ -z "$LATTICE_SPARKLE_PRIVATE_ED_KEY" ]]; then
+            printf 'error: missing LATTICE_SPARKLE_PRIVATE_ED_KEY secret for Sparkle appcast signing.\n' >&2
+            exit 1
+          fi
+
+          generate_appcast="$(find .build/xcode/SourcePackages/artifacts -path '*/Sparkle/bin/generate_appcast' -type f -perm -111 -print -quit)"
+          if [[ -z "$generate_appcast" ]]; then
+            printf 'error: Sparkle generate_appcast tool was not found.\n' >&2
+            exit 1
+          fi
+
+          for artifact in lattice-macos-app-darwin-arm64 lattice-macos-app-darwin-x64; do
+            appcast_dir="release-artifacts/appcast-$artifact"
+            mkdir -p "$appcast_dir"
+            cp "release-artifacts/$artifact.zip" "$appcast_dir/"
+
+            arch="${artifact#lattice-macos-app-}"
+            printf '%s' "$LATTICE_SPARKLE_PRIVATE_ED_KEY" \
+              | "$generate_appcast" \
+                --ed-key-file - \
+                --download-url-prefix "$LATTICE_SPARKLE_DOWNLOAD_URL_PREFIX" \
+                -o "release-artifacts/lattice-macos-appcast-$arch.xml" \
+                "$appcast_dir"
+          done
+
+      - name: Upload macOS appcast
         uses: actions/upload-artifact@v4
         with:
-          name: lattice-raycast-extension-compiled
-          path: |
-            lattice-raycast-extension-compiled.tar.gz
-            lattice-raycast-extension-compiled.tar.gz.sha256
+          name: lattice-macos-appcast
+          path: release-artifacts/lattice-macos-appcast-*.xml
 
   release:
     name: Semantic release
-    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
     needs:
+      - plan-release
       - build
-      - raycast
+      - mac-appcast
+    if: needs.plan-release.outputs.release_created == 'true'
     runs-on: ubuntu-latest
     permissions:
       contents: write
