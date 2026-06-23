@@ -41,6 +41,67 @@ struct MarkdownTextEditingTests {
   }
 }
 
+@Suite("MarkdownListContinuation")
+struct MarkdownListContinuationTests {
+  @Test("continues unordered lists")
+  func continuesUnorderedLists() throws {
+    let result = try #require(MarkdownListContinuation.applyReturn(
+      to: "- item",
+      selection: NSRange(location: 6, length: 0)
+    ))
+
+    #expect(result.body == "- item\n- ")
+    #expect(result.selection == NSRange(location: 9, length: 0))
+    #expect(result.replacementRange == NSRange(location: 6, length: 0))
+    #expect(result.replacement == "\n- ")
+  }
+
+  @Test("continues ordered lists with the next number")
+  func continuesOrderedLists() throws {
+    let result = try #require(MarkdownListContinuation.applyReturn(
+      to: "1. item",
+      selection: NSRange(location: 7, length: 0)
+    ))
+
+    #expect(result.body == "1. item\n2. ")
+    #expect(result.selection == NSRange(location: 11, length: 0))
+  }
+
+  @Test("continues task lists unchecked")
+  func continuesTaskListsUnchecked() throws {
+    let result = try #require(MarkdownListContinuation.applyReturn(
+      to: "- [x] item",
+      selection: NSRange(location: 10, length: 0)
+    ))
+
+    #expect(result.body == "- [x] item\n- [ ] ")
+    #expect(result.selection == NSRange(location: 17, length: 0))
+  }
+
+  @Test("exits empty unordered list items")
+  func exitsEmptyUnorderedListItems() throws {
+    let result = try #require(MarkdownListContinuation.applyReturn(
+      to: "- ",
+      selection: NSRange(location: 2, length: 0)
+    ))
+
+    #expect(result.body == "")
+    #expect(result.selection == NSRange(location: 0, length: 0))
+    #expect(result.replacementRange == NSRange(location: 0, length: 2))
+    #expect(result.replacement == "")
+  }
+
+  @Test("ignores non-list lines")
+  func ignoresNonListLines() {
+    let result = MarkdownListContinuation.applyReturn(
+      to: "plain text",
+      selection: NSRange(location: 10, length: 0)
+    )
+
+    #expect(result == nil)
+  }
+}
+
 @Suite("MarkdownStyler")
 struct MarkdownStylerTests {
   @Test("generates style spans for core live markdown")
