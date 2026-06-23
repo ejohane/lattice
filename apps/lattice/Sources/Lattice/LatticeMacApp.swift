@@ -36,6 +36,24 @@ struct LatticeMacApp: App {
           }
         }
       }
+      CommandMenu("Editor") {
+        Button("Increase Font Size") {
+          model.increaseEditorFontSize()
+        }
+        .keyboardShortcut("+", modifiers: [.command])
+        .disabled(!model.canIncreaseEditorFontSize)
+
+        Button("Decrease Font Size") {
+          model.decreaseEditorFontSize()
+        }
+        .keyboardShortcut("-", modifiers: [.command])
+        .disabled(!model.canDecreaseEditorFontSize)
+
+        Button("Reset Font Size") {
+          model.resetEditorFontSize()
+        }
+        .keyboardShortcut("0", modifiers: [.command])
+      }
     }
 
     MenuBarExtra("Lattice", systemImage: "square.and.pencil") {

@@ -23,6 +23,7 @@ public final class LatticeAppModel {
   public var isShowingFolderImporter = false
   public var preferredCompactColumn = NavigationColumn.sidebar
   public var editorFocusToken = 0
+  public var editorFontSize = 14.0
 
   public init(
     noteLibrary: NoteLibrary = NoteLibrary(),
@@ -39,6 +40,14 @@ public final class LatticeAppModel {
 
   public var recommendedFolderURL: URL {
     noteLibrary.suggestedNotesFolderURL
+  }
+
+  public var canIncreaseEditorFontSize: Bool {
+    editorFontSize < Self.maximumEditorFontSize
+  }
+
+  public var canDecreaseEditorFontSize: Bool {
+    editorFontSize > Self.minimumEditorFontSize
   }
 
   public func start() {
@@ -118,6 +127,18 @@ public final class LatticeAppModel {
     selectedRange = result.selection
     scheduleAutosave()
     editorFocusToken += 1
+  }
+
+  public func increaseEditorFontSize() {
+    setEditorFontSize(editorFontSize + 1)
+  }
+
+  public func decreaseEditorFontSize() {
+    setEditorFontSize(editorFontSize - 1)
+  }
+
+  public func resetEditorFontSize() {
+    setEditorFontSize(Self.defaultEditorFontSize)
   }
 
   public func scheduleAutosave() {
@@ -203,9 +224,19 @@ public final class LatticeAppModel {
       errorMessage = error.localizedDescription
     }
   }
+
+  private func setEditorFontSize(_ size: Double) {
+    editorFontSize = min(Self.maximumEditorFontSize, max(Self.minimumEditorFontSize, size))
+  }
 }
 
 public enum NavigationColumn: Hashable {
   case sidebar
   case detail
+}
+
+private extension LatticeAppModel {
+  static let defaultEditorFontSize = 14.0
+  static let minimumEditorFontSize = 10.0
+  static let maximumEditorFontSize = 28.0
 }

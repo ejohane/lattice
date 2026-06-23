@@ -132,6 +132,7 @@ private struct NoteEditorPane: View {
       MarkdownTextEditor(
         text: $model.text,
         selectedRange: $model.selectedRange,
+        fontSize: CGFloat(model.editorFontSize),
         focusToken: model.editorFocusToken,
         onTextChange: {
           model.scheduleAutosave()
