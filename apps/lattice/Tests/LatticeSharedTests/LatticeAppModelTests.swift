@@ -38,6 +38,45 @@ struct LatticeAppModelTests {
     model.open(note)
     #expect(model.text == "# Universal Note\n\nBody\n")
   }
+
+  @Test("adjusts editor font size with app-style bounds")
+  func adjustsEditorFontSize() throws {
+    let defaultsSuiteName = "font-size-\(UUID().uuidString)"
+    guard let defaults = UserDefaults(suiteName: defaultsSuiteName) else {
+      throw FixtureError.defaultsUnavailable
+    }
+    defer {
+      defaults.removePersistentDomain(forName: defaultsSuiteName)
+    }
+
+    let model = LatticeAppModel(
+      noteLibrary: NoteLibrary(defaults: defaults),
+      folderAccessStore: FolderAccessStore(defaults: defaults)
+    )
+
+    #expect(model.editorFontSize == 14)
+
+    model.increaseEditorFontSize()
+    #expect(model.editorFontSize == 15)
+
+    model.decreaseEditorFontSize()
+    #expect(model.editorFontSize == 14)
+
+    model.resetEditorFontSize()
+    #expect(model.editorFontSize == 14)
+
+    for _ in 0..<30 {
+      model.decreaseEditorFontSize()
+    }
+    #expect(model.editorFontSize == 10)
+    #expect(!model.canDecreaseEditorFontSize)
+
+    for _ in 0..<30 {
+      model.increaseEditorFontSize()
+    }
+    #expect(model.editorFontSize == 28)
+    #expect(!model.canIncreaseEditorFontSize)
+  }
 }
 
 private struct Fixture {

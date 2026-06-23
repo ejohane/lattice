@@ -7,17 +7,20 @@ import AppKit
 public struct MarkdownTextEditor: NSViewRepresentable {
   @Binding var text: String
   @Binding var selectedRange: NSRange
+  let fontSize: CGFloat
   let focusToken: Int
   let onTextChange: () -> Void
 
   public init(
     text: Binding<String>,
     selectedRange: Binding<NSRange>,
+    fontSize: CGFloat,
     focusToken: Int,
     onTextChange: @escaping () -> Void
   ) {
     self._text = text
     self._selectedRange = selectedRange
+    self.fontSize = fontSize
     self.focusToken = focusToken
     self.onTextChange = onTextChange
   }
@@ -44,7 +47,7 @@ public struct MarkdownTextEditor: NSViewRepresentable {
     textView.backgroundColor = .clear
     textView.textColor = .labelColor
     textView.insertionPointColor = .controlAccentColor
-    textView.font = .systemFont(ofSize: 21, weight: .regular)
+    textView.font = MarkdownAttributedRenderer.bodyFont(size: fontSize)
     textView.textContainerInset = NSSize(width: 36, height: 34)
     textView.minSize = NSSize(width: 0, height: 0)
     textView.maxSize = NSSize(width: CGFloat.greatestFiniteMagnitude, height: CGFloat.greatestFiniteMagnitude)
@@ -67,7 +70,7 @@ public struct MarkdownTextEditor: NSViewRepresentable {
     guard let textView = context.coordinator.textView else {
       return
     }
-    if textView.string != text {
+    if textView.string != text || context.coordinator.lastRenderedFontSize != fontSize {
       context.coordinator.render(text, in: textView, preserving: selectedRange)
     }
     if context.coordinator.lastFocusToken != focusToken {
@@ -83,6 +86,7 @@ public struct MarkdownTextEditor: NSViewRepresentable {
     var parent: MarkdownTextEditor
     weak var textView: NSTextView?
     var lastFocusToken = 0
+    var lastRenderedFontSize: CGFloat?
     private var isRendering = false
 
     init(parent: MarkdownTextEditor) {
@@ -111,10 +115,11 @@ public struct MarkdownTextEditor: NSViewRepresentable {
         return
       }
       isRendering = true
-      let attributed = MarkdownAttributedRenderer.render(text)
+      let attributed = MarkdownAttributedRenderer.render(text, fontSize: parent.fontSize)
       textView.textStorage?.setAttributedString(attributed)
       textView.setSelectedRange(clamped(selection, length: (text as NSString).length))
-      textView.typingAttributes = MarkdownAttributedRenderer.baseTypingAttributes()
+      textView.typingAttributes = MarkdownAttributedRenderer.baseTypingAttributes(fontSize: parent.fontSize)
+      lastRenderedFontSize = parent.fontSize
       isRendering = false
     }
   }
@@ -126,17 +131,20 @@ import UIKit
 public struct MarkdownTextEditor: UIViewRepresentable {
   @Binding var text: String
   @Binding var selectedRange: NSRange
+  let fontSize: CGFloat
   let focusToken: Int
   let onTextChange: () -> Void
 
   public init(
     text: Binding<String>,
     selectedRange: Binding<NSRange>,
+    fontSize: CGFloat,
     focusToken: Int,
     onTextChange: @escaping () -> Void
   ) {
     self._text = text
     self._selectedRange = selectedRange
+    self.fontSize = fontSize
     self.focusToken = focusToken
     self.onTextChange = onTextChange
   }
