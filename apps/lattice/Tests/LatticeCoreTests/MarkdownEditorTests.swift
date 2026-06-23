@@ -102,6 +102,54 @@ struct MarkdownListContinuationTests {
   }
 }
 
+@Suite("MarkdownListIndentation")
+struct MarkdownListIndentationTests {
+  @Test("indents the active unordered list item")
+  func indentsActiveUnorderedListItem() throws {
+    let result = try #require(MarkdownListIndentation.applyIndent(
+      to: "- Parent\n- Child",
+      selection: NSRange(location: 16, length: 0)
+    ))
+
+    #expect(result.body == "- Parent\n  - Child")
+    #expect(result.selection == NSRange(location: 18, length: 0))
+    #expect(result.replacementRange == NSRange(location: 9, length: 7))
+    #expect(result.replacement == "  - Child")
+  }
+
+  @Test("outdents the active unordered list item")
+  func outdentsActiveUnorderedListItem() throws {
+    let result = try #require(MarkdownListIndentation.applyOutdent(
+      to: "- Parent\n  - Child",
+      selection: NSRange(location: 18, length: 0)
+    ))
+
+    #expect(result.body == "- Parent\n- Child")
+    #expect(result.selection == NSRange(location: 16, length: 0))
+  }
+
+  @Test("indents selected list lines without changing plain text lines")
+  func indentsSelectedListLinesOnly() throws {
+    let result = try #require(MarkdownListIndentation.applyIndent(
+      to: "- One\nplain\n1. Two",
+      selection: NSRange(location: 6, length: 12)
+    ))
+
+    #expect(result.body == "- One\nplain\n  1. Two")
+    #expect(result.selection == NSRange(location: 6, length: 14))
+  }
+
+  @Test("ignores non-list lines")
+  func ignoresNonListLinesForIndentation() {
+    let result = MarkdownListIndentation.applyIndent(
+      to: "plain text",
+      selection: NSRange(location: 5, length: 0)
+    )
+
+    #expect(result == nil)
+  }
+}
+
 @Suite("MarkdownStyler")
 struct MarkdownStylerTests {
   @Test("generates style spans for core live markdown")
