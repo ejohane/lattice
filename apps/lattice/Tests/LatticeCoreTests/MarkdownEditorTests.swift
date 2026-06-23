@@ -85,4 +85,13 @@ struct MarkdownStylerTests {
     #expect(boldSpans.count == 1)
     #expect((text as NSString).substring(with: boldSpans[0].range) == "bold")
   }
+
+  @Test("generates italic spans for underscore emphasis")
+  func stylesUnderscoreItalic() {
+    let text = "inline _rendering_ works"
+    let italicSpans = MarkdownStyler.spans(in: text).filter { $0.kind == .italic }
+
+    #expect(italicSpans.count == 1)
+    #expect((text as NSString).substring(with: italicSpans[0].range) == "rendering")
+  }
 }
