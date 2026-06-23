@@ -12,7 +12,8 @@ struct LatticeMacApp: App {
   var body: some Scene {
     WindowGroup(id: "main") {
       LatticeRootView(model: model)
-        .frame(minWidth: 760, minHeight: 520)
+        .frame(minWidth: 420, minHeight: 420)
+        .background(WindowMinimumSize(width: 420, height: 420))
         .task {
           model.start()
         }
@@ -98,6 +99,29 @@ struct LatticeMacApp: App {
   private func showMainWindow() {
     openWindow(id: "main")
     NSApp.activate(ignoringOtherApps: true)
+  }
+}
+
+private struct WindowMinimumSize: NSViewRepresentable {
+  let width: CGFloat
+  let height: CGFloat
+
+  func makeNSView(context: Context) -> NSView {
+    let view = NSView()
+    updateWindow(for: view)
+    return view
+  }
+
+  func updateNSView(_ nsView: NSView, context: Context) {
+    updateWindow(for: nsView)
+  }
+
+  private func updateWindow(for view: NSView) {
+    DispatchQueue.main.async {
+      let size = NSSize(width: width, height: height)
+      view.window?.minSize = size
+      view.window?.contentMinSize = size
+    }
   }
 }
 

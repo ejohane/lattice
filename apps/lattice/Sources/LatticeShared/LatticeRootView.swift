@@ -104,6 +104,9 @@ private struct NoteSidebar: View {
       }
     }
     .navigationTitle("Lattice")
+    #if os(macOS)
+    .navigationSplitViewColumnWidth(min: 140, ideal: 180, max: 260)
+    #endif
     .toolbar {
       ToolbarItem(placement: .primaryAction) {
         Button {
@@ -142,7 +145,25 @@ private struct NoteEditorPane: View {
       statusBar
     }
     .navigationTitle(model.selectedNote.map { model.displayTitle(for: $0) } ?? "New Note")
+    #if os(macOS)
+    .navigationSplitViewColumnWidth(min: 260, ideal: 560)
+    #endif
     .toolbar {
+      #if os(macOS)
+      ToolbarItem(placement: .primaryAction) {
+        Menu {
+          markdownButton(.heading, title: "Heading", systemImage: "textformat.size")
+          markdownButton(.bold, title: "Bold", systemImage: "bold")
+          markdownButton(.italic, title: "Italic", systemImage: "italic")
+          markdownButton(.bulletList, title: "List", systemImage: "list.bullet")
+          markdownButton(.code, title: "Code", systemImage: "chevron.left.forwardslash.chevron.right")
+          markdownButton(.link, title: "Link", systemImage: "link")
+        } label: {
+          Label("Format", systemImage: "textformat")
+        }
+        .disabled(!model.hasFolder)
+      }
+      #else
       ToolbarItemGroup(placement: .primaryAction) {
         markdownButton(.heading, title: "Heading", systemImage: "textformat.size")
         markdownButton(.bold, title: "Bold", systemImage: "bold")
@@ -151,6 +172,7 @@ private struct NoteEditorPane: View {
         markdownButton(.code, title: "Code", systemImage: "chevron.left.forwardslash.chevron.right")
         markdownButton(.link, title: "Link", systemImage: "link")
       }
+      #endif
     }
   }
 
@@ -223,5 +245,8 @@ private struct FolderSetupView: View {
     .padding(32)
     .frame(maxWidth: .infinity, maxHeight: .infinity)
     .navigationTitle("Lattice")
+    #if os(macOS)
+    .navigationSplitViewColumnWidth(min: 260, ideal: 560)
+    #endif
   }
 }
