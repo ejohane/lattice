@@ -154,7 +154,7 @@ jobs:
           path: release-artifacts
 
       - name: Resolve Sparkle tools
-        run: swift build --package-path apps/mac -c release
+        run: swift build --package-path apps/lattice -c release
 
       - name: Generate signed appcast
         env:
@@ -166,7 +166,7 @@ jobs:
             exit 1
           fi
 
-          generate_appcast="apps/mac/.build/artifacts/sparkle/Sparkle/bin/generate_appcast"
+          generate_appcast="apps/lattice/.build/artifacts/sparkle/Sparkle/bin/generate_appcast"
           for artifact in lattice-macos-app-darwin-arm64 lattice-macos-app-darwin-x64; do
             appcast_dir="release-artifacts/appcast-$artifact"
             mkdir -p "$appcast_dir"

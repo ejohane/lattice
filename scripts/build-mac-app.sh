@@ -2,7 +2,7 @@
 set -euo pipefail
 
 repo_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
-package_path="$repo_root/apps/mac"
+package_path="$repo_root/apps/lattice"
 configuration="${CONFIGURATION:-release}"
 app_name="Lattice"
 executable_name="Lattice"
@@ -45,7 +45,7 @@ if [[ ! -d "$sparkle_framework" ]]; then
   exit 1
 fi
 
-ditto "$sparkle_framework" "$frameworks_dir/Sparkle.framework"
+COPYFILE_DISABLE=1 ditto --norsrc "$sparkle_framework" "$frameworks_dir/Sparkle.framework"
 if ! otool -l "$macos_dir/$executable_name" | grep -q '@executable_path/../Frameworks'; then
   install_name_tool -add_rpath "@executable_path/../Frameworks" "$macos_dir/$executable_name"
 fi
@@ -82,8 +82,6 @@ cat <<PLIST
   <string>$(xml_escape "$app_build")</string>
   <key>LSMinimumSystemVersion</key>
   <string>14.0</string>
-  <key>LSUIElement</key>
-  <true/>
   <key>NSHighResolutionCapable</key>
   <true/>
 PLIST

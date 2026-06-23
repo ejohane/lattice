@@ -1,24 +1,25 @@
 # Lattice Repository Agent Guide
 
-Lattice is centered on the native macOS app in `apps/mac`. The app writes
-portable Markdown notes into a local notes folder.
+Lattice is centered on the universal Apple app in `apps/lattice`. The app writes
+portable Markdown notes into a user-selected notes folder and shares app logic
+across macOS, iPhone, and iPad.
 
 ## Scope
 
-- Keep the macOS app, Markdown note storage, packaging, and release automation
+- Keep the universal Apple app, Markdown note storage, packaging, and release automation
   scoped to the requested workstream.
 - Do not reintroduce CLI, Raycast, bundled skills, wiki, queue, JSON capture,
   screenshot, or context-metadata systems unless the task explicitly asks for
   that work.
 - Preserve local-first behavior. Notes should remain ordinary Markdown files on
   disk.
-- Keep Sparkle update changes app-native and release-artifact based.
+- Keep Sparkle update changes macOS-native and release-artifact based.
 
 ## Verification
 
 - Run `bun run verify` before handing off code changes.
-- Run `bun run mac:bundle` when changing app startup, packaging, installer, or
-  update behavior.
+- Run `bun run mac:bundle` when changing macOS app startup, packaging,
+  installer, or update behavior.
 - For updater or installer changes, test against a local release-style archive
   and checksum when possible.
 

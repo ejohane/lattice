@@ -1,6 +1,15 @@
 import Foundation
 
-public struct MarkdownEditResult: Equatable {
+public enum MarkdownCommand: CaseIterable, Equatable, Sendable {
+  case heading
+  case bold
+  case italic
+  case bulletList
+  case code
+  case link
+}
+
+public struct MarkdownEditResult: Equatable, Sendable {
   public let body: String
   public let selection: NSRange
 
@@ -72,10 +81,7 @@ public enum MarkdownTextEditing {
     )
   }
 
-  private static func insertLink(
-    in body: String,
-    selection: NSRange
-  ) -> MarkdownEditResult {
+  private static func insertLink(in body: String, selection: NSRange) -> MarkdownEditResult {
     let nsString = body as NSString
     let range = clamped(selection, length: nsString.length)
     let selectedText = nsString.substring(with: range)

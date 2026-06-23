@@ -29,7 +29,7 @@ checksum="$archive.sha256"
 mkdir -p "$out_dir"
 rm -f "$archive" "$checksum"
 
-ditto -c -k --keepParent "$app_path" "$archive"
+COPYFILE_DISABLE=1 ditto -c -k --norsrc --keepParent "$app_path" "$archive"
 
 if command -v shasum >/dev/null 2>&1; then
   shasum -a 256 "$archive" > "$checksum"
