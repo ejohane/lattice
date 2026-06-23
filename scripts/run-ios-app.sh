@@ -2,7 +2,7 @@
 set -euo pipefail
 
 SIMULATOR_NAME="${1:-${SIMULATOR_NAME:-iPhone 17 Pro}}"
-PROJECT_PATH="${PROJECT_PATH:-apps/ios/Lattice.xcodeproj}"
+PROJECT_PATH="${PROJECT_PATH:-apps/lattice/iOS/Lattice.xcodeproj}"
 SCHEME="${SCHEME:-Lattice}"
 BUNDLE_ID="${BUNDLE_ID:-com.ejohane.lattice.ios}"
 DERIVED_DATA_PATH="${DERIVED_DATA_PATH:-.build/ios-derived-data}"

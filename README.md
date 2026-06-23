@@ -1,15 +1,20 @@
 # Lattice
 
-Lattice is a native macOS menu bar app for quickly writing Markdown notes into a
-portable local folder.
+Lattice is a universal Apple app for quickly writing Markdown notes into a
+portable folder. The same SwiftUI app shell runs on macOS, iPhone, and iPad,
+with native text views under the editor for platform editing behavior.
 
-The app keeps one active note open at a time. The first autosave creates a
-Markdown file, later autosaves update that same file, and the New Note toolbar
-button starts a fresh file.
+The app keeps one active note open per device. The first autosave creates a
+Markdown file, later autosaves update that same file, and New Note starts a
+fresh file.
 
 ## Notes Folder
 
-By default, Lattice uses:
+On first run, Lattice asks you to choose a notes folder. The recommended folder
+is an iCloud Drive-style `Lattice` folder when iCloud Drive is available, but any
+user-controlled folder can be selected.
+
+Lattice stores notes as:
 
 ```text
 ~/Documents/Lattice/
@@ -18,8 +23,8 @@ By default, Lattice uses:
       2026-06-17T14-32-10.md
 ```
 
-You can choose another notes folder from the app. Notes are ordinary `.md` files
-with no JSON wrapper, database, front matter, or app-specific sidecar index.
+Notes are ordinary `.md` files with no JSON wrapper, database, front matter, or
+app-specific sidecar index.
 
 ## Install
 
@@ -42,14 +47,14 @@ LATTICE_VERSION=v1.7.0 LATTICE_APP_INSTALL_DIR=/Applications \
 
 ## Develop
 
-Build and run the app from source:
+Build and run the macOS app from source:
 
 ```bash
 bun run mac:build
 bun run mac:run
 ```
 
-Build, install, and run the iOS app in Simulator:
+Build, install, and run the iPhone or iPad app in Simulator:
 
 ```bash
 bun run ios:run
@@ -75,7 +80,7 @@ Create a local iOS archive when signing is configured in Xcode:
 bun run ios:archive
 ```
 
-Run tests:
+Run shared Swift tests:
 
 ```bash
 bun run mac:test
@@ -99,11 +104,11 @@ bun run verify
 Build a development macOS app with Sparkle updates enabled:
 
 ```bash
-swift build --package-path apps/mac -c release
-apps/mac/.build/artifacts/sparkle/Sparkle/bin/generate_keys --account lattice-dev
+swift build --package-path apps/lattice -c release
+apps/lattice/.build/artifacts/sparkle/Sparkle/bin/generate_keys --account lattice-dev
 
 LATTICE_SPARKLE_FEED_URL=http://localhost:8000/appcast.xml \
-LATTICE_SPARKLE_PUBLIC_ED_KEY="$(apps/mac/.build/artifacts/sparkle/Sparkle/bin/generate_keys --account lattice-dev -p)" \
+LATTICE_SPARKLE_PUBLIC_ED_KEY="$(apps/lattice/.build/artifacts/sparkle/Sparkle/bin/generate_keys --account lattice-dev -p)" \
 bash scripts/build-mac-app.sh
 ```
 

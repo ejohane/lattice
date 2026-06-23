@@ -1,15 +1,11 @@
 import Foundation
 
-public struct SavedNote: Identifiable, Hashable {
+public struct SavedNote: Identifiable, Hashable, Sendable {
   public let url: URL
   public let dateString: String
   public let modifiedAt: Date?
 
-  public init(
-    url: URL,
-    dateString: String? = nil,
-    modifiedAt: Date? = nil
-  ) {
+  public init(url: URL, dateString: String? = nil, modifiedAt: Date? = nil) {
     self.url = url.standardizedFileURL
     self.dateString = dateString ?? url.deletingLastPathComponent().lastPathComponent
     self.modifiedAt = modifiedAt
@@ -19,7 +15,7 @@ public struct SavedNote: Identifiable, Hashable {
     url.standardizedFileURL.path
   }
 
-  public var title: String {
+  public var filenameTitle: String {
     url.deletingPathExtension().lastPathComponent
   }
 
@@ -32,7 +28,7 @@ public struct SavedNote: Identifiable, Hashable {
   }
 }
 
-public struct NoteSection: Identifiable, Equatable {
+public struct NoteSection: Identifiable, Equatable, Sendable {
   public let dateString: String
   public let notes: [SavedNote]
 
@@ -46,7 +42,7 @@ public struct NoteSection: Identifiable, Equatable {
   }
 }
 
-public enum NotesFolderValidationResult: Equatable {
+public enum NotesFolderValidationResult: Equatable, Sendable {
   case valid
   case uninitialized
   case invalid(String)
@@ -59,7 +55,7 @@ public enum NotesFolderValidationResult: Equatable {
   }
 }
 
-public enum NoteStoreError: LocalizedError, Equatable {
+public enum NoteLibraryError: LocalizedError, Equatable, Sendable {
   case noActiveNotesFolder
   case emptyNote
   case missingNote(String)
@@ -79,22 +75,13 @@ public enum NoteStoreError: LocalizedError, Equatable {
   }
 }
 
-public enum MarkdownCommand: CaseIterable, Equatable {
-  case heading
-  case bold
-  case italic
-  case bulletList
-  case code
-  case link
-}
-
-public enum NoteSaveResult: Equatable {
+public enum NoteSaveResult: Equatable, Sendable {
   case unchanged
   case skippedEmptyDraft
   case saved(SavedNote)
 }
 
-public struct RestoredNote: Equatable {
+public struct RestoredNote: Equatable, Sendable {
   public let note: SavedNote
   public let body: String
 
@@ -105,12 +92,12 @@ public struct RestoredNote: Equatable {
 }
 
 public final class NoteEditingSession {
-  private let store: NoteStore
+  private let library: NoteLibrary
   private var activeNote: SavedNote?
   private var lastSavedBody = ""
 
-  public init(store: NoteStore) {
-    self.store = store
+  public init(library: NoteLibrary) {
+    self.library = library
   }
 
   public var currentNote: SavedNote? {
@@ -122,19 +109,19 @@ public final class NoteEditingSession {
   }
 
   public func restoreActiveNote() throws -> RestoredNote? {
-    guard let note = store.restoreActiveNote() else {
+    guard let note = library.restoreActiveNote() else {
       activeNote = nil
       lastSavedBody = ""
       return nil
     }
 
     do {
-      let body = try store.body(for: note)
+      let body = try library.body(for: note)
       activeNote = note
       lastSavedBody = Self.normalizedBody(body)
       return RestoredNote(note: note, body: body)
     } catch {
-      store.clearActiveNote()
+      library.clearActiveNote()
       activeNote = nil
       lastSavedBody = ""
       throw error
@@ -142,8 +129,8 @@ public final class NoteEditingSession {
   }
 
   public func open(_ note: SavedNote) throws -> RestoredNote {
-    let opened = try store.openNote(note)
-    let body = try store.body(for: opened)
+    let opened = try library.openNote(note)
+    let body = try library.body(for: opened)
     activeNote = opened
     lastSavedBody = Self.normalizedBody(body)
     return RestoredNote(note: opened, body: body)
@@ -152,7 +139,7 @@ public final class NoteEditingSession {
   public func resetForNewNote() {
     activeNote = nil
     lastSavedBody = ""
-    store.clearActiveNote()
+    library.clearActiveNote()
   }
 
   @discardableResult
@@ -167,9 +154,9 @@ public final class NoteEditingSession {
 
     let note: SavedNote
     if let activeNote {
-      note = try store.updateNote(activeNote, body: normalizedBody)
+      note = try library.updateNote(activeNote, body: normalizedBody)
     } else {
-      note = try store.createNote(body: normalizedBody)
+      note = try library.createNote(body: normalizedBody)
     }
     activeNote = note
     lastSavedBody = normalizedBody
@@ -181,32 +168,31 @@ public final class NoteEditingSession {
   }
 }
 
-public final class NoteStore {
+public final class NoteLibrary {
   public static let activeNotesFolderPathKey = "activeNotesFolderPath"
   public static let activeNotePathKey = "activeNotePath"
 
   private let defaults: UserDefaults
   private let fileManager: FileManager
 
-  public init(
-    defaults: UserDefaults = .standard,
-    fileManager: FileManager = .default
-  ) {
+  public init(defaults: UserDefaults = .standard, fileManager: FileManager = .default) {
     self.defaults = defaults
     self.fileManager = fileManager
   }
 
-  public var defaultNotesFolderURL: URL {
+  public var fallbackNotesFolderURL: URL {
     (fileManager.urls(for: .documentDirectory, in: .userDomainMask).first
       ?? URL(fileURLWithPath: NSHomeDirectory()).appendingPathComponent("Documents", isDirectory: true))
       .appendingPathComponent("Lattice", isDirectory: true)
   }
 
-  public func notesDirectoryURL() throws -> URL {
-    guard let folderURL = activeNotesFolderURL() else {
-      throw NoteStoreError.noActiveNotesFolder
+  public var suggestedNotesFolderURL: URL {
+    if let cloudURL = fileManager.url(forUbiquityContainerIdentifier: nil) {
+      return cloudURL
+        .appendingPathComponent("Documents", isDirectory: true)
+        .appendingPathComponent("Lattice", isDirectory: true)
     }
-    return notesDirectory(in: folderURL)
+    return fallbackNotesFolderURL
   }
 
   public func activeNotesFolderURL() -> URL? {
@@ -244,10 +230,20 @@ public final class NoteStore {
     try String(contentsOf: note.url, encoding: .utf8)
   }
 
+  public func displayTitle(for note: SavedNote) -> String {
+    guard
+      let body = try? body(for: note),
+      let heading = Self.firstHeading(in: body)
+    else {
+      return note.filenameTitle
+    }
+    return heading
+  }
+
   @discardableResult
   public func openNote(_ note: SavedNote) throws -> SavedNote {
     guard fileManager.fileExists(atPath: note.url.path) else {
-      throw NoteStoreError.missingNote(note.url.path)
+      throw NoteLibraryError.missingNote(note.url.path)
     }
     let opened = self.note(at: note.url)
     defaults.set(opened.url.standardizedFileURL.path, forKey: Self.activeNotePathKey)
@@ -297,7 +293,7 @@ public final class NoteStore {
 
   public func listNotes() throws -> [NoteSection] {
     guard let folderURL = activeNotesFolderURL() else {
-      throw NoteStoreError.noActiveNotesFolder
+      throw NoteLibraryError.noActiveNotesFolder
     }
 
     try initializeNotesFolder(at: folderURL)
@@ -345,11 +341,11 @@ public final class NoteStore {
   public func createNote(body: String, now: Date = Date()) throws -> SavedNote {
     let trimmedBody = body.trimmingCharacters(in: .whitespacesAndNewlines)
     guard !trimmedBody.isEmpty else {
-      throw NoteStoreError.emptyNote
+      throw NoteLibraryError.emptyNote
     }
 
     guard let folderURL = activeNotesFolderURL() else {
-      throw NoteStoreError.noActiveNotesFolder
+      throw NoteLibraryError.noActiveNotesFolder
     }
     try initializeNotesFolder(at: folderURL)
 
@@ -367,7 +363,7 @@ public final class NoteStore {
   public func updateNote(_ note: SavedNote, body: String) throws -> SavedNote {
     let trimmedBody = body.trimmingCharacters(in: .whitespacesAndNewlines)
     guard fileManager.fileExists(atPath: note.url.path) else {
-      throw NoteStoreError.missingNote(note.url.path)
+      throw NoteLibraryError.missingNote(note.url.path)
     }
 
     try writeNoteBody(trimmedBody, to: note.url)
@@ -389,8 +385,8 @@ public final class NoteStore {
   }
 
   private func compareNotesDescending(_ lhs: SavedNote, _ rhs: SavedNote) -> Bool {
-    if lhs.title != rhs.title {
-      return lhs.title > rhs.title
+    if lhs.filenameTitle != rhs.filenameTitle {
+      return lhs.filenameTitle > rhs.filenameTitle
     }
     switch (lhs.modifiedAt, rhs.modifiedAt) {
     case let (lhsDate?, rhsDate?):
@@ -419,7 +415,7 @@ public final class NoteStore {
       }
     }
 
-    throw NoteStoreError.invalidNotesFolder("Could not create a unique note filename.")
+    throw NoteLibraryError.invalidNotesFolder("Could not create a unique note filename.")
   }
 
   private func createDirectory(_ url: URL) throws {
@@ -430,6 +426,27 @@ public final class NoteStore {
     try createDirectory(url.deletingLastPathComponent())
     let output = body.isEmpty || body.hasSuffix("\n") ? body : "\(body)\n"
     try output.write(to: url, atomically: true, encoding: .utf8)
+  }
+
+  public static func firstHeading(in body: String) -> String? {
+    for line in body.components(separatedBy: .newlines) {
+      let trimmed = line.trimmingCharacters(in: .whitespaces)
+      guard trimmed.hasPrefix("#") else {
+        continue
+      }
+      let markerCount = trimmed.prefix { $0 == "#" }.count
+      guard
+        (1...6).contains(markerCount),
+        trimmed.dropFirst(markerCount).first == " "
+      else {
+        continue
+      }
+      let title = trimmed.dropFirst(markerCount).trimmingCharacters(in: .whitespaces)
+      if !title.isEmpty {
+        return String(title)
+      }
+    }
+    return nil
   }
 
   private static func localDateString(from date: Date) -> String {
