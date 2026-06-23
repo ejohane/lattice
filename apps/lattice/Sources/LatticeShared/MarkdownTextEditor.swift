@@ -132,12 +132,56 @@ public struct MarkdownTextEditor: NSViewRepresentable {
 }
 
 private final class MarkdownTextView: NSTextView {
+  override func insertTab(_ sender: Any?) {
+    if applyMarkdownListIndentation(direction: .indent) {
+      return
+    }
+
+    super.insertTab(sender)
+  }
+
+  override func insertBacktab(_ sender: Any?) {
+    if applyMarkdownListIndentation(direction: .outdent) {
+      return
+    }
+
+    super.insertBacktab(sender)
+  }
+
   override func insertNewline(_ sender: Any?) {
     if continueMarkdownList() {
       return
     }
 
     super.insertNewline(sender)
+  }
+
+  private enum IndentationDirection {
+    case indent
+    case outdent
+  }
+
+  private func applyMarkdownListIndentation(direction: IndentationDirection) -> Bool {
+    let result: MarkdownListIndentationResult?
+    switch direction {
+    case .indent:
+      result = MarkdownListIndentation.applyIndent(to: string, selection: selectedRange())
+    case .outdent:
+      result = MarkdownListIndentation.applyOutdent(to: string, selection: selectedRange())
+    }
+
+    guard let result else {
+      return false
+    }
+
+    guard shouldChangeText(in: result.replacementRange, replacementString: result.replacement) else {
+      return true
+    }
+
+    textStorage?.replaceCharacters(in: result.replacementRange, with: result.replacement)
+    setSelectedRange(result.selection)
+    didChangeText()
+    return true
   }
 
   private func continueMarkdownList() -> Bool {
