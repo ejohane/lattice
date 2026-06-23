@@ -35,7 +35,7 @@ public struct MarkdownTextEditor: NSViewRepresentable {
     scrollView.hasVerticalScroller = true
     scrollView.autohidesScrollers = true
 
-    let textView = NSTextView()
+    let textView = MarkdownTextView()
     textView.delegate = context.coordinator
     textView.isRichText = false
     textView.importsGraphics = false
@@ -107,7 +107,9 @@ public struct MarkdownTextEditor: NSViewRepresentable {
       guard let textView = notification.object as? NSTextView else {
         return
       }
-      parent.selectedRange = textView.selectedRange()
+      let selection = textView.selectedRange()
+      parent.selectedRange = selection
+      render(textView.string, in: textView, preserving: selection)
     }
 
     func render(_ text: String, in textView: NSTextView, preserving selection: NSRange) {
@@ -115,13 +117,42 @@ public struct MarkdownTextEditor: NSViewRepresentable {
         return
       }
       isRendering = true
-      let attributed = MarkdownAttributedRenderer.render(text, fontSize: parent.fontSize)
+      let attributed = MarkdownAttributedRenderer.render(
+        text,
+        fontSize: parent.fontSize,
+        activeRanges: [selection]
+      )
       textView.textStorage?.setAttributedString(attributed)
       textView.setSelectedRange(clamped(selection, length: (text as NSString).length))
       textView.typingAttributes = MarkdownAttributedRenderer.baseTypingAttributes(fontSize: parent.fontSize)
       lastRenderedFontSize = parent.fontSize
       isRendering = false
     }
+  }
+}
+
+private final class MarkdownTextView: NSTextView {
+  override func insertNewline(_ sender: Any?) {
+    if continueMarkdownList() {
+      return
+    }
+
+    super.insertNewline(sender)
+  }
+
+  private func continueMarkdownList() -> Bool {
+    guard let result = MarkdownListContinuation.applyReturn(to: string, selection: selectedRange()) else {
+      return false
+    }
+
+    guard shouldChangeText(in: result.replacementRange, replacementString: result.replacement) else {
+      return true
+    }
+
+    textStorage?.replaceCharacters(in: result.replacementRange, with: result.replacement)
+    setSelectedRange(result.selection)
+    didChangeText()
+    return true
   }
 }
 

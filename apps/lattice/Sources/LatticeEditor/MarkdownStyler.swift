@@ -115,6 +115,14 @@ public enum MarkdownStyler {
     ) {
       [MarkdownStyleSpan(kind: .italic, range: $0.range(at: 1))]
     }
+    spans += matches(
+      pattern: "(?<!_)_(?!_)([^_\\n]+)(?<!_)_(?!_)",
+      in: text,
+      fullRange: fullRange,
+      skippedRanges: skippedRanges
+    ) {
+      [MarkdownStyleSpan(kind: .italic, range: $0.range(at: 1))]
+    }
     spans += matches(pattern: "\\[([^\\]\\n]+)\\]\\(([^)\\n]+)\\)", in: text, fullRange: fullRange, skippedRanges: skippedRanges) {
       [MarkdownStyleSpan(kind: .link, range: $0.range(at: 1))]
     }
