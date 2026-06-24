@@ -5,9 +5,14 @@ import UniformTypeIdentifiers
 
 public struct LatticeRootView: View {
   @Bindable private var model: LatticeAppModel
+  private let commandPalettePlatformCommands: @MainActor () -> [CommandPaletteCommand]
 
-  public init(model: LatticeAppModel) {
+  public init(
+    model: LatticeAppModel,
+    commandPalettePlatformCommands: @escaping @MainActor () -> [CommandPaletteCommand] = { [] }
+  ) {
     self.model = model
+    self.commandPalettePlatformCommands = commandPalettePlatformCommands
   }
 
   public var body: some View {
@@ -37,6 +42,12 @@ public struct LatticeRootView: View {
       Button("OK", role: .cancel) {}
     } message: {
       Text(model.errorMessage ?? "")
+    }
+    .sheet(isPresented: $model.isShowingCommandPalette) {
+      CommandPaletteView(
+        model: model,
+        platformCommands: commandPalettePlatformCommands()
+      )
     }
   }
 

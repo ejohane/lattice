@@ -21,6 +21,8 @@ public final class LatticeAppModel {
   public var status = "Choose a notes folder"
   public var errorMessage: String?
   public var isShowingFolderImporter = false
+  public var isShowingCommandPalette = false
+  public var commandPaletteQuery = ""
   public var preferredCompactColumn = NavigationColumn.sidebar
   public var editorFocusToken = 0
   public var editorFontSize = 14.0
@@ -73,6 +75,16 @@ public final class LatticeAppModel {
 
   public func showFolderImporter() {
     isShowingFolderImporter = true
+  }
+
+  public func showCommandPalette() {
+    commandPaletteQuery = ""
+    isShowingCommandPalette = true
+  }
+
+  public func dismissCommandPalette() {
+    isShowingCommandPalette = false
+    commandPaletteQuery = ""
   }
 
   public func useRecommendedFolder() {
@@ -162,6 +174,51 @@ public final class LatticeAppModel {
     noteTitles[note.id] ?? noteLibrary.displayTitle(for: note)
   }
 
+  public func commandPaletteCommands(
+    platformCommands: [CommandPaletteCommand] = []
+  ) -> [CommandPaletteCommand] {
+    (sharedCommandPaletteCommands + platformCommands)
+      .filter(\.isEnabled)
+      .filter { command in
+        Self.matchesPaletteQuery(command.searchableText, query: commandPaletteQuery)
+      }
+      .sorted { lhs, rhs in
+        Self.paletteRank(for: lhs.searchableText, query: commandPaletteQuery)
+          < Self.paletteRank(for: rhs.searchableText, query: commandPaletteQuery)
+      }
+  }
+
+  public func commandPaletteNotes(limit: Int = 24) -> [SavedNote] {
+    guard hasFolder else {
+      return []
+    }
+
+    let notes = sections.flatMap(\.notes)
+    let filtered = notes
+      .filter { note in
+        Self.matchesPaletteQuery(
+          "\(displayTitle(for: note)) \(note.dateString) \(note.filenameTitle)",
+          query: commandPaletteQuery
+        )
+      }
+      .sorted { lhs, rhs in
+        let lhsRank = Self.paletteRank(
+          for: "\(displayTitle(for: lhs)) \(lhs.dateString) \(lhs.filenameTitle)",
+          query: commandPaletteQuery
+        )
+        let rhsRank = Self.paletteRank(
+          for: "\(displayTitle(for: rhs)) \(rhs.dateString) \(rhs.filenameTitle)",
+          query: commandPaletteQuery
+        )
+        if lhsRank != rhsRank {
+          return lhsRank < rhsRank
+        }
+        return lhs.filenameTitle > rhs.filenameTitle
+      }
+
+    return Array(filtered.prefix(limit))
+  }
+
   private func activateFolder(_ url: URL, saveBookmark: Bool) throws {
     scopedFolderURL?.stopAccessingSecurityScopedResource()
     _ = url.startAccessingSecurityScopedResource()
@@ -228,11 +285,89 @@ public final class LatticeAppModel {
   private func setEditorFontSize(_ size: Double) {
     editorFontSize = min(Self.maximumEditorFontSize, max(Self.minimumEditorFontSize, size))
   }
+
+  private var sharedCommandPaletteCommands: [CommandPaletteCommand] {
+    guard hasFolder else {
+      return []
+    }
+
+    return [
+      CommandPaletteCommand(
+        id: "lattice.newNote",
+        title: "New Note",
+        subtitle: "Start a fresh Markdown note",
+        systemImage: "square.and.pencil"
+      ) { [weak self] in
+        self?.createNewNote()
+      }
+    ]
+  }
+
+  private static func matchesPaletteQuery(_ text: String, query: String) -> Bool {
+    let normalizedQuery = query.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+    guard !normalizedQuery.isEmpty else {
+      return true
+    }
+    return text.lowercased().contains(normalizedQuery)
+  }
+
+  private static func paletteRank(for text: String, query: String) -> Int {
+    let normalizedQuery = query.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+    guard !normalizedQuery.isEmpty else {
+      return 2
+    }
+
+    let normalizedText = text.lowercased()
+    if normalizedText == normalizedQuery {
+      return 0
+    }
+    if normalizedText.hasPrefix(normalizedQuery) {
+      return 1
+    }
+    return 2
+  }
 }
 
 public enum NavigationColumn: Hashable {
   case sidebar
   case detail
+}
+
+public struct CommandPaletteCommand: Identifiable {
+  public let id: String
+  public let title: String
+  public let subtitle: String?
+  public let systemImage: String
+  public let isEnabled: Bool
+  public let isSetupSafe: Bool
+  private let action: @MainActor () -> Void
+
+  public init(
+    id: String,
+    title: String,
+    subtitle: String? = nil,
+    systemImage: String,
+    isEnabled: Bool = true,
+    isSetupSafe: Bool = false,
+    action: @escaping @MainActor () -> Void
+  ) {
+    self.id = id
+    self.title = title
+    self.subtitle = subtitle
+    self.systemImage = systemImage
+    self.isEnabled = isEnabled
+    self.isSetupSafe = isSetupSafe
+    self.action = action
+  }
+
+  public var searchableText: String {
+    "\(title) \(subtitle ?? "")"
+  }
+
+  @MainActor
+  public func perform() {
+    action()
+  }
 }
 
 private extension LatticeAppModel {
