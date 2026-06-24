@@ -112,7 +112,8 @@ struct LatticeAppModelTests {
     defer { fixture.cleanup() }
     let model = LatticeAppModel(
       noteLibrary: fixture.library,
-      folderAccessStore: fixture.folderAccessStore
+      folderAccessStore: fixture.folderAccessStore,
+      noteIndex: NoteIndex(appSupportURL: fixture.appSupportURL)
     )
 
     try fixture.fileManager.createDirectory(at: fixture.root, withIntermediateDirectories: true)
@@ -145,10 +146,57 @@ struct LatticeAppModelTests {
     #expect(!commandTitles.contains("Link"))
     #expect(!commandTitles.contains("Increase Font Size"))
   }
+
+  @Test("command palette searches indexed note bodies")
+  func commandPaletteSearchesIndexedBodies() throws {
+    let fixture = try Fixture()
+    defer { fixture.cleanup() }
+    let model = LatticeAppModel(
+      noteLibrary: fixture.library,
+      folderAccessStore: fixture.folderAccessStore,
+      noteIndex: NoteIndex(appSupportURL: fixture.appSupportURL)
+    )
+
+    try fixture.fileManager.createDirectory(at: fixture.root, withIntermediateDirectories: true)
+    model.chooseFolder(fixture.root)
+    model.text = "# Indexed Title\n\nBody has nebula phrase"
+    model.flushAutosave()
+
+    model.commandPaletteQuery = "nebula"
+    let notes = model.commandPaletteNotes()
+
+    #expect(notes.count == 1)
+    #expect(model.displayTitle(for: try #require(notes.first)) == "Indexed Title")
+  }
+
+  @Test("index failure does not block markdown autosave")
+  func indexFailureDoesNotBlockAutosave() throws {
+    let fixture = try Fixture()
+    defer { fixture.cleanup() }
+    let model = LatticeAppModel(
+      noteLibrary: fixture.library,
+      folderAccessStore: fixture.folderAccessStore,
+      noteIndex: FailingNoteIndex()
+    )
+
+    try fixture.fileManager.createDirectory(at: fixture.root, withIntermediateDirectories: true)
+    model.chooseFolder(fixture.root)
+    model.text = "# Still Saves\n\nBody"
+    model.flushAutosave()
+
+    let section = try #require(model.sections.first)
+    let note = try #require(section.notes.first)
+    #expect(try String(contentsOf: note.url, encoding: .utf8) == "# Still Saves\n\nBody\n")
+
+    model.commandPaletteQuery = "still"
+    let fallbackNotes = model.commandPaletteNotes()
+    #expect(fallbackNotes.count == 1)
+  }
 }
 
 private struct Fixture {
   let root: URL
+  let appSupportURL: URL
   let library: NoteLibrary
   let folderAccessStore: FolderAccessStore
   let defaults: UserDefaults
@@ -158,6 +206,8 @@ private struct Fixture {
   init() throws {
     root = FileManager.default.temporaryDirectory
       .appendingPathComponent("lattice-app-model-\(UUID().uuidString)", isDirectory: true)
+    appSupportURL = FileManager.default.temporaryDirectory
+      .appendingPathComponent("lattice-app-model-index-\(UUID().uuidString)", isDirectory: true)
     suiteName = "lattice-app-model-\(UUID().uuidString)"
     guard let defaults = UserDefaults(suiteName: suiteName) else {
       throw FixtureError.defaultsUnavailable
@@ -169,10 +219,29 @@ private struct Fixture {
 
   func cleanup() {
     try? fileManager.removeItem(at: root)
+    try? fileManager.removeItem(at: appSupportURL)
     defaults.removePersistentDomain(forName: suiteName)
   }
 }
 
 private enum FixtureError: Error {
   case defaultsUnavailable
+}
+
+private final class FailingNoteIndex: NoteIndexing {
+  func rebuild(notesFolderURL: URL) throws {
+    throw FixtureError.defaultsUnavailable
+  }
+
+  func refresh(note: SavedNote, notesFolderURL: URL) throws {
+    throw FixtureError.defaultsUnavailable
+  }
+
+  func recentNotes(notesFolderURL: URL, limit: Int) throws -> [SavedNote] {
+    throw FixtureError.defaultsUnavailable
+  }
+
+  func searchNotes(query: String, notesFolderURL: URL, limit: Int) throws -> [SavedNote] {
+    throw FixtureError.defaultsUnavailable
+  }
 }
