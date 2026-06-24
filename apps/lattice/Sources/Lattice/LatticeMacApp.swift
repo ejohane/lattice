@@ -13,7 +13,7 @@ struct LatticeMacApp: App {
     WindowGroup(id: "main") {
       LatticeRootView(model: model)
         .frame(minWidth: 420, minHeight: 420)
-        .background(WindowMinimumSize(width: 420, height: 420))
+        .background(WindowConfiguration(width: 420, height: 420, identifier: Self.mainWindowIdentifier))
         .task {
           model.start()
         }
@@ -25,6 +25,27 @@ struct LatticeMacApp: App {
           model.createNewNote()
         }
         .keyboardShortcut("n", modifiers: [.command])
+      }
+      CommandGroup(replacing: .pasteboard) {
+        Button("Cut") {
+          NSApp.sendAction(#selector(NSText.cut(_:)), to: nil, from: nil)
+        }
+        .keyboardShortcut("x", modifiers: [.command])
+
+        Button("Copy") {
+          NSApp.sendAction(#selector(NSText.copy(_:)), to: nil, from: nil)
+        }
+        .keyboardShortcut("c", modifiers: [.command])
+
+        Button("Paste") {
+          NSApp.sendAction(#selector(NSText.paste(_:)), to: nil, from: nil)
+        }
+        .keyboardShortcut("v", modifiers: [.command])
+
+        Button("Select All") {
+          NSApp.sendAction(#selector(NSText.selectAll(_:)), to: nil, from: nil)
+        }
+        .keyboardShortcut("a", modifiers: [.command])
       }
       CommandMenu("Lattice") {
         Button("Choose Notes Folder...") {
@@ -97,14 +118,23 @@ struct LatticeMacApp: App {
   }
 
   private func showMainWindow() {
-    openWindow(id: "main")
+    if let window = NSApp.windows.first(where: { $0.identifier?.rawValue == Self.mainWindowIdentifier }) {
+      window.makeKeyAndOrderFront(nil)
+    } else {
+      openWindow(id: "main")
+    }
     NSApp.activate(ignoringOtherApps: true)
   }
 }
 
-private struct WindowMinimumSize: NSViewRepresentable {
+private extension LatticeMacApp {
+  static let mainWindowIdentifier = "main"
+}
+
+private struct WindowConfiguration: NSViewRepresentable {
   let width: CGFloat
   let height: CGFloat
+  let identifier: String
 
   func makeNSView(context: Context) -> NSView {
     let view = NSView()
@@ -119,6 +149,7 @@ private struct WindowMinimumSize: NSViewRepresentable {
   private func updateWindow(for view: NSView) {
     DispatchQueue.main.async {
       let size = NSSize(width: width, height: height)
+      view.window?.identifier = NSUserInterfaceItemIdentifier(identifier)
       view.window?.minSize = size
       view.window?.contentMinSize = size
     }

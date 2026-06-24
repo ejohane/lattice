@@ -111,17 +111,17 @@ struct MarkdownListIndentationTests {
       selection: NSRange(location: 16, length: 0)
     ))
 
-    #expect(result.body == "- Parent\n  - Child")
-    #expect(result.selection == NSRange(location: 18, length: 0))
+    #expect(result.body == "- Parent\n    - Child")
+    #expect(result.selection == NSRange(location: 20, length: 0))
     #expect(result.replacementRange == NSRange(location: 9, length: 7))
-    #expect(result.replacement == "  - Child")
+    #expect(result.replacement == "    - Child")
   }
 
   @Test("outdents the active unordered list item")
   func outdentsActiveUnorderedListItem() throws {
     let result = try #require(MarkdownListIndentation.applyOutdent(
-      to: "- Parent\n  - Child",
-      selection: NSRange(location: 18, length: 0)
+      to: "- Parent\n    - Child",
+      selection: NSRange(location: 20, length: 0)
     ))
 
     #expect(result.body == "- Parent\n- Child")
@@ -135,8 +135,8 @@ struct MarkdownListIndentationTests {
       selection: NSRange(location: 6, length: 12)
     ))
 
-    #expect(result.body == "- One\nplain\n  1. Two")
-    #expect(result.selection == NSRange(location: 6, length: 14))
+    #expect(result.body == "- One\nplain\n    1. Two")
+    #expect(result.selection == NSRange(location: 6, length: 16))
   }
 
   @Test("ignores non-list lines")
