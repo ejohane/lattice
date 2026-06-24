@@ -78,12 +78,18 @@ enum MarkdownAttributedRenderer {
         let checkboxRange = shifted(match.range(at: 2), by: lineRange.location)
         let contentRange = shifted(match.range(at: 3), by: lineRange.location)
         let isActive = range(lineRange, containsAnyActive: activeRanges)
-        let shouldRenderMarker = !isActive || contentRange.length == 0
+          || containsInsertionPointAtLineEnd(lineRange, activeRanges: activeRanges, in: nsString)
+        let checkbox = (line as NSString).substring(with: match.range(at: 2))
+        let isChecked = checkbox.lowercased() == "[x]"
+        let shouldRenderMarker = !isActive
 
         attributed.addAttributes(listAttributes(fontSize: fontSize), range: lineRange)
-        attributed.addAttributes(shouldRenderMarker ? renderedBulletAttributes(fontSize: fontSize) : bulletAttributes(fontSize: fontSize), range: markerRange)
+        attributed.addAttributes(
+          shouldRenderMarker ? renderedTaskCheckboxAttributes(isChecked: isChecked, fontSize: fontSize) : bulletAttributes(fontSize: fontSize),
+          range: markerRange
+        )
         attributed.addAttributes(isActive ? bulletAttributes(fontSize: fontSize) : hiddenTokenAttributes(fontSize: fontSize), range: checkboxRange)
-        if line.contains("[x]") || line.contains("[X]") {
+        if isChecked {
           attributed.addAttributes(completedTaskAttributes(), range: contentRange)
         }
       } else if let match = firstMatch("^\\s*([-*+])\\s+(.*)$", in: line) {
@@ -320,6 +326,24 @@ enum MarkdownAttributedRenderer {
     return attributes
   }
 
+  private static func renderedTaskCheckboxAttributes(
+    isChecked: Bool,
+    fontSize: CGFloat
+  ) -> [NSAttributedString.Key: Any] {
+    let font = bodyFont(size: 15 * fontSize / bodyFontSize, weight: .semibold)
+    var attributes: [NSAttributedString.Key: Any] = [
+      .foregroundColor: NSColor.controlAccentColor,
+      .font: font
+    ]
+
+    let glyphName = isChecked ? "uni2611" : "uni25A1"
+    if let glyphInfo = NSGlyphInfo(glyphName: glyphName, for: font, baseString: "-") {
+      attributes[.glyphInfo] = glyphInfo
+    }
+
+    return attributes
+  }
+
   private static func listAttributes(fontSize: CGFloat) -> [NSAttributedString.Key: Any] {
     let paragraphStyle = NSMutableParagraphStyle()
     paragraphStyle.lineSpacing = 4 * fontSize / bodyFontSize
@@ -448,6 +472,31 @@ enum MarkdownAttributedRenderer {
       return activeRange.location > range.location && activeRange.location < NSMaxRange(range)
     }
   }
+
+  private static func containsInsertionPointAtLineEnd(
+    _ lineRange: NSRange,
+    activeRanges: [NSRange],
+    in nsString: NSString
+  ) -> Bool {
+    let contentRange = contentRangeWithoutLineEnding(lineRange, in: nsString)
+    return activeRanges.contains { activeRange in
+      activeRange.length == 0 && activeRange.location == NSMaxRange(contentRange)
+    }
+  }
+
+  private static func contentRangeWithoutLineEnding(_ lineRange: NSRange, in nsString: NSString) -> NSRange {
+    var end = NSMaxRange(lineRange)
+    while end > lineRange.location {
+      let character = nsString.character(at: end - 1)
+      if character == 10 || character == 13 {
+        end -= 1
+      } else {
+        break
+      }
+    }
+
+    return NSRange(location: lineRange.location, length: end - lineRange.location)
+  }
 }
 
 #elseif os(iOS)
@@ -490,6 +539,10 @@ enum MarkdownAttributedRenderer {
       return [.foregroundColor: UIColor.tertiaryLabel, .font: UIFont.monospacedSystemFont(ofSize: 16, weight: .regular)]
     case .listMarker:
       return [.foregroundColor: UIColor.tintColor, .font: UIFont.systemFont(ofSize: 21, weight: .semibold)]
+    case .taskCheckbox:
+      return [.foregroundColor: UIColor.tintColor, .font: UIFont.monospacedSystemFont(ofSize: 18, weight: .semibold)]
+    case .completedTask:
+      return [.foregroundColor: UIColor.secondaryLabel, .strikethroughStyle: NSUnderlineStyle.single.rawValue]
     case .blockquote:
       return [.foregroundColor: UIColor.secondaryLabel]
     case .thematicBreak:

@@ -141,6 +141,10 @@ private final class MarkdownTextView: NSTextView {
   }
 
   override func mouseDown(with event: NSEvent) {
+    if toggleTaskCheckbox(at: event) {
+      return
+    }
+
     if let url = linkURL(at: event) {
       NSWorkspace.shared.open(url)
       return
@@ -195,6 +199,25 @@ private final class MarkdownTextView: NSTextView {
     return true
   }
 
+  private func toggleTaskCheckbox(at event: NSEvent) -> Bool {
+    guard let characterIndex = characterIndex(at: event) else {
+      return false
+    }
+
+    guard let result = MarkdownTaskList.toggleTask(at: characterIndex, in: string, selection: selectedRange()) else {
+      return false
+    }
+
+    guard shouldChangeText(in: result.replacementRange, replacementString: result.replacement) else {
+      return true
+    }
+
+    textStorage?.replaceCharacters(in: result.replacementRange, with: result.replacement)
+    setSelectedRange(result.selection)
+    didChangeText()
+    return true
+  }
+
   private enum IndentationDirection {
     case indent
     case outdent
@@ -239,26 +262,7 @@ private final class MarkdownTextView: NSTextView {
   }
 
   private func linkURL(at event: NSEvent) -> URL? {
-    guard
-      let layoutManager,
-      let textContainer,
-      let textStorage
-    else {
-      return nil
-    }
-
-    var location = convert(event.locationInWindow, from: nil)
-    location.x -= textContainerOrigin.x
-    location.y -= textContainerOrigin.y
-
-    let glyphIndex = layoutManager.glyphIndex(for: location, in: textContainer)
-    let lineRange = layoutManager.lineFragmentUsedRect(forGlyphAt: glyphIndex, effectiveRange: nil)
-    guard lineRange.contains(location) else {
-      return nil
-    }
-
-    let characterIndex = layoutManager.characterIndexForGlyph(at: glyphIndex)
-    guard characterIndex < textStorage.length else {
+    guard let characterIndex = characterIndex(at: event), let textStorage else {
       return nil
     }
 
@@ -274,6 +278,28 @@ private final class MarkdownTextView: NSTextView {
     }
 
     return nil
+  }
+
+  private func characterIndex(at event: NSEvent) -> Int? {
+    guard
+      let layoutManager,
+      let textContainer
+    else {
+      return nil
+    }
+
+    var location = convert(event.locationInWindow, from: nil)
+    location.x -= textContainerOrigin.x
+    location.y -= textContainerOrigin.y
+
+    let glyphIndex = layoutManager.glyphIndex(for: location, in: textContainer)
+    let lineRange = layoutManager.lineFragmentUsedRect(forGlyphAt: glyphIndex, effectiveRange: nil)
+    guard lineRange.contains(location) else {
+      return nil
+    }
+
+    let characterIndex = layoutManager.characterIndexForGlyph(at: glyphIndex)
+    return characterIndex < string.utf16.count ? characterIndex : nil
   }
 }
 
@@ -319,6 +345,12 @@ public struct MarkdownTextEditor: UIViewRepresentable {
     textView.smartDashesType = .no
     textView.smartQuotesType = .no
     textView.accessibilityIdentifier = "noteEditor"
+
+    let tapRecognizer = UITapGestureRecognizer(target: context.coordinator, action: #selector(Coordinator.handleTap(_:)))
+    tapRecognizer.delegate = context.coordinator
+    tapRecognizer.cancelsTouchesInView = true
+    textView.addGestureRecognizer(tapRecognizer)
+
     return textView
   }
 
@@ -336,7 +368,7 @@ public struct MarkdownTextEditor: UIViewRepresentable {
   }
 
   @MainActor
-  public final class Coordinator: NSObject, UITextViewDelegate {
+  public final class Coordinator: NSObject, UITextViewDelegate, UIGestureRecognizerDelegate {
     var parent: MarkdownTextEditor
     var lastFocusToken = 0
     private var isRendering = false
@@ -359,6 +391,35 @@ public struct MarkdownTextEditor: UIViewRepresentable {
       parent.selectedRange = textView.selectedRange
     }
 
+    public func gestureRecognizer(_ gestureRecognizer: UIGestureRecognizer, shouldReceive touch: UITouch) -> Bool {
+      guard
+        let textView = gestureRecognizer.view as? UITextView,
+        let location = textView.characterIndex(at: touch.location(in: textView))
+      else {
+        return false
+      }
+
+      return MarkdownTaskList.toggleTask(at: location, in: textView.text, selection: textView.selectedRange) != nil
+    }
+
+    @objc func handleTap(_ gesture: UITapGestureRecognizer) {
+      guard
+        gesture.state == .ended,
+        let textView = gesture.view as? UITextView,
+        let location = textView.characterIndex(at: gesture.location(in: textView)),
+        let result = MarkdownTaskList.toggleTask(at: location, in: textView.text, selection: textView.selectedRange)
+      else {
+        return
+      }
+
+      textView.textStorage.replaceCharacters(in: result.replacementRange, with: result.replacement)
+      textView.selectedRange = result.selection
+      parent.text = textView.text
+      parent.selectedRange = textView.selectedRange
+      parent.onTextChange()
+      render(textView.text, in: textView, preserving: textView.selectedRange)
+    }
+
     func render(_ text: String, in textView: UITextView, preserving selection: NSRange) {
       guard !isRendering else {
         return
@@ -369,6 +430,21 @@ public struct MarkdownTextEditor: UIViewRepresentable {
       textView.typingAttributes = MarkdownAttributedRenderer.baseTypingAttributes()
       isRendering = false
     }
+  }
+}
+
+private extension UITextView {
+  func characterIndex(at point: CGPoint) -> Int? {
+    guard let position = closestPosition(to: point) else {
+      return nil
+    }
+
+    let index = offset(from: beginningOfDocument, to: position)
+    guard index >= 0 && index < (text as NSString).length else {
+      return nil
+    }
+
+    return index
   }
 }
 #endif

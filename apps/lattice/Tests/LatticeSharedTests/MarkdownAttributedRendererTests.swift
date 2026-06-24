@@ -42,6 +42,60 @@ struct MarkdownAttributedRendererTests {
     #expect(markerColor == NSColor.controlAccentColor)
   }
 
+  @Test("styles checked task list content as completed")
+  func stylesCheckedTaskListContentAsCompleted() {
+    let attributed = MarkdownAttributedRenderer.render("- [x] done", activeRanges: [NSRange(location: 0, length: 0)])
+    let string = attributed.string as NSString
+    let contentRange = string.range(of: "done")
+
+    let markerGlyphInfo = attributed.attribute(.glyphInfo, at: 0, effectiveRange: nil) as? NSGlyphInfo
+    let color = attributed.attribute(.foregroundColor, at: contentRange.location, effectiveRange: nil) as? NSColor
+    let strikethrough = attributed.attribute(.strikethroughStyle, at: contentRange.location, effectiveRange: nil) as? Int
+
+    #expect(markerGlyphInfo != nil)
+    #expect(color == NSColor.secondaryLabelColor)
+    #expect(strikethrough == NSUnderlineStyle.single.rawValue)
+  }
+
+  @Test("does not complete unchecked task list content")
+  func doesNotCompleteUncheckedTaskListContent() {
+    let attributed = MarkdownAttributedRenderer.render("- [ ] todo", activeRanges: [NSRange(location: 0, length: 0)])
+    let string = attributed.string as NSString
+    let contentRange = string.range(of: "todo")
+
+    let markerGlyphInfo = attributed.attribute(.glyphInfo, at: 0, effectiveRange: nil) as? NSGlyphInfo
+    let strikethrough = attributed.attribute(.strikethroughStyle, at: contentRange.location, effectiveRange: nil) as? Int
+
+    #expect(markerGlyphInfo != nil)
+    #expect(strikethrough == nil)
+  }
+
+  @Test("shows active task list markers as editable source")
+  func showsActiveTaskListMarkersAsEditableSource() {
+    let attributed = MarkdownAttributedRenderer.render("- [ ] todo", activeRanges: [NSRange(location: 4, length: 0)])
+
+    let markerGlyphInfo = attributed.attribute(.glyphInfo, at: 0, effectiveRange: nil) as? NSGlyphInfo
+    let markerColor = attributed.attribute(.foregroundColor, at: 0, effectiveRange: nil) as? NSColor
+    let checkboxColor = attributed.attribute(.foregroundColor, at: 2, effectiveRange: nil) as? NSColor
+
+    #expect(markerGlyphInfo == nil)
+    #expect(markerColor == NSColor.controlAccentColor)
+    #expect(checkboxColor == NSColor.controlAccentColor)
+  }
+
+  @Test("shows active empty task list markers as editable source")
+  func showsActiveEmptyTaskListMarkersAsEditableSource() {
+    let attributed = MarkdownAttributedRenderer.render("- [ ] ", activeRanges: [NSRange(location: 6, length: 0)])
+
+    let markerGlyphInfo = attributed.attribute(.glyphInfo, at: 0, effectiveRange: nil) as? NSGlyphInfo
+    let markerColor = attributed.attribute(.foregroundColor, at: 0, effectiveRange: nil) as? NSColor
+    let checkboxColor = attributed.attribute(.foregroundColor, at: 2, effectiveRange: nil) as? NSColor
+
+    #expect(markerGlyphInfo == nil)
+    #expect(markerColor == NSColor.controlAccentColor)
+    #expect(checkboxColor == NSColor.controlAccentColor)
+  }
+
   @Test("hides inactive inline tokens while styling content")
   func hidesInactiveInlineTokens() throws {
     let text = "**bold** _italic_ `code` [link](https://example.com)"

@@ -28,6 +28,18 @@ struct MarkdownTextEditingTests {
     #expect(result.selection == NSRange(location: 6, length: 0))
   }
 
+  @Test("inserts task list prefixes at the active line")
+  func insertsTaskListPrefix() {
+    let result = MarkdownTextEditing.apply(
+      .taskList,
+      to: "One\nTwo",
+      selection: NSRange(location: 4, length: 0)
+    )
+
+    #expect(result.body == "One\n- [ ] Two")
+    #expect(result.selection == NSRange(location: 10, length: 0))
+  }
+
   @Test("inserts links with the URL selected")
   func insertsLink() {
     let result = MarkdownTextEditing.apply(
@@ -38,6 +50,46 @@ struct MarkdownTextEditingTests {
 
     #expect(result.body == "[OpenAI](url)")
     #expect(result.selection == NSRange(location: 9, length: 3))
+  }
+}
+
+@Suite("MarkdownTaskList")
+struct MarkdownTaskListTests {
+  @Test("toggles unchecked task items")
+  func togglesUncheckedTaskItems() throws {
+    let result = try #require(MarkdownTaskList.toggleTask(
+      at: 1,
+      in: "- [ ] item",
+      selection: NSRange(location: 10, length: 0)
+    ))
+
+    #expect(result.body == "- [x] item")
+    #expect(result.selection == NSRange(location: 10, length: 0))
+    #expect(result.replacementRange == NSRange(location: 2, length: 3))
+    #expect(result.replacement == "[x]")
+  }
+
+  @Test("toggles checked task items")
+  func togglesCheckedTaskItems() throws {
+    let result = try #require(MarkdownTaskList.toggleTask(
+      at: 4,
+      in: "- [X] item",
+      selection: NSRange(location: 0, length: 0)
+    ))
+
+    #expect(result.body == "- [ ] item")
+    #expect(result.replacement == "[ ]")
+  }
+
+  @Test("ignores task item content")
+  func ignoresTaskItemContent() {
+    let result = MarkdownTaskList.toggleTask(
+      at: 6,
+      in: "- [ ] item",
+      selection: NSRange(location: 6, length: 0)
+    )
+
+    #expect(result == nil)
   }
 }
 
@@ -157,6 +209,7 @@ struct MarkdownStylerTests {
     let text = """
     # Heading
     - item
+    - [x] done
     > quote
     **bold** *italic* `code` [link](https://example.com)
     ---
@@ -170,6 +223,8 @@ struct MarkdownStylerTests {
     #expect(kinds.contains(.heading))
     #expect(kinds.contains(.headingMarker))
     #expect(kinds.contains(.listMarker))
+    #expect(kinds.contains(.taskCheckbox))
+    #expect(kinds.contains(.completedTask))
     #expect(kinds.contains(.blockquote))
     #expect(kinds.contains(.bold))
     #expect(kinds.contains(.italic))
@@ -177,6 +232,18 @@ struct MarkdownStylerTests {
     #expect(kinds.contains(.link))
     #expect(kinds.contains(.thematicBreak))
     #expect(kinds.contains(.codeBlock))
+  }
+
+  @Test("generates task checkbox spans")
+  func stylesTaskCheckboxes() {
+    let text = "- [x] done\n- [ ] next"
+    let spans = MarkdownStyler.spans(in: text)
+    let checkboxSpans = spans.filter { $0.kind == .taskCheckbox }
+    let completedSpans = spans.filter { $0.kind == .completedTask }
+
+    #expect(checkboxSpans.count == 2)
+    #expect(completedSpans.count == 1)
+    #expect((text as NSString).substring(with: completedSpans[0].range) == "done")
   }
 
   @Test("does not style inline markdown inside fenced code blocks")

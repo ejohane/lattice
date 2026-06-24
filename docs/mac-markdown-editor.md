@@ -14,6 +14,8 @@ private document model.
 - Unordered list markers render as bullet glyphs when inactive.
 - Active list markers remain visible as source text.
 - List item spacing matches list line spacing, not the normal paragraph spacing.
+- The formatting toolbar can insert Markdown task-list items.
+- Clicking or tapping a task-list checkbox prefix toggles `[ ]` and `[x]`.
 - Inline bold, italic, code, and links style their content while hiding inactive
   syntax tokens.
 - Fenced code blocks do not receive inline Markdown styling.
