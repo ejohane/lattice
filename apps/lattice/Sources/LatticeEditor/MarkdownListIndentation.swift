@@ -15,7 +15,7 @@ public struct MarkdownListIndentationResult: Equatable, Sendable {
 }
 
 public enum MarkdownListIndentation {
-  private static let indent = "  "
+  private static let indent = "    "
 
   private struct LineEdit {
     let location: Int

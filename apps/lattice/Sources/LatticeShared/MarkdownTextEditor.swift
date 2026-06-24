@@ -132,6 +132,23 @@ public struct MarkdownTextEditor: NSViewRepresentable {
 }
 
 private final class MarkdownTextView: NSTextView {
+  override func performKeyEquivalent(with event: NSEvent) -> Bool {
+    if handlePasteboardShortcut(event) {
+      return true
+    }
+
+    return super.performKeyEquivalent(with: event)
+  }
+
+  override func mouseDown(with event: NSEvent) {
+    if let url = linkURL(at: event) {
+      NSWorkspace.shared.open(url)
+      return
+    }
+
+    super.mouseDown(with: event)
+  }
+
   override func insertTab(_ sender: Any?) {
     if applyMarkdownListIndentation(direction: .indent) {
       return
@@ -154,6 +171,28 @@ private final class MarkdownTextView: NSTextView {
     }
 
     super.insertNewline(sender)
+  }
+
+  private func handlePasteboardShortcut(_ event: NSEvent) -> Bool {
+    let flags = event.modifierFlags.intersection(.deviceIndependentFlagsMask)
+    guard flags == .command, let key = event.charactersIgnoringModifiers?.lowercased() else {
+      return false
+    }
+
+    switch key {
+    case "x":
+      cut(nil)
+    case "c":
+      copy(nil)
+    case "v":
+      paste(nil)
+    case "a":
+      selectAll(nil)
+    default:
+      return false
+    }
+
+    return true
   }
 
   private enum IndentationDirection {
@@ -197,6 +236,44 @@ private final class MarkdownTextView: NSTextView {
     setSelectedRange(result.selection)
     didChangeText()
     return true
+  }
+
+  private func linkURL(at event: NSEvent) -> URL? {
+    guard
+      let layoutManager,
+      let textContainer,
+      let textStorage
+    else {
+      return nil
+    }
+
+    var location = convert(event.locationInWindow, from: nil)
+    location.x -= textContainerOrigin.x
+    location.y -= textContainerOrigin.y
+
+    let glyphIndex = layoutManager.glyphIndex(for: location, in: textContainer)
+    let lineRange = layoutManager.lineFragmentUsedRect(forGlyphAt: glyphIndex, effectiveRange: nil)
+    guard lineRange.contains(location) else {
+      return nil
+    }
+
+    let characterIndex = layoutManager.characterIndexForGlyph(at: glyphIndex)
+    guard characterIndex < textStorage.length else {
+      return nil
+    }
+
+    if let url = textStorage.attribute(.link, at: characterIndex, effectiveRange: nil) as? URL {
+      return url
+    }
+
+    if
+      let urlString = textStorage.attribute(.link, at: characterIndex, effectiveRange: nil) as? String,
+      let url = URL(string: urlString)
+    {
+      return url
+    }
+
+    return nil
   }
 }
 

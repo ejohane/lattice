@@ -28,7 +28,7 @@ enum MarkdownAttributedRenderer {
   static func baseTypingAttributes(fontSize: CGFloat = bodyFontSize) -> [NSAttributedString.Key: Any] {
     let paragraphStyle = NSMutableParagraphStyle()
     paragraphStyle.lineSpacing = 5 * fontSize / bodyFontSize
-    paragraphStyle.paragraphSpacing = 12 * fontSize / bodyFontSize
+    paragraphStyle.paragraphSpacing = 6 * fontSize / bodyFontSize
     return [
       .font: bodyFont(size: fontSize),
       .foregroundColor: NSColor.labelColor,
@@ -129,25 +129,25 @@ enum MarkdownAttributedRenderer {
       tokenGroups: [0],
       contentGroups: [1]
     )
-    applyInlineStyle(
+    applyInlineLinkStyle(
       pattern: "!\\[([^\\]\\n]*)\\]\\(([^)\\n]+)\\)",
       to: attributed,
       fontSize: fontSize,
       skippedRanges: skippedRanges,
       activeRanges: activeRanges,
-      contentAttributes: linkAttributes(fontSize: fontSize),
       tokenGroups: [0],
-      contentGroups: [1]
+      labelGroup: 1,
+      urlGroup: 2
     )
-    applyInlineStyle(
+    applyInlineLinkStyle(
       pattern: "\\[([^\\]\\n]+)\\]\\(([^)\\n]+)\\)",
       to: attributed,
       fontSize: fontSize,
       skippedRanges: skippedRanges,
       activeRanges: activeRanges,
-      contentAttributes: linkAttributes(fontSize: fontSize),
       tokenGroups: [0],
-      contentGroups: [1]
+      labelGroup: 1,
+      urlGroup: 2
     )
     applyInlineStyle(
       pattern: "(\\*\\*|__)(.+?)\\1",
@@ -231,6 +231,45 @@ enum MarkdownAttributedRenderer {
     }
   }
 
+  private static func applyInlineLinkStyle(
+    pattern: String,
+    to attributed: NSMutableAttributedString,
+    fontSize: CGFloat,
+    skippedRanges: [NSRange],
+    activeRanges: [NSRange],
+    tokenGroups: [Int],
+    labelGroup: Int,
+    urlGroup: Int
+  ) {
+    guard let regex = try? NSRegularExpression(pattern: pattern) else {
+      return
+    }
+
+    let nsString = attributed.string as NSString
+    let fullRange = NSRange(location: 0, length: attributed.length)
+    for match in regex.matches(in: attributed.string, range: fullRange) where !range(match.range, intersectsAny: skippedRanges) {
+      let markdownTokenAttributes = range(match.range, containsAnyActive: activeRanges)
+        ? tokenAttributes(fontSize: fontSize)
+        : hiddenTokenAttributes(fontSize: fontSize)
+
+      for group in tokenGroups {
+        let tokenRange = match.range(at: group)
+        if tokenRange.location != NSNotFound {
+          attributed.addAttributes(markdownTokenAttributes, range: tokenRange)
+        }
+      }
+
+      let labelRange = match.range(at: labelGroup)
+      let urlRange = match.range(at: urlGroup)
+      guard labelRange.location != NSNotFound, urlRange.location != NSNotFound else {
+        continue
+      }
+
+      let urlString = nsString.substring(with: urlRange)
+      attributed.addAttributes(linkAttributes(fontSize: fontSize, urlString: urlString), range: labelRange)
+    }
+  }
+
   private static func headingAttributes(level: Int, fontSize: CGFloat) -> [NSAttributedString.Key: Any] {
     let sizes: [CGFloat] = [34, 30, 26, 23, 21, 20]
     let index = max(0, min(level - 1, sizes.count - 1))
@@ -249,26 +288,26 @@ enum MarkdownAttributedRenderer {
   private static func tokenAttributes(fontSize: CGFloat) -> [NSAttributedString.Key: Any] {
     [
       .foregroundColor: NSColor.tertiaryLabelColor,
-      .font: NSFont.monospacedSystemFont(ofSize: 17 * fontSize / bodyFontSize, weight: .regular)
+      .font: NSFont.monospacedSystemFont(ofSize: fontSize, weight: .regular)
     ]
   }
 
   private static func hiddenTokenAttributes(fontSize: CGFloat) -> [NSAttributedString.Key: Any] {
     [
       .foregroundColor: NSColor.clear,
-      .font: bodyFont(size: max(1, fontSize / bodyFontSize), weight: .regular)
+      .font: bodyFont(size: max(0.1, 0.1 * fontSize / bodyFontSize), weight: .regular)
     ]
   }
 
   private static func bulletAttributes(fontSize: CGFloat) -> [NSAttributedString.Key: Any] {
     [
       .foregroundColor: NSColor.controlAccentColor,
-      .font: bodyFont(size: 22 * fontSize / bodyFontSize, weight: .bold)
+      .font: bodyFont(size: 14 * fontSize / bodyFontSize, weight: .semibold)
     ]
   }
 
   private static func renderedBulletAttributes(fontSize: CGFloat) -> [NSAttributedString.Key: Any] {
-    let font = bodyFont(size: 22 * fontSize / bodyFontSize, weight: .bold)
+    let font = bodyFont(size: 14 * fontSize / bodyFontSize, weight: .semibold)
     var attributes: [NSAttributedString.Key: Any] = [
       .foregroundColor: NSColor.controlAccentColor,
       .font: font
@@ -283,7 +322,7 @@ enum MarkdownAttributedRenderer {
 
   private static func listAttributes(fontSize: CGFloat) -> [NSAttributedString.Key: Any] {
     let paragraphStyle = NSMutableParagraphStyle()
-    paragraphStyle.lineSpacing = 5 * fontSize / bodyFontSize
+    paragraphStyle.lineSpacing = 4 * fontSize / bodyFontSize
     paragraphStyle.paragraphSpacing = paragraphStyle.lineSpacing
     paragraphStyle.headIndent = 28 * fontSize / bodyFontSize
     paragraphStyle.firstLineHeadIndent = 0
@@ -331,12 +370,18 @@ enum MarkdownAttributedRenderer {
     ]
   }
 
-  private static func linkAttributes(fontSize: CGFloat) -> [NSAttributedString.Key: Any] {
-    [
+  private static func linkAttributes(fontSize: CGFloat, urlString: String? = nil) -> [NSAttributedString.Key: Any] {
+    var attributes: [NSAttributedString.Key: Any] = [
       .font: bodyFont(size: fontSize),
       .foregroundColor: NSColor.systemBlue,
       .underlineStyle: NSUnderlineStyle.single.rawValue
     ]
+
+    if let urlString, let url = URL(string: urlString) {
+      attributes[.link] = url
+    }
+
+    return attributes
   }
 
   private static func completedTaskAttributes() -> [NSAttributedString.Key: Any] {
