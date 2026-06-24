@@ -156,6 +156,7 @@ private struct NoteEditorPane: View {
           markdownButton(.bold, title: "Bold", systemImage: "bold")
           markdownButton(.italic, title: "Italic", systemImage: "italic")
           markdownButton(.bulletList, title: "List", systemImage: "list.bullet")
+          markdownButton(.taskList, title: "Checkbox", systemImage: "checklist")
           markdownButton(.code, title: "Code", systemImage: "chevron.left.forwardslash.chevron.right")
           markdownButton(.link, title: "Link", systemImage: "link")
         } label: {
@@ -169,6 +170,7 @@ private struct NoteEditorPane: View {
         markdownButton(.bold, title: "Bold", systemImage: "bold")
         markdownButton(.italic, title: "Italic", systemImage: "italic")
         markdownButton(.bulletList, title: "List", systemImage: "list.bullet")
+        markdownButton(.taskList, title: "Checkbox", systemImage: "checklist")
         markdownButton(.code, title: "Code", systemImage: "chevron.left.forwardslash.chevron.right")
         markdownButton(.link, title: "Link", systemImage: "link")
       }

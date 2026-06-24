@@ -4,6 +4,8 @@ public enum MarkdownStyleKind: String, Equatable, Sendable {
   case heading
   case headingMarker
   case listMarker
+  case taskCheckbox
+  case completedTask
   case blockquote
   case thematicBreak
   case codeBlock
@@ -76,7 +78,23 @@ public enum MarkdownStyler {
           kind: .italic,
           range: shifted(match.range(at: 1), by: lineRange.location)
         ))
-      } else if let match = firstMatch("^\\s*([-*+])\\s+(\\[[ xX]\\]\\s+)?(.+)$", in: line) {
+      } else if let match = firstMatch("^\\s*([-*+])\\s+(\\[[ xX]\\])\\s+(.+)$", in: line) {
+        spans.append(MarkdownStyleSpan(
+          kind: .listMarker,
+          range: shifted(match.range(at: 1), by: lineRange.location)
+        ))
+        spans.append(MarkdownStyleSpan(
+          kind: .taskCheckbox,
+          range: shifted(match.range(at: 2), by: lineRange.location)
+        ))
+        let checkbox = (line as NSString).substring(with: match.range(at: 2))
+        if checkbox.lowercased() == "[x]" {
+          spans.append(MarkdownStyleSpan(
+            kind: .completedTask,
+            range: shifted(match.range(at: 3), by: lineRange.location)
+          ))
+        }
+      } else if let match = firstMatch("^\\s*([-*+])\\s+(.+)$", in: line) {
         spans.append(MarkdownStyleSpan(
           kind: .listMarker,
           range: shifted(match.range(at: 1), by: lineRange.location)

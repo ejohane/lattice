@@ -5,6 +5,7 @@ public enum MarkdownCommand: CaseIterable, Equatable, Sendable {
   case bold
   case italic
   case bulletList
+  case taskList
   case code
   case link
 }
@@ -34,6 +35,8 @@ public enum MarkdownTextEditing {
       return wrapSelection(prefix: "*", suffix: "*", in: body, selection: selection)
     case .bulletList:
       return insertLinePrefix("- ", in: body, selection: selection)
+    case .taskList:
+      return insertLinePrefix("- [ ] ", in: body, selection: selection)
     case .code:
       return wrapSelection(prefix: "`", suffix: "`", in: body, selection: selection)
     case .link:
