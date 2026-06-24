@@ -11,7 +11,10 @@ struct LatticeMacApp: App {
 
   var body: some Scene {
     WindowGroup(id: "main") {
-      LatticeRootView(model: model)
+      LatticeRootView(
+        model: model,
+        commandPalettePlatformCommands: { commandPalettePlatformCommands }
+      )
         .frame(minWidth: 420, minHeight: 420)
         .background(WindowConfiguration(width: 420, height: 420, identifier: Self.mainWindowIdentifier))
         .task {
@@ -48,6 +51,14 @@ struct LatticeMacApp: App {
         .keyboardShortcut("a", modifiers: [.command])
       }
       CommandMenu("Lattice") {
+        Button("Command Palette...") {
+          showMainWindow()
+          model.showCommandPalette()
+        }
+        .keyboardShortcut("p", modifiers: [.command, .shift])
+
+        Divider()
+
         Button("Choose Notes Folder...") {
           showMainWindow()
           model.showFolderImporter()
@@ -124,6 +135,26 @@ struct LatticeMacApp: App {
       openWindow(id: "main")
     }
     NSApp.activate(ignoringOtherApps: true)
+  }
+
+  private var commandPalettePlatformCommands: [CommandPaletteCommand] {
+    [
+      CommandPaletteCommand(
+        id: "mac.checkForUpdates",
+        title: "Check for Updates",
+        subtitle: appDelegate.canCheckForUpdates
+          ? "Look for a newer Lattice release"
+          : "Available in release builds",
+        systemImage: "arrow.triangle.2.circlepath",
+        isSetupSafe: true
+      ) {
+        if appDelegate.canCheckForUpdates {
+          appDelegate.checkForUpdates()
+        } else {
+          model.errorMessage = "Update checking is available in release builds."
+        }
+      }
+    ]
   }
 }
 
