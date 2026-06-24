@@ -17,7 +17,12 @@ let package = Package(
     .package(url: "https://github.com/sparkle-project/Sparkle", from: "2.9.3")
   ],
   targets: [
-    .target(name: "LatticeCore"),
+    .target(
+      name: "LatticeCore",
+      linkerSettings: [
+        .linkedLibrary("sqlite3")
+      ]
+    ),
     .target(
       name: "LatticeEditor",
       dependencies: ["LatticeCore"]

@@ -8,6 +8,7 @@ import Observation
 public final class LatticeAppModel {
   private let folderAccessStore: FolderAccessStore
   public let noteLibrary: NoteLibrary
+  private let noteIndex: any NoteIndexing
   private let session: NoteEditingSession
   private var autosaveWorkItem: DispatchWorkItem?
   private var scopedFolderURL: URL?
@@ -29,10 +30,12 @@ public final class LatticeAppModel {
 
   public init(
     noteLibrary: NoteLibrary = NoteLibrary(),
-    folderAccessStore: FolderAccessStore = FolderAccessStore()
+    folderAccessStore: FolderAccessStore = FolderAccessStore(),
+    noteIndex: any NoteIndexing = NoteIndex()
   ) {
     self.noteLibrary = noteLibrary
     self.folderAccessStore = folderAccessStore
+    self.noteIndex = noteIndex
     self.session = NoteEditingSession(library: noteLibrary)
   }
 
@@ -193,6 +196,10 @@ public final class LatticeAppModel {
       return []
     }
 
+    if let indexedNotes = commandPaletteIndexedNotes(limit: limit) {
+      return indexedNotes
+    }
+
     let notes = sections.flatMap(\.notes)
     let filtered = notes
       .filter { note in
@@ -230,6 +237,7 @@ public final class LatticeAppModel {
     folderURL = url
     status = url.lastPathComponent
     reloadNotes()
+    rebuildNoteIndex()
   }
 
   private func restoreActiveNote() {
@@ -256,6 +264,7 @@ public final class LatticeAppModel {
         return
       case .saved(let note):
         selectedNote = note
+        refreshNoteIndex(for: note)
         reloadNotes(selecting: note)
         if showStatus {
           status = "Autosaved \(displayTitle(for: note))"
@@ -263,6 +272,44 @@ public final class LatticeAppModel {
       }
     } catch {
       errorMessage = error.localizedDescription
+    }
+  }
+
+  private func commandPaletteIndexedNotes(limit: Int) -> [SavedNote]? {
+    guard let folderURL else {
+      return nil
+    }
+
+    do {
+      let query = commandPaletteQuery.trimmingCharacters(in: .whitespacesAndNewlines)
+      if query.isEmpty {
+        return try noteIndex.recentNotes(notesFolderURL: folderURL, limit: limit)
+      }
+      return try noteIndex.searchNotes(query: query, notesFolderURL: folderURL, limit: limit)
+    } catch {
+      return nil
+    }
+  }
+
+  private func rebuildNoteIndex() {
+    guard let folderURL else {
+      return
+    }
+    do {
+      try noteIndex.rebuild(notesFolderURL: folderURL)
+    } catch {
+      // The index is disposable; note files remain the source of truth.
+    }
+  }
+
+  private func refreshNoteIndex(for note: SavedNote) {
+    guard let folderURL else {
+      return
+    }
+    do {
+      try noteIndex.refresh(note: note, notesFolderURL: folderURL)
+    } catch {
+      // Autosave should not fail because the derived index could not refresh.
     }
   }
 
