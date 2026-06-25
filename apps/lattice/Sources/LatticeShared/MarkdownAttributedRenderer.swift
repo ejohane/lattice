@@ -63,7 +63,8 @@ enum MarkdownAttributedRenderer {
     while location < nsString.length {
       let lineRange = nsString.lineRange(for: NSRange(location: location, length: 0))
       let line = nsString.substring(with: lineRange)
-      let tokenAttributes = range(lineRange, containsAnyActive: activeRanges)
+      let isActiveLine = lineRangeContainsActiveRange(lineRange, activeRanges: activeRanges, in: nsString)
+      let tokenAttributes = isActiveLine
         ? tokenAttributes(fontSize: fontSize)
         : hiddenTokenAttributes(fontSize: fontSize)
 
@@ -82,25 +83,22 @@ enum MarkdownAttributedRenderer {
         let markerRange = shifted(match.range(at: 1), by: lineRange.location)
         let checkboxRange = shifted(match.range(at: 2), by: lineRange.location)
         let contentRange = shifted(match.range(at: 3), by: lineRange.location)
-        let isActive = range(lineRange, containsAnyActive: activeRanges)
-          || containsInsertionPointAtLineEnd(lineRange, activeRanges: activeRanges, in: nsString)
         let checkbox = (line as NSString).substring(with: match.range(at: 2))
         let isChecked = checkbox.lowercased() == "[x]"
-        let shouldRenderMarker = !isActive
+        let shouldRenderMarker = !isActiveLine
 
         attributed.addAttributes(listAttributes(fontSize: fontSize), range: lineRange)
         attributed.addAttributes(
           shouldRenderMarker ? renderedTaskCheckboxAttributes(isChecked: isChecked, fontSize: fontSize) : bulletAttributes(fontSize: fontSize),
           range: markerRange
         )
-        attributed.addAttributes(isActive ? bulletAttributes(fontSize: fontSize) : hiddenTokenAttributes(fontSize: fontSize), range: checkboxRange)
+        attributed.addAttributes(isActiveLine ? bulletAttributes(fontSize: fontSize) : hiddenTokenAttributes(fontSize: fontSize), range: checkboxRange)
         if isChecked {
           attributed.addAttributes(completedTaskAttributes(), range: contentRange)
         }
       } else if let match = firstMatch("^\\s*([-*+])\\s+(.*)$", in: line) {
-        let isActive = range(lineRange, containsAnyActive: activeRanges)
         let contentRange = match.range(at: 2)
-        let shouldRenderMarker = !isActive || contentRange.length == 0
+        let shouldRenderMarker = !isActiveLine || contentRange.length == 0
 
         attributed.addAttributes(listAttributes(fontSize: fontSize), range: lineRange)
         attributed.addAttributes(
@@ -110,12 +108,12 @@ enum MarkdownAttributedRenderer {
       } else if let match = firstMatch("^\\s*(\\d+[.)])\\s+(.*)$", in: line) {
         attributed.addAttributes(listAttributes(fontSize: fontSize), range: lineRange)
         attributed.addAttributes(
-          range(lineRange, containsAnyActive: activeRanges) ? bulletAttributes(fontSize: fontSize) : hiddenTokenAttributes(fontSize: fontSize),
+          isActiveLine ? bulletAttributes(fontSize: fontSize) : hiddenTokenAttributes(fontSize: fontSize),
           range: shifted(match.range(at: 1), by: lineRange.location)
         )
       } else if firstMatch("^\\s{0,3}(([-*_])\\s*){3,}$", in: line) != nil {
         attributed.addAttributes(
-          range(lineRange, containsAnyActive: activeRanges) ? thematicBreakAttributes(fontSize: fontSize) : hiddenTokenAttributes(fontSize: fontSize),
+          isActiveLine ? thematicBreakAttributes(fontSize: fontSize) : hiddenTokenAttributes(fontSize: fontSize),
           range: lineRange
         )
       }
@@ -532,14 +530,18 @@ enum MarkdownAttributedRenderer {
     }
   }
 
-  private static func containsInsertionPointAtLineEnd(
+  private static func lineRangeContainsActiveRange(
     _ lineRange: NSRange,
     activeRanges: [NSRange],
     in nsString: NSString
   ) -> Bool {
     let contentRange = contentRangeWithoutLineEnding(lineRange, in: nsString)
     return activeRanges.contains { activeRange in
-      activeRange.length == 0 && activeRange.location == NSMaxRange(contentRange)
+      if activeRange.length > 0 {
+        return NSIntersectionRange(lineRange, activeRange).length > 0
+      }
+
+      return activeRange.location >= contentRange.location && activeRange.location <= NSMaxRange(contentRange)
     }
   }
 
