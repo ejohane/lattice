@@ -31,6 +31,9 @@ jobs:
         run: bun install --frozen-lockfile
 
       - name: Run Swift tests and builds
+        env:
+          LATTICE_IOS_DESTINATION: generic/platform=iOS Simulator
+          LATTICE_IPAD_DESTINATION: generic/platform=iOS Simulator
         run: bun run verify
 
       - name: Validate macOS app package scripts

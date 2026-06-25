@@ -171,7 +171,11 @@ public final class NoteEditingSession {
   }
 
   public static func normalizedBody(_ body: String) -> String {
-    body.trimmingCharacters(in: .whitespacesAndNewlines)
+    guard !body.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {
+      return ""
+    }
+    let bodyWithoutTrailingNewlines = body.trimmingCharacters(in: .newlines)
+    return bodyWithoutTrailingNewlines
   }
 }
 
@@ -351,8 +355,8 @@ public final class NoteLibrary {
 
   @discardableResult
   public func createNote(body: String, now: Date = Date()) throws -> SavedNote {
-    let trimmedBody = body.trimmingCharacters(in: .whitespacesAndNewlines)
-    guard !trimmedBody.isEmpty else {
+    let normalizedBody = NoteEditingSession.normalizedBody(body)
+    guard !normalizedBody.isEmpty else {
       throw NoteLibraryError.emptyNote
     }
 
@@ -366,7 +370,7 @@ public final class NoteLibrary {
     try createDirectory(dateDirectory)
 
     let noteURL = try availableNoteURL(in: dateDirectory, now: now)
-    try writeNoteBody(MarkdownDocumentMetadata.ensureNoteID(in: trimmedBody), to: noteURL)
+    try writeNoteBody(MarkdownDocumentMetadata.ensureNoteID(in: normalizedBody), to: noteURL)
     defaults.set(noteURL.standardizedFileURL.path, forKey: Self.activeNotePathKey)
     return SavedNote(url: noteURL)
   }
@@ -396,16 +400,16 @@ public final class NoteLibrary {
 
   @discardableResult
   public func updateNote(_ note: SavedNote, body: String) throws -> SavedNote {
-    let trimmedBody = body.trimmingCharacters(in: .whitespacesAndNewlines)
+    let normalizedBody = NoteEditingSession.normalizedBody(body)
     guard fileManager.fileExists(atPath: note.url.path) else {
       throw NoteLibraryError.missingNote(note.url.path)
     }
 
     let existingID = (try? rawBody(for: note)).flatMap { MarkdownDocumentMetadata.noteID(in: $0) }
-    let nextBody = trimmedBody.isEmpty
+    let nextBody = normalizedBody.isEmpty
       ? ""
       : MarkdownDocumentMetadata.ensureNoteID(
-        in: trimmedBody,
+        in: normalizedBody,
         id: existingID ?? UUID().uuidString
       )
     try writeNoteBody(nextBody, to: note.url)

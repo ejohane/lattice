@@ -54,6 +54,27 @@ struct NoteLibraryTests {
     #expect(try session.save(body: "Second") == .unchanged)
   }
 
+  @Test("editing session preserves in-progress list marker spacing")
+  func editingSessionPreservesInProgressListMarkerSpacing() throws {
+    let fixture = try Fixture()
+    defer { fixture.cleanup() }
+
+    try fixture.library.selectNotesFolder(fixture.root)
+    let session = NoteEditingSession(library: fixture.library)
+
+    guard case .saved(let note) = try session.save(body: "- item") else {
+      Issue.record("Expected first list item to create a note")
+      return
+    }
+
+    #expect(try session.save(body: "- item\n- ") == .saved(note))
+    #expect(try fixture.library.body(for: note) == "- item\n- \n")
+    #expect(try session.save(body: "- item\n- ") == .unchanged)
+
+    #expect(NoteEditingSession.normalizedBody("- [x] item\n- [ ] ") == "- [x] item\n- [ ] ")
+    #expect(NoteEditingSession.normalizedBody("   \n") == "")
+  }
+
   @Test("active note state is per defaults store")
   func activeNoteStateIsPerDevice() throws {
     let firstDevice = try Fixture()
