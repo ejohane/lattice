@@ -152,6 +152,42 @@ struct MarkdownAttributedRendererTests {
     #expect(linkURL == URL(string: "https://example.com"))
   }
 
+  @Test("renders bare URLs as links")
+  func rendersBareURLsAsLinks() throws {
+    let text = "Open https://example.com/path?query=1 now"
+    let attributed = MarkdownAttributedRenderer.render(text)
+    let string = attributed.string as NSString
+    let urlRange = string.range(of: "https://example.com/path?query=1")
+
+    let color = attributed.attribute(.foregroundColor, at: urlRange.location, effectiveRange: nil) as? NSColor
+    let underline = attributed.attribute(.underlineStyle, at: urlRange.location, effectiveRange: nil) as? Int
+    let url = attributed.attribute(.link, at: urlRange.location, effectiveRange: nil) as? URL
+
+    #expect(color == NSColor.systemBlue)
+    #expect(underline == NSUnderlineStyle.single.rawValue)
+    #expect(url == URL(string: "https://example.com/path?query=1"))
+  }
+
+  @Test("does not auto-link markdown link destinations")
+  func doesNotAutolinkMarkdownLinkDestinations() throws {
+    let text = "[Example](https://example.com)"
+    let attributed = MarkdownAttributedRenderer.render(
+      text,
+      activeRanges: [NSRange(location: (text as NSString).length, length: 0)]
+    )
+    let string = attributed.string as NSString
+    let labelRange = string.range(of: "Example")
+    let destinationRange = string.range(of: "https://example.com")
+
+    let labelURL = attributed.attribute(.link, at: labelRange.location, effectiveRange: nil) as? URL
+    let destinationURL = attributed.attribute(.link, at: destinationRange.location, effectiveRange: nil) as? URL
+    let destinationColor = attributed.attribute(.foregroundColor, at: destinationRange.location, effectiveRange: nil) as? NSColor
+
+    #expect(labelURL == URL(string: "https://example.com"))
+    #expect(destinationURL == nil)
+    #expect(destinationColor == NSColor.clear)
+  }
+
   @Test("shows active inline tokens as editable source")
   func showsActiveInlineTokensAsEditableSource() {
     let attributed = MarkdownAttributedRenderer.render(

@@ -19,11 +19,18 @@ public struct MarkdownStyleSpan: Equatable, Sendable {
   public let kind: MarkdownStyleKind
   public let range: NSRange
   public let level: Int?
+  public let linkDestination: String?
 
-  public init(kind: MarkdownStyleKind, range: NSRange, level: Int? = nil) {
+  public init(
+    kind: MarkdownStyleKind,
+    range: NSRange,
+    level: Int? = nil,
+    linkDestination: String? = nil
+  ) {
     self.kind = kind
     self.range = range
     self.level = level
+    self.linkDestination = linkDestination
   }
 }
 
@@ -119,9 +126,11 @@ public enum MarkdownStyler {
     skippedRanges: [NSRange]
   ) -> [MarkdownStyleSpan] {
     var spans: [MarkdownStyleSpan] = []
-    spans += matches(pattern: "`([^`\\n]+)`", in: text, fullRange: fullRange, skippedRanges: skippedRanges) {
+    let inlineCodeSpans = matches(pattern: "`([^`\\n]+)`", in: text, fullRange: fullRange, skippedRanges: skippedRanges) {
       [MarkdownStyleSpan(kind: .inlineCode, range: $0.range(at: 0))]
     }
+    let inlineCodeRanges = inlineCodeSpans.map(\.range)
+    spans += inlineCodeSpans
     spans += matches(pattern: "(\\*\\*|__)(.+?)\\1", in: text, fullRange: fullRange, skippedRanges: skippedRanges) {
       [MarkdownStyleSpan(kind: .bold, range: $0.range(at: 2))]
     }
@@ -142,9 +151,45 @@ public enum MarkdownStyler {
       [MarkdownStyleSpan(kind: .italic, range: $0.range(at: 1))]
     }
     spans += matches(pattern: "\\[([^\\]\\n]+)\\]\\(([^)\\n]+)\\)", in: text, fullRange: fullRange, skippedRanges: skippedRanges) {
-      [MarkdownStyleSpan(kind: .link, range: $0.range(at: 1))]
+      let nsString = text as NSString
+      return [MarkdownStyleSpan(
+        kind: .link,
+        range: $0.range(at: 1),
+        linkDestination: nsString.substring(with: $0.range(at: 2))
+      )]
     }
+    let markdownLinkRanges = checkingMatches(
+      pattern: "!?\\[[^\\]\\n]+\\]\\([^)\\n]+\\)",
+      in: text,
+      fullRange: fullRange,
+      skippedRanges: skippedRanges
+    ).map(\.range)
+    spans += autolinkSpans(
+      in: text,
+      fullRange: fullRange,
+      skippedRanges: skippedRanges + inlineCodeRanges + markdownLinkRanges
+    )
     return spans
+  }
+
+  private static func autolinkSpans(
+    in text: String,
+    fullRange: NSRange,
+    skippedRanges: [NSRange]
+  ) -> [MarkdownStyleSpan] {
+    guard let detector = try? NSDataDetector(types: NSTextCheckingResult.CheckingType.link.rawValue) else {
+      return []
+    }
+
+    return detector.matches(in: text, range: fullRange)
+      .filter { $0.resultType == .link && !intersectsAny($0.range, skippedRanges) }
+      .map {
+        MarkdownStyleSpan(
+          kind: .link,
+          range: $0.range,
+          linkDestination: $0.url?.absoluteString ?? (text as NSString).substring(with: $0.range)
+        )
+      }
   }
 
   private static func codeBlockRanges(in nsString: NSString) -> [NSRange] {
@@ -186,6 +231,19 @@ public enum MarkdownStyler {
     return regex.matches(in: text, range: fullRange)
       .filter { !intersectsAny($0.range, skippedRanges) }
       .flatMap(makeSpans)
+  }
+
+  private static func checkingMatches(
+    pattern: String,
+    in text: String,
+    fullRange: NSRange,
+    skippedRanges: [NSRange]
+  ) -> [NSTextCheckingResult] {
+    guard let regex = try? NSRegularExpression(pattern: pattern) else {
+      return []
+    }
+    return regex.matches(in: text, range: fullRange)
+      .filter { !intersectsAny($0.range, skippedRanges) }
   }
 
   private static func firstMatch(_ pattern: String, in string: String) -> NSTextCheckingResult? {
