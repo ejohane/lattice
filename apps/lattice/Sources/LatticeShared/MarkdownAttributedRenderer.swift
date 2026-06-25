@@ -128,6 +128,19 @@ enum MarkdownAttributedRenderer {
     skippedRanges: [NSRange],
     activeRanges: [NSRange]
   ) {
+    let fullRange = NSRange(location: 0, length: attributed.length)
+    let inlineCodeRanges = rangesMatching(
+      pattern: "`([^`\\n]+)`",
+      in: attributed.string,
+      fullRange: fullRange,
+      skippedRanges: skippedRanges
+    )
+    let markdownLinkRanges = rangesMatching(
+      pattern: "!?\\[[^\\]\\n]+\\]\\([^)\\n]+\\)",
+      in: attributed.string,
+      fullRange: fullRange,
+      skippedRanges: skippedRanges
+    )
     applyInlineStyle(
       pattern: "`([^`\\n]+)`",
       to: attributed,
@@ -157,6 +170,11 @@ enum MarkdownAttributedRenderer {
       tokenGroups: [0],
       labelGroup: 1,
       urlGroup: 2
+    )
+    applyAutolinkStyles(
+      to: attributed,
+      fontSize: fontSize,
+      skippedRanges: skippedRanges + inlineCodeRanges + markdownLinkRanges
     )
     applyInlineStyle(
       pattern: "(\\*\\*|__)(.+?)\\1",
@@ -279,6 +297,22 @@ enum MarkdownAttributedRenderer {
     }
   }
 
+  private static func applyAutolinkStyles(
+    to attributed: NSMutableAttributedString,
+    fontSize: CGFloat,
+    skippedRanges: [NSRange]
+  ) {
+    guard let detector = try? NSDataDetector(types: NSTextCheckingResult.CheckingType.link.rawValue) else {
+      return
+    }
+
+    let fullRange = NSRange(location: 0, length: attributed.length)
+    for match in detector.matches(in: attributed.string, range: fullRange)
+    where match.resultType == .link && !range(match.range, intersectsAny: skippedRanges) {
+      attributed.addAttributes(linkAttributes(fontSize: fontSize, url: match.url), range: match.range)
+    }
+  }
+
   private static func headingAttributes(level: Int, fontSize: CGFloat) -> [NSAttributedString.Key: Any] {
     let sizes: [CGFloat] = [34, 30, 26, 23, 21, 20]
     let index = max(0, min(level - 1, sizes.count - 1))
@@ -397,14 +431,18 @@ enum MarkdownAttributedRenderer {
     ]
   }
 
-  private static func linkAttributes(fontSize: CGFloat, urlString: String? = nil) -> [NSAttributedString.Key: Any] {
+  private static func linkAttributes(
+    fontSize: CGFloat,
+    urlString: String? = nil,
+    url: URL? = nil
+  ) -> [NSAttributedString.Key: Any] {
     var attributes: [NSAttributedString.Key: Any] = [
       .font: bodyFont(size: fontSize),
       .foregroundColor: NSColor.systemBlue,
       .underlineStyle: NSUnderlineStyle.single.rawValue
     ]
 
-    if let urlString, let url = URL(string: urlString) {
+    if let url = url ?? urlString.flatMap(URL.init(string:)) {
       attributes[.link] = url
     }
 
@@ -510,6 +548,20 @@ enum MarkdownAttributedRenderer {
     }
 
     return regex.firstMatch(in: string, range: NSRange(location: 0, length: (string as NSString).length))
+  }
+
+  private static func rangesMatching(
+    pattern: String,
+    in string: String,
+    fullRange: NSRange,
+    skippedRanges: [NSRange]
+  ) -> [NSRange] {
+    guard let regex = try? NSRegularExpression(pattern: pattern) else {
+      return []
+    }
+    return regex.matches(in: string, range: fullRange)
+      .filter { !range($0.range, intersectsAny: skippedRanges) }
+      .map(\.range)
   }
 
   private static func shifted(_ range: NSRange, by offset: Int) -> NSRange {
@@ -621,8 +673,23 @@ enum MarkdownAttributedRenderer {
     case .italic:
       return [.font: italicBodyFont()]
     case .link:
-      return [.foregroundColor: UIColor.systemBlue, .underlineStyle: NSUnderlineStyle.single.rawValue]
+      return linkAttributes(destination: span.linkDestination)
     }
+  }
+
+  private static func linkAttributes(destination: String?) -> [NSAttributedString.Key: Any] {
+    var attributes: [NSAttributedString.Key: Any] = [
+      .foregroundColor: UIColor.systemBlue,
+      .underlineStyle: NSUnderlineStyle.single.rawValue
+    ]
+
+    if let destination,
+       let url = URL(string: destination),
+       url.scheme != nil {
+      attributes[.link] = url
+    }
+
+    return attributes
   }
 
   private static func italicBodyFont() -> UIFont {

@@ -234,6 +234,22 @@ struct MarkdownStylerTests {
     #expect(kinds.contains(.codeBlock))
   }
 
+  @Test("detects bare URLs without restyling markdown destinations")
+  func detectsBareURLsWithoutRestylingMarkdownDestinations() {
+    let text = """
+    Visit https://example.com and [label](https://hidden.example)
+    ```
+    https://code.example
+    ```
+    """
+    let nsString = text as NSString
+    let linkSpans = MarkdownStyler.spans(in: text).filter { $0.kind == .link }
+    let linkTexts = linkSpans.map { nsString.substring(with: $0.range) }
+
+    #expect(linkTexts == ["https://example.com", "label"])
+    #expect(linkSpans.map(\.linkDestination) == ["https://example.com", "https://hidden.example"])
+  }
+
   @Test("generates task checkbox spans")
   func stylesTaskCheckboxes() {
     let text = "- [x] done\n- [ ] next"
