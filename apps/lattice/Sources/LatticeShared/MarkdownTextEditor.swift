@@ -1,4 +1,5 @@
 import LatticeEditor
+import LatticeCore
 import SwiftUI
 
 #if os(macOS)
@@ -9,20 +10,32 @@ public struct MarkdownTextEditor: NSViewRepresentable {
   @Binding var selectedRange: NSRange
   let fontSize: CGFloat
   let focusToken: Int
+  let wikiLinkStates: [WikiLinkRenderState]
   let onTextChange: () -> Void
+  let onSelectionChange: () -> Void
+  let onWikiLinkActivated: (Int) -> Void
+  let onMarkdownLinkActivated: (Int) -> Void
 
   public init(
     text: Binding<String>,
     selectedRange: Binding<NSRange>,
     fontSize: CGFloat,
     focusToken: Int,
-    onTextChange: @escaping () -> Void
+    wikiLinkStates: [WikiLinkRenderState],
+    onTextChange: @escaping () -> Void,
+    onSelectionChange: @escaping () -> Void,
+    onWikiLinkActivated: @escaping (Int) -> Void,
+    onMarkdownLinkActivated: @escaping (Int) -> Void
   ) {
     self._text = text
     self._selectedRange = selectedRange
     self.fontSize = fontSize
     self.focusToken = focusToken
+    self.wikiLinkStates = wikiLinkStates
     self.onTextChange = onTextChange
+    self.onSelectionChange = onSelectionChange
+    self.onWikiLinkActivated = onWikiLinkActivated
+    self.onMarkdownLinkActivated = onMarkdownLinkActivated
   }
 
   public func makeCoordinator() -> Coordinator {
@@ -37,6 +50,7 @@ public struct MarkdownTextEditor: NSViewRepresentable {
 
     let textView = MarkdownTextView()
     textView.delegate = context.coordinator
+    textView.coordinator = context.coordinator
     textView.isRichText = false
     textView.importsGraphics = false
     textView.allowsUndo = true
@@ -70,7 +84,9 @@ public struct MarkdownTextEditor: NSViewRepresentable {
     guard let textView = context.coordinator.textView else {
       return
     }
-    if textView.string != text || context.coordinator.lastRenderedFontSize != fontSize {
+    if textView.string != text
+      || context.coordinator.lastRenderedFontSize != fontSize
+      || context.coordinator.lastRenderedWikiLinkStates != wikiLinkStates {
       context.coordinator.render(text, in: textView, preserving: selectedRange)
     }
     if context.coordinator.lastFocusToken != focusToken {
@@ -87,6 +103,7 @@ public struct MarkdownTextEditor: NSViewRepresentable {
     weak var textView: NSTextView?
     var lastFocusToken = 0
     var lastRenderedFontSize: CGFloat?
+    var lastRenderedWikiLinkStates: [WikiLinkRenderState] = []
     private var isRendering = false
 
     init(parent: MarkdownTextEditor) {
@@ -109,6 +126,7 @@ public struct MarkdownTextEditor: NSViewRepresentable {
       }
       let selection = textView.selectedRange()
       parent.selectedRange = selection
+      parent.onSelectionChange()
       render(textView.string, in: textView, preserving: selection)
     }
 
@@ -120,18 +138,22 @@ public struct MarkdownTextEditor: NSViewRepresentable {
       let attributed = MarkdownAttributedRenderer.render(
         text,
         fontSize: parent.fontSize,
-        activeRanges: [selection]
+        activeRanges: [selection],
+        wikiLinkStates: parent.wikiLinkStates
       )
       textView.textStorage?.setAttributedString(attributed)
       textView.setSelectedRange(clamped(selection, length: (text as NSString).length))
       textView.typingAttributes = MarkdownAttributedRenderer.baseTypingAttributes(fontSize: parent.fontSize)
       lastRenderedFontSize = parent.fontSize
+      lastRenderedWikiLinkStates = parent.wikiLinkStates
       isRendering = false
     }
   }
 }
 
 private final class MarkdownTextView: NSTextView {
+  weak var coordinator: MarkdownTextEditor.Coordinator?
+
   override func performKeyEquivalent(with event: NSEvent) -> Bool {
     if handlePasteboardShortcut(event) {
       return true
@@ -145,8 +167,15 @@ private final class MarkdownTextView: NSTextView {
       return
     }
 
-    if let url = linkURL(at: event) {
-      NSWorkspace.shared.open(url)
+    if let characterIndex = characterIndex(at: event),
+       WikiLinkParser.link(at: characterIndex, in: string) != nil {
+      coordinator?.parent.onWikiLinkActivated(characterIndex)
+      return
+    }
+
+    if let characterIndex = characterIndex(at: event),
+       MarkdownLocalLinkParser.link(at: characterIndex, in: string) != nil {
+      coordinator?.parent.onMarkdownLinkActivated(characterIndex)
       return
     }
 
@@ -261,25 +290,6 @@ private final class MarkdownTextView: NSTextView {
     return true
   }
 
-  private func linkURL(at event: NSEvent) -> URL? {
-    guard let characterIndex = characterIndex(at: event), let textStorage else {
-      return nil
-    }
-
-    if let url = textStorage.attribute(.link, at: characterIndex, effectiveRange: nil) as? URL {
-      return url
-    }
-
-    if
-      let urlString = textStorage.attribute(.link, at: characterIndex, effectiveRange: nil) as? String,
-      let url = URL(string: urlString)
-    {
-      return url
-    }
-
-    return nil
-  }
-
   private func characterIndex(at event: NSEvent) -> Int? {
     guard
       let layoutManager,
@@ -311,20 +321,32 @@ public struct MarkdownTextEditor: UIViewRepresentable {
   @Binding var selectedRange: NSRange
   let fontSize: CGFloat
   let focusToken: Int
+  let wikiLinkStates: [WikiLinkRenderState]
   let onTextChange: () -> Void
+  let onSelectionChange: () -> Void
+  let onWikiLinkActivated: (Int) -> Void
+  let onMarkdownLinkActivated: (Int) -> Void
 
   public init(
     text: Binding<String>,
     selectedRange: Binding<NSRange>,
     fontSize: CGFloat,
     focusToken: Int,
-    onTextChange: @escaping () -> Void
+    wikiLinkStates: [WikiLinkRenderState],
+    onTextChange: @escaping () -> Void,
+    onSelectionChange: @escaping () -> Void,
+    onWikiLinkActivated: @escaping (Int) -> Void,
+    onMarkdownLinkActivated: @escaping (Int) -> Void
   ) {
     self._text = text
     self._selectedRange = selectedRange
     self.fontSize = fontSize
     self.focusToken = focusToken
+    self.wikiLinkStates = wikiLinkStates
     self.onTextChange = onTextChange
+    self.onSelectionChange = onSelectionChange
+    self.onWikiLinkActivated = onWikiLinkActivated
+    self.onMarkdownLinkActivated = onMarkdownLinkActivated
   }
 
   public func makeCoordinator() -> Coordinator {
@@ -356,7 +378,7 @@ public struct MarkdownTextEditor: UIViewRepresentable {
 
   public func updateUIView(_ textView: UITextView, context: Context) {
     context.coordinator.parent = self
-    if textView.text != text {
+    if textView.text != text || context.coordinator.lastRenderedWikiLinkStates != wikiLinkStates {
       context.coordinator.render(text, in: textView, preserving: selectedRange)
     }
     if context.coordinator.lastFocusToken != focusToken {
@@ -371,6 +393,7 @@ public struct MarkdownTextEditor: UIViewRepresentable {
   public final class Coordinator: NSObject, UITextViewDelegate, UIGestureRecognizerDelegate {
     var parent: MarkdownTextEditor
     var lastFocusToken = 0
+    var lastRenderedWikiLinkStates: [WikiLinkRenderState] = []
     private var isRendering = false
 
     init(parent: MarkdownTextEditor) {
@@ -389,6 +412,7 @@ public struct MarkdownTextEditor: UIViewRepresentable {
 
     public func textViewDidChangeSelection(_ textView: UITextView) {
       parent.selectedRange = textView.selectedRange
+      parent.onSelectionChange()
     }
 
     public func gestureRecognizer(_ gestureRecognizer: UIGestureRecognizer, shouldReceive touch: UITouch) -> Bool {
@@ -400,15 +424,30 @@ public struct MarkdownTextEditor: UIViewRepresentable {
       }
 
       return MarkdownTaskList.toggleTask(at: location, in: textView.text, selection: textView.selectedRange) != nil
+        || WikiLinkParser.link(at: location, in: textView.text) != nil
+        || MarkdownLocalLinkParser.link(at: location, in: textView.text) != nil
     }
 
     @objc func handleTap(_ gesture: UITapGestureRecognizer) {
       guard
         gesture.state == .ended,
         let textView = gesture.view as? UITextView,
-        let location = textView.characterIndex(at: gesture.location(in: textView)),
-        let result = MarkdownTaskList.toggleTask(at: location, in: textView.text, selection: textView.selectedRange)
+        let location = textView.characterIndex(at: gesture.location(in: textView))
       else {
+        return
+      }
+
+      if WikiLinkParser.link(at: location, in: textView.text) != nil {
+        parent.onWikiLinkActivated(location)
+        return
+      }
+
+      if MarkdownLocalLinkParser.link(at: location, in: textView.text) != nil {
+        parent.onMarkdownLinkActivated(location)
+        return
+      }
+
+      guard let result = MarkdownTaskList.toggleTask(at: location, in: textView.text, selection: textView.selectedRange) else {
         return
       }
 
@@ -425,9 +464,10 @@ public struct MarkdownTextEditor: UIViewRepresentable {
         return
       }
       isRendering = true
-      textView.attributedText = MarkdownAttributedRenderer.render(text)
+      textView.attributedText = MarkdownAttributedRenderer.render(text, wikiLinkStates: parent.wikiLinkStates)
       textView.selectedRange = clamped(selection, length: (text as NSString).length)
       textView.typingAttributes = MarkdownAttributedRenderer.baseTypingAttributes()
+      lastRenderedWikiLinkStates = parent.wikiLinkStates
       isRendering = false
     }
   }

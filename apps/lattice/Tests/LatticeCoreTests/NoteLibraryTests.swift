@@ -26,7 +26,8 @@ struct NoteLibraryTests {
     let note = try fixture.library.createNote(body: "Hello\n\nWorld", now: fixture.date)
 
     #expect(note.url.path.hasSuffix("/notes/2026-06-17/2026-06-17T14-32-10.md"))
-    #expect(try String(contentsOf: note.url, encoding: .utf8) == "Hello\n\nWorld\n")
+    #expect(try fixture.library.body(for: note) == "Hello\n\nWorld\n")
+    #expect(MarkdownDocumentMetadata.noteID(in: try String(contentsOf: note.url, encoding: .utf8)) != nil)
     #expect(fixture.library.activeNoteURL()?.path == note.url.path)
   }
 
@@ -49,7 +50,7 @@ struct NoteLibraryTests {
     }
 
     #expect(updated == note)
-    #expect(try String(contentsOf: note.url, encoding: .utf8) == "Second\n")
+    #expect(try fixture.library.body(for: note) == "Second\n")
     #expect(try session.save(body: "Second") == .unchanged)
   }
 

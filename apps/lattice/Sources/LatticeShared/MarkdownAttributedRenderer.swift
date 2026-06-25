@@ -1,4 +1,5 @@
 import Foundation
+import LatticeCore
 import LatticeEditor
 
 #if os(macOS)
@@ -10,10 +11,11 @@ enum MarkdownAttributedRenderer {
   static func render(
     _ text: String,
     fontSize: CGFloat = bodyFontSize,
-    activeRanges: [NSRange] = []
+    activeRanges: [NSRange] = [],
+    wikiLinkStates: [WikiLinkRenderState] = []
   ) -> NSAttributedString {
     let attributed = NSMutableAttributedString(string: text, attributes: baseTypingAttributes(fontSize: fontSize))
-    applyStyles(to: attributed, fontSize: fontSize, activeRanges: activeRanges)
+    applyStyles(to: attributed, fontSize: fontSize, activeRanges: activeRanges, wikiLinkStates: wikiLinkStates)
     return attributed
   }
 
@@ -39,12 +41,15 @@ enum MarkdownAttributedRenderer {
   private static func applyStyles(
     to attributed: NSMutableAttributedString,
     fontSize: CGFloat,
-    activeRanges: [NSRange]
+    activeRanges: [NSRange],
+    wikiLinkStates: [WikiLinkRenderState]
   ) {
     let nsString = attributed.string as NSString
     let codeBlocks = codeBlockRanges(in: nsString)
     applyBlockStyles(to: attributed, fontSize: fontSize, codeBlocks: codeBlocks, activeRanges: activeRanges)
     applyInlineStyles(to: attributed, fontSize: fontSize, skippedRanges: codeBlocks, activeRanges: activeRanges)
+    applyWikiLinkStyles(to: attributed, fontSize: fontSize, states: wikiLinkStates)
+    hideLatticeMetadataComments(in: attributed, fontSize: fontSize, activeRanges: activeRanges)
   }
 
   private static func applyBlockStyles(
@@ -408,6 +413,60 @@ enum MarkdownAttributedRenderer {
     return attributes
   }
 
+  private static func applyWikiLinkStyles(
+    to attributed: NSMutableAttributedString,
+    fontSize: CGFloat,
+    states: [WikiLinkRenderState]
+  ) {
+    for state in states where NSMaxRange(state.range) <= attributed.length {
+      attributed.addAttributes(wikiLinkAttributes(fontSize: fontSize, status: state.status), range: state.range)
+    }
+  }
+
+  private static func wikiLinkAttributes(
+    fontSize: CGFloat,
+    status: WikiLinkRenderStatus
+  ) -> [NSAttributedString.Key: Any] {
+    switch status {
+    case .resolved:
+      return [
+        .font: bodyFont(size: fontSize),
+        .foregroundColor: NSColor.systemBlue,
+        .underlineStyle: NSUnderlineStyle.single.rawValue
+      ]
+    case .ambiguous:
+      return [
+        .font: bodyFont(size: fontSize),
+        .foregroundColor: NSColor.systemBlue.withAlphaComponent(0.85),
+        .underlineStyle: NSUnderlineStyle.patternDot.rawValue | NSUnderlineStyle.single.rawValue
+      ]
+    case .broken:
+      return [
+        .font: bodyFont(size: fontSize),
+        .foregroundColor: NSColor.secondaryLabelColor,
+        .underlineColor: NSColor.systemOrange.withAlphaComponent(0.65),
+        .underlineStyle: NSUnderlineStyle.patternDash.rawValue | NSUnderlineStyle.single.rawValue
+      ]
+    }
+  }
+
+  private static func hideLatticeMetadataComments(
+    in attributed: NSMutableAttributedString,
+    fontSize: CGFloat,
+    activeRanges: [NSRange]
+  ) {
+    guard let regex = try? NSRegularExpression(pattern: #"<!--\s*lattice:[^>]*-->"#) else {
+      return
+    }
+    let fullRange = NSRange(location: 0, length: attributed.length)
+    for match in regex.matches(in: attributed.string, range: fullRange) {
+      let attributes = range(match.range, containsAnyActive: activeRanges)
+        ? tokenAttributes(fontSize: fontSize)
+        : hiddenTokenAttributes(fontSize: fontSize)
+      attributed.addAttributes(attributes, range: match.range)
+    }
+  }
+
   private static func completedTaskAttributes() -> [NSAttributedString.Key: Any] {
     [
       .foregroundColor: NSColor.secondaryLabelColor,
@@ -503,9 +562,9 @@ enum MarkdownAttributedRenderer {
 import UIKit
 
 enum MarkdownAttributedRenderer {
-  static func render(_ text: String) -> NSAttributedString {
+  static func render(_ text: String, wikiLinkStates: [WikiLinkRenderState] = []) -> NSAttributedString {
     let attributed = NSMutableAttributedString(string: text, attributes: baseTypingAttributes())
-    applyStyles(to: attributed)
+    applyStyles(to: attributed, wikiLinkStates: wikiLinkStates)
     return attributed
   }
 
@@ -520,13 +579,17 @@ enum MarkdownAttributedRenderer {
     ]
   }
 
-  private static func applyStyles(to attributed: NSMutableAttributedString) {
+  private static func applyStyles(to attributed: NSMutableAttributedString, wikiLinkStates: [WikiLinkRenderState]) {
     for span in MarkdownStyler.spans(in: attributed.string) {
       guard NSMaxRange(span.range) <= attributed.length else {
         continue
       }
       attributed.addAttributes(attributes(for: span), range: span.range)
     }
+    for state in wikiLinkStates where NSMaxRange(state.range) <= attributed.length {
+      attributed.addAttributes(wikiLinkAttributes(for: state.status), range: state.range)
+    }
+    hideLatticeMetadataComments(in: attributed)
   }
 
   private static func attributes(for span: MarkdownStyleSpan) -> [NSAttributedString.Key: Any] {
@@ -564,6 +627,34 @@ enum MarkdownAttributedRenderer {
     let descriptor = UIFont.systemFont(ofSize: 21).fontDescriptor.withSymbolicTraits(.traitItalic)
       ?? UIFont.systemFont(ofSize: 21).fontDescriptor
     return UIFont(descriptor: descriptor, size: 21)
+  }
+
+  private static func wikiLinkAttributes(for status: WikiLinkRenderStatus) -> [NSAttributedString.Key: Any] {
+    switch status {
+    case .resolved:
+      return [.foregroundColor: UIColor.systemBlue, .underlineStyle: NSUnderlineStyle.single.rawValue]
+    case .ambiguous:
+      return [.foregroundColor: UIColor.systemBlue.withAlphaComponent(0.85), .underlineStyle: NSUnderlineStyle.patternDot.rawValue | NSUnderlineStyle.single.rawValue]
+    case .broken:
+      return [
+        .foregroundColor: UIColor.secondaryLabel,
+        .underlineColor: UIColor.systemOrange.withAlphaComponent(0.65),
+        .underlineStyle: NSUnderlineStyle.patternDash.rawValue | NSUnderlineStyle.single.rawValue
+      ]
+    }
+  }
+
+  private static func hideLatticeMetadataComments(in attributed: NSMutableAttributedString) {
+    guard let regex = try? NSRegularExpression(pattern: #"<!--\s*lattice:[^>]*-->"#) else {
+      return
+    }
+    let fullRange = NSRange(location: 0, length: attributed.length)
+    for match in regex.matches(in: attributed.string, range: fullRange) {
+      attributed.addAttributes([
+        .foregroundColor: UIColor.clear,
+        .font: UIFont.systemFont(ofSize: 0.1)
+      ], range: match.range)
+    }
   }
 }
 #endif

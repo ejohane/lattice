@@ -36,10 +36,11 @@ struct NoteIndexTests {
     try fixture.index.rebuild(notesFolderURL: fixture.root)
 
     let notes = try fixture.index.indexedNotes(notesFolderURL: fixture.root)
-    #expect(try fixture.index.schemaVersion(notesFolderURL: fixture.root) == 1)
+    #expect(try fixture.index.schemaVersion(notesFolderURL: fixture.root) == 2)
     #expect(notes.count == 1)
     let note = try #require(notes.first)
     #expect(note.relativePath == "notes/2026-06-17/2026-06-17T14-32-10.md")
+    #expect(!note.noteID.isEmpty)
     #expect(note.title == "Project Brief")
     #expect(note.excerpt == "Useful body text")
     #expect(note.createdAt != nil)
@@ -104,6 +105,27 @@ struct NoteIndexTests {
     let notes = try fixture.index.indexedNotes(notesFolderURL: fixture.root)
     #expect(notes.count == 1)
     #expect(try #require(notes.first).title == "Second")
+  }
+
+  @Test("rebuild handles renamed files with the same durable note ID")
+  func rebuildHandlesRenamedFiles() throws {
+    let fixture = try Fixture()
+    defer { fixture.cleanup() }
+    let firstURL = try fixture.writeNote(
+      relativePath: "notes/2026-06-17/Old Name.md",
+      body: "---\nlattice:\n  id: durable-note\n---\n\n# Old Name"
+    )
+    let renamedURL = firstURL.deletingLastPathComponent().appendingPathComponent("New Name.md")
+
+    try fixture.index.rebuild(notesFolderURL: fixture.root)
+    try fixture.fileManager.moveItem(at: firstURL, to: renamedURL)
+    try fixture.index.rebuild(notesFolderURL: fixture.root)
+
+    let notes = try fixture.index.indexedNotes(notesFolderURL: fixture.root)
+    #expect(notes.count == 1)
+    let note = try #require(notes.first)
+    #expect(note.noteID == "durable-note")
+    #expect(note.relativePath == "notes/2026-06-17/New Name.md")
   }
 
   @Test("FTS finds title and body matches")
