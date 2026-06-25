@@ -284,6 +284,152 @@ struct LatticeAppModelTests {
     #expect(model.ambiguousWikiLink == nil)
     #expect(model.selectedNote == source)
   }
+
+  @Test("periodic task sync pulls reminder completion into open note")
+  func periodicTaskSyncPullsReminderCompletionIntoOpenNote() async throws {
+    let fixture = try Fixture()
+    defer { fixture.cleanup() }
+    let store = TaskSyncStore(appSupportURL: fixture.appSupportURL, fileManager: fixture.fileManager)
+    let provider = AppModelFakeTaskSyncProvider()
+    let engine = TaskSyncEngine(store: store, provider: provider, fileManager: fixture.fileManager)
+
+    try fixture.library.selectNotesFolder(fixture.root)
+    let note = try fixture.library.createNote(body: "- [ ] Buy milk\n- [ ] ")
+    try store.saveSettings(
+      TaskSyncSettings(isEnabled: true, destinationID: "reminders", initialSyncConfirmed: true),
+      notesFolderURL: fixture.root
+    )
+
+    let model = LatticeAppModel(
+      noteLibrary: fixture.library,
+      folderAccessStore: fixture.folderAccessStore,
+      noteIndex: NoteIndex(appSupportURL: fixture.appSupportURL),
+      taskSyncEngine: engine,
+      taskSyncPollIntervalNanoseconds: 50_000_000
+    )
+    model.chooseFolder(fixture.root)
+    model.open(note)
+
+    await model.syncTasksNow()
+    let externalID = try #require(provider.tasks.values.first?.externalID)
+    provider.tasks[externalID] = TaskProviderTask(
+      externalID: externalID,
+      title: "Buy milk",
+      isCompleted: true,
+      destinationID: "reminders"
+    )
+
+    try await Task.sleep(nanoseconds: 200_000_000)
+
+    #expect(model.text == "- [x] Buy milk\n- [ ] \n")
+    #expect(try fixture.library.body(for: note) == "- [x] Buy milk\n- [ ] \n")
+  }
+
+  @Test("autosave task sync pulls reminder completion without dropping note metadata")
+  func autosaveTaskSyncPreservesNoteMetadata() async throws {
+    let fixture = try Fixture()
+    defer { fixture.cleanup() }
+    let store = TaskSyncStore(appSupportURL: fixture.appSupportURL, fileManager: fixture.fileManager)
+    let provider = AppModelFakeTaskSyncProvider()
+    let engine = TaskSyncEngine(store: store, provider: provider, fileManager: fixture.fileManager)
+
+    try fixture.library.selectNotesFolder(fixture.root)
+    let note = try fixture.library.createNote(body: "- [ ] Buy milk")
+    let noteID = try #require(MarkdownDocumentMetadata.noteID(in: try fixture.library.rawBody(for: note)))
+    try store.saveSettings(
+      TaskSyncSettings(isEnabled: true, destinationID: "reminders", initialSyncConfirmed: true),
+      notesFolderURL: fixture.root
+    )
+
+    let model = LatticeAppModel(
+      noteLibrary: fixture.library,
+      folderAccessStore: fixture.folderAccessStore,
+      noteIndex: NoteIndex(appSupportURL: fixture.appSupportURL),
+      taskSyncEngine: engine,
+      taskSyncPollIntervalNanoseconds: 0
+    )
+    model.chooseFolder(fixture.root)
+    model.open(note)
+    await model.syncTasksNow()
+    let externalID = try #require(provider.tasks.values.first?.externalID)
+    provider.tasks[externalID] = TaskProviderTask(
+      externalID: externalID,
+      title: "Buy milk",
+      isCompleted: true,
+      destinationID: "reminders"
+    )
+
+    model.text = "- [ ] Buy milk\nMore context"
+    model.flushAutosave()
+    try await Task.sleep(nanoseconds: 200_000_000)
+
+    let rawBody = try fixture.library.rawBody(for: note)
+    #expect(MarkdownDocumentMetadata.noteID(in: rawBody) == noteID)
+    #expect(model.text == "- [x] Buy milk\nMore context\n")
+    #expect(try fixture.library.body(for: note) == "- [x] Buy milk\nMore context\n")
+  }
+}
+
+@MainActor
+private final class AppModelFakeTaskSyncProvider: TaskSyncProvider {
+  let id = "apple-reminders"
+  let displayName = "Apple Reminders"
+  var tasks: [String: TaskProviderTask] = [:]
+  private var nextID = 1
+
+  func authorizationStatus() -> TaskProviderAuthorizationStatus {
+    .authorized
+  }
+
+  func requestAuthorization() async throws -> TaskProviderAuthorizationStatus {
+    .authorized
+  }
+
+  func destinations() async throws -> [TaskDestination] {
+    [TaskDestination(id: "reminders", title: "Reminders")]
+  }
+
+  func defaultDestination() async throws -> TaskDestination? {
+    TaskDestination(id: "reminders", title: "Reminders")
+  }
+
+  func task(externalID: String) async throws -> TaskProviderTask? {
+    tasks[externalID]
+  }
+
+  func upsertTask(
+    externalID: String?,
+    title: String,
+    isCompleted: Bool,
+    destinationID: String
+  ) async throws -> TaskProviderTask {
+    let id = externalID ?? "external-\(nextID)"
+    if externalID == nil {
+      nextID += 1
+    }
+    let task = TaskProviderTask(
+      externalID: id,
+      title: title,
+      isCompleted: isCompleted,
+      destinationID: destinationID
+    )
+    tasks[id] = task
+    return task
+  }
+
+  func updateCompletion(externalID: String, isCompleted: Bool) async throws -> TaskProviderTask? {
+    guard let task = tasks[externalID] else {
+      return nil
+    }
+    let updated = TaskProviderTask(
+      externalID: task.externalID,
+      title: task.title,
+      isCompleted: isCompleted,
+      destinationID: task.destinationID
+    )
+    tasks[externalID] = updated
+    return updated
+  }
 }
 
 private struct Fixture {
