@@ -10,8 +10,10 @@ public final class LatticeAppModel {
   public let noteLibrary: NoteLibrary
   private let noteIndex: any NoteIndexing
   private let taskSyncEngine: TaskSyncEngine
+  private let taskSyncPollIntervalNanoseconds: UInt64
   private let session: NoteEditingSession
   private var autosaveWorkItem: DispatchWorkItem?
+  private var taskSyncPollTask: Task<Void, Never>?
   private var scopedFolderURL: URL?
 
   public var sections: [NoteSection] = []
@@ -47,12 +49,14 @@ public final class LatticeAppModel {
     noteLibrary: NoteLibrary = NoteLibrary(),
     folderAccessStore: FolderAccessStore = FolderAccessStore(),
     noteIndex: any NoteIndexing = NoteIndex(),
-    taskSyncEngine: TaskSyncEngine = TaskSyncEngine()
+    taskSyncEngine: TaskSyncEngine = TaskSyncEngine(),
+    taskSyncPollIntervalNanoseconds: UInt64 = 15_000_000_000
   ) {
     self.noteLibrary = noteLibrary
     self.folderAccessStore = folderAccessStore
     self.noteIndex = noteIndex
     self.taskSyncEngine = taskSyncEngine
+    self.taskSyncPollIntervalNanoseconds = taskSyncPollIntervalNanoseconds
     self.session = NoteEditingSession(library: noteLibrary)
   }
 
@@ -180,6 +184,11 @@ public final class LatticeAppModel {
     isTaskSyncEnabled = false
     saveTaskSyncSettings(isEnabled: false, initialSyncConfirmed: false)
     taskSyncStatus = "Task sync is off"
+  }
+
+  public func syncTasksNow() async {
+    flushAutosave(syncSavedNote: false)
+    await syncAllTasks()
   }
 
   public func useRecommendedFolder() {
@@ -494,9 +503,13 @@ public final class LatticeAppModel {
   }
 
   public func flushAutosave() {
+    flushAutosave(syncSavedNote: true)
+  }
+
+  private func flushAutosave(syncSavedNote: Bool) {
     autosaveWorkItem?.cancel()
     autosaveWorkItem = nil
-    autosave(showStatus: false)
+    autosave(showStatus: false, syncSavedNote: syncSavedNote)
   }
 
   public func displayTitle(for note: SavedNote) -> String {
@@ -565,6 +578,7 @@ public final class LatticeAppModel {
     reloadNotes()
     rebuildNoteIndex()
     loadTaskSyncSettings()
+    updateTaskSyncPolling()
     Task { @MainActor in
       await refreshTaskSyncProviderState()
       await syncAllTasks()
@@ -588,7 +602,7 @@ public final class LatticeAppModel {
     }
   }
 
-  private func autosave(showStatus: Bool) {
+  private func autosave(showStatus: Bool, syncSavedNote: Bool = true) {
     autosaveWorkItem?.cancel()
     autosaveWorkItem = nil
     do {
@@ -603,7 +617,9 @@ public final class LatticeAppModel {
         reloadNotes(selecting: note)
         refreshWikiLinkStates()
         updateWikiAutocomplete()
-        syncTasks(for: note, body: text)
+        if syncSavedNote {
+          syncTasks(for: note, body: try noteLibrary.rawBody(for: note))
+        }
         if showStatus {
           status = "Autosaved \(displayTitle(for: note))"
         }
@@ -787,6 +803,7 @@ public final class LatticeAppModel {
       settings.initialSyncConfirmed = initialSyncConfirmed
       try taskSyncEngine.saveSettings(settings, notesFolderURL: folderURL)
       isTaskSyncEnabled = isEnabled
+      updateTaskSyncPolling()
     } catch {
       taskSyncErrorMessage = error.localizedDescription
       taskSyncStatus = "Could not save task sync settings"
@@ -831,6 +848,32 @@ public final class LatticeAppModel {
     } catch {
       taskSyncErrorMessage = error.localizedDescription
       taskSyncStatus = "Task sync needs attention"
+    }
+  }
+
+  private func updateTaskSyncPolling() {
+    taskSyncPollTask?.cancel()
+    taskSyncPollTask = nil
+
+    guard folderURL != nil, isTaskSyncEnabled, taskSyncPollIntervalNanoseconds > 0 else {
+      return
+    }
+
+    taskSyncPollTask = Task { @MainActor [weak self] in
+      while !Task.isCancelled {
+        guard let interval = self?.taskSyncPollIntervalNanoseconds else {
+          return
+        }
+        do {
+          try await Task.sleep(nanoseconds: interval)
+        } catch {
+          return
+        }
+        guard let self, !Task.isCancelled else {
+          return
+        }
+        await self.syncTasksNow()
+      }
     }
   }
 

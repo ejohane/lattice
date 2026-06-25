@@ -82,6 +82,15 @@ public struct TaskSyncSettingsView: View {
   private var syncSection: some View {
     Section("Sync") {
       if model.isTaskSyncEnabled {
+        Button {
+          Task { @MainActor in
+            await model.syncTasksNow()
+          }
+        } label: {
+          Label("Sync Now", systemImage: "arrow.triangle.2.circlepath")
+        }
+        .disabled(!model.hasFolder)
+
         Button(role: .destructive) {
           model.disableTaskSync()
         } label: {
