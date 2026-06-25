@@ -51,6 +51,14 @@ struct LatticeMacApp: App {
         .keyboardShortcut("a", modifiers: [.command])
       }
       CommandMenu("Lattice") {
+        Button("Settings...") {
+          showMainWindow()
+          model.showSettings()
+        }
+        .keyboardShortcut(",", modifiers: [.command])
+
+        Divider()
+
         Button("Command Palette...") {
           showMainWindow()
           model.showCommandPalette()
@@ -102,6 +110,10 @@ struct LatticeMacApp: App {
       Button("Choose Notes Folder...") {
         showMainWindow()
         model.showFolderImporter()
+      }
+      Button("Settings...") {
+        showMainWindow()
+        model.showSettings()
       }
       if let folderURL = model.folderURL {
         Button("Open Notes Folder") {

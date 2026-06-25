@@ -49,6 +49,9 @@ public struct LatticeRootView: View {
         platformCommands: commandPalettePlatformCommands()
       )
     }
+    .sheet(isPresented: $model.isShowingSettings) {
+      TaskSyncSettingsView(model: model)
+    }
   }
 
   private var preferredColumnBinding: Binding<NavigationSplitViewColumn> {
@@ -126,6 +129,13 @@ private struct NoteSidebar: View {
           Label("New Note", systemImage: "square.and.pencil")
         }
         .disabled(!model.hasFolder)
+      }
+      ToolbarItem(placement: .secondaryAction) {
+        Button {
+          model.showSettings()
+        } label: {
+          Label("Settings", systemImage: "gearshape")
+        }
       }
       ToolbarItem(placement: .secondaryAction) {
         Button {

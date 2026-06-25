@@ -142,6 +142,13 @@ public final class NoteEditingSession {
     library.clearActiveNote()
   }
 
+  public func updateSavedBody(_ body: String, for note: SavedNote) {
+    guard activeNote == note else {
+      return
+    }
+    lastSavedBody = Self.normalizedBody(body)
+  }
+
   @discardableResult
   public func save(body: String) throws -> NoteSaveResult {
     let normalizedBody = Self.normalizedBody(body)
