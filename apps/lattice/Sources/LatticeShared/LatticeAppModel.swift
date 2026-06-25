@@ -29,6 +29,11 @@ public final class LatticeAppModel {
   public var preferredCompactColumn = NavigationColumn.sidebar
   public var editorFocusToken = 0
   public var editorFontSize = 14.0
+  public var wikiLinkStates: [WikiLinkRenderState] = []
+  public var wikiAutocompleteSuggestions: [WikiAutocompleteSuggestion] = []
+  public var ambiguousWikiLink: AmbiguousWikiLinkResolution?
+  public var renamingNote: SavedNote?
+  public var renameTitle = ""
   public var taskSyncProviderName = "Apple Reminders"
   public var taskSyncAuthorizationStatus = TaskProviderAuthorizationStatus.notDetermined
   public var taskSyncDestinations: [TaskDestination] = []
@@ -201,6 +206,9 @@ public final class LatticeAppModel {
     selectedNote = nil
     text = ""
     selectedRange = NSRange(location: 0, length: 0)
+    wikiLinkStates = []
+    wikiAutocompleteSuggestions = []
+    ambiguousWikiLink = nil
     status = "New note"
     preferredCompactColumn = .detail
     editorFocusToken += 1
@@ -208,18 +216,237 @@ public final class LatticeAppModel {
   }
 
   public func open(_ note: SavedNote) {
+    open(note, heading: nil)
+  }
+
+  private func open(_ note: SavedNote, heading: String?) {
     flushAutosave()
     do {
       let restored = try session.open(note)
       selectedNote = restored.note
       text = restored.body
-      selectedRange = NSRange(location: (restored.body as NSString).length, length: 0)
+      selectedRange = headingRange(for: heading, in: restored.body)
+        ?? NSRange(location: (restored.body as NSString).length, length: 0)
       status = "Opened \(displayTitle(for: restored.note))"
       preferredCompactColumn = .detail
       reloadNotes(selecting: restored.note)
+      refreshWikiLinkStates()
+      updateWikiAutocomplete()
       editorFocusToken += 1
     } catch {
       errorMessage = error.localizedDescription
+    }
+  }
+
+  public func activateWikiLink(at characterIndex: Int) {
+    guard
+      let folderURL,
+      let link = WikiLinkParser.link(at: characterIndex, in: text)
+    else {
+      return
+    }
+
+    do {
+      if let targetNoteID = link.targetNoteID,
+         let target = try indexedNote(noteID: targetNoteID, notesFolderURL: folderURL) {
+        if let heading = link.targetHeading, !targetHasHeading(noteID: targetNoteID, heading: heading, notesFolderURL: folderURL) {
+          return
+        }
+        open(target.savedNote, heading: link.targetHeading)
+        return
+      }
+
+      if link.isCurrentNoteHeadingLink {
+        selectHeading(link.targetHeading, in: text)
+        return
+      }
+
+      guard let targetStem = link.targetStem else {
+        return
+      }
+
+      let candidates = try noteIndex.wikiNoteCandidates(stem: targetStem, notesFolderURL: folderURL, limit: 20)
+      let headingFilteredCandidates: [WikiNoteCandidate]
+      if let heading = link.targetHeading {
+        headingFilteredCandidates = candidates.filter {
+          targetHasHeading(noteID: $0.noteID, heading: heading, notesFolderURL: folderURL)
+        }
+      } else {
+        headingFilteredCandidates = candidates
+      }
+
+      if candidates.isEmpty {
+        let created = try noteLibrary.createLinkedNote(title: targetStem)
+        refreshNoteIndex(for: created)
+        let target = try indexedNote(for: created, notesFolderURL: folderURL)
+        persistTarget(target.noteID, for: link)
+        open(created, heading: nil)
+      } else if headingFilteredCandidates.isEmpty {
+        return
+      } else if headingFilteredCandidates.count == 1 {
+        let candidate = headingFilteredCandidates[0]
+        persistTarget(candidate.noteID, for: link)
+        open(candidate.note, heading: link.targetHeading)
+      } else {
+        ambiguousWikiLink = AmbiguousWikiLinkResolution(link: link, candidates: headingFilteredCandidates)
+      }
+    } catch {
+      errorMessage = error.localizedDescription
+    }
+  }
+
+  public func activateMarkdownLink(at characterIndex: Int) {
+    guard
+      let folderURL,
+      let selectedNote,
+      let link = MarkdownLocalLinkParser.link(at: characterIndex, in: text)
+    else {
+      return
+    }
+    let destinationParts = link.destination.split(separator: "#", maxSplits: 1, omittingEmptySubsequences: false)
+    let path = String(destinationParts[0])
+    let heading = destinationParts.count > 1 ? String(destinationParts[1]) : nil
+    let baseURL = selectedNote.url.deletingLastPathComponent()
+    let targetURL = URL(fileURLWithPath: path, relativeTo: baseURL).standardizedFileURL
+    let folderPath = folderURL.standardizedFileURL.path
+    let targetPath = targetURL.path
+    guard
+      targetURL.pathExtension.lowercased() == "md",
+      (targetPath == folderPath || targetPath.hasPrefix("\(folderPath)/")),
+      FileManager.default.fileExists(atPath: targetPath)
+    else {
+      return
+    }
+    open(SavedNote(url: targetURL), heading: heading)
+  }
+
+  public func chooseAmbiguousWikiLinkTarget(_ candidate: WikiNoteCandidate) {
+    guard let pending = ambiguousWikiLink else {
+      return
+    }
+    if let folderURL, let heading = pending.link.targetHeading,
+       !targetHasHeading(noteID: candidate.noteID, heading: heading, notesFolderURL: folderURL) {
+      ambiguousWikiLink = nil
+      return
+    }
+    persistTarget(candidate.noteID, for: pending.link)
+    ambiguousWikiLink = nil
+    open(candidate.note, heading: pending.link.targetHeading)
+  }
+
+  public func dismissAmbiguousWikiLinkResolution() {
+    ambiguousWikiLink = nil
+  }
+
+  public func beginRenaming(_ note: SavedNote) {
+    renamingNote = note
+    renameTitle = note.filenameTitle
+  }
+
+  public func cancelRename() {
+    renamingNote = nil
+    renameTitle = ""
+  }
+
+  public func commitRename() {
+    guard let folderURL, let note = renamingNote else {
+      return
+    }
+    let title = renameTitle.trimmingCharacters(in: .whitespacesAndNewlines)
+    guard !title.isEmpty else {
+      return
+    }
+    do {
+      flushAutosave()
+      let indexed = try indexedNote(for: note, notesFolderURL: folderURL)
+      let oldStem = note.filenameTitle
+      let renamed = try noteLibrary.renameNote(note, to: title)
+      try noteLibrary.rewriteWikiLinks(
+        targetNoteID: indexed.noteID,
+        oldStem: oldStem,
+        newStem: renamed.filenameTitle
+      )
+      try noteIndex.rebuild(notesFolderURL: folderURL)
+      renamingNote = nil
+      renameTitle = ""
+      if selectedNote == note {
+        open(renamed)
+      } else {
+        reloadNotes(selecting: selectedNote)
+        refreshWikiLinkStates()
+      }
+    } catch {
+      errorMessage = error.localizedDescription
+    }
+  }
+
+  public func selectWikiAutocompleteSuggestion(_ suggestion: WikiAutocompleteSuggestion) {
+    let nsString = text as NSString
+    guard NSMaxRange(suggestion.replacementRange) <= nsString.length else {
+      return
+    }
+    text = nsString.replacingCharacters(in: suggestion.replacementRange, with: suggestion.replacement)
+    selectedRange = NSRange(location: suggestion.replacementRange.location + (suggestion.replacement as NSString).length, length: 0)
+    wikiAutocompleteSuggestions = []
+    scheduleAutosave()
+    refreshWikiLinkStates()
+    editorFocusToken += 1
+  }
+
+  public func updateWikiAutocomplete() {
+    guard let folderURL, let context = WikiLinkParser.autocompleteContext(in: text, selection: selectedRange) else {
+      wikiAutocompleteSuggestions = []
+      return
+    }
+
+    do {
+      switch context {
+      case .note(let prefix, let replacementRange):
+        let notes = try noteIndex.indexedNotes(notesFolderURL: folderURL, limit: 500)
+          .filter { prefix.isEmpty || $0.url.deletingPathExtension().lastPathComponent.localizedCaseInsensitiveContains(prefix) }
+          .prefix(8)
+        wikiAutocompleteSuggestions = notes.map { note in
+          let stem = note.url.deletingPathExtension().lastPathComponent
+          return WikiAutocompleteSuggestion(
+            title: stem,
+            subtitle: note.relativePath,
+            replacement: "[[\(stem)]]\(WikiLinkParser.targetComment(noteID: note.noteID))",
+            replacementRange: replacementRange
+          )
+        }
+      case .noteHeading(let stem, let prefix, let replacementRange):
+        let note = try noteIndex.wikiNoteCandidates(stem: stem, notesFolderURL: folderURL, limit: 1).first
+        let headings = try noteIndex.wikiHeadingCandidates(
+          noteID: note?.noteID,
+          stem: stem,
+          prefix: prefix,
+          currentNote: nil,
+          notesFolderURL: folderURL,
+          limit: 8
+        )
+        wikiAutocompleteSuggestions = headings.map { heading in
+          WikiAutocompleteSuggestion(
+            title: heading.title,
+            subtitle: stem,
+            replacement: "[[\(stem)#\(heading.title)]]\(WikiLinkParser.targetComment(noteID: heading.noteID, headingID: heading.headingID))",
+            replacementRange: replacementRange
+          )
+        }
+      case .currentNoteHeading(let prefix, let replacementRange):
+        let headings = MarkdownHeadingScanner.headings(in: text)
+          .filter { prefix.isEmpty || $0.title.localizedCaseInsensitiveContains(prefix) }
+          .prefix(8)
+        wikiAutocompleteSuggestions = headings.map { heading in
+          WikiAutocompleteSuggestion(
+            title: heading.title,
+            subtitle: "Current note",
+            replacement: "[[#\(heading.title)]]",
+            replacementRange: replacementRange
+          )
+        }
+      }
+    } catch {
+      wikiAutocompleteSuggestions = []
     }
   }
 
@@ -228,7 +455,19 @@ public final class LatticeAppModel {
     text = result.body
     selectedRange = result.selection
     scheduleAutosave()
+    refreshWikiLinkStates()
+    updateWikiAutocomplete()
     editorFocusToken += 1
+  }
+
+  public func noteTextDidChange() {
+    scheduleAutosave()
+    refreshWikiLinkStates()
+    updateWikiAutocomplete()
+  }
+
+  public func noteSelectionDidChange() {
+    updateWikiAutocomplete()
   }
 
   public func increaseEditorFontSize() {
@@ -340,6 +579,8 @@ public final class LatticeAppModel {
         selectedRange = NSRange(location: (restored.body as NSString).length, length: 0)
         status = "Opened \(displayTitle(for: restored.note))"
         preferredCompactColumn = .detail
+        refreshWikiLinkStates()
+        updateWikiAutocomplete()
       }
       reloadNotes(selecting: selectedNote)
     } catch {
@@ -351,13 +592,17 @@ public final class LatticeAppModel {
     autosaveWorkItem?.cancel()
     autosaveWorkItem = nil
     do {
+      let previousBody = session.savedBody
       switch try session.save(body: text) {
       case .skippedEmptyDraft, .unchanged:
         return
       case .saved(let note):
         selectedNote = note
         refreshNoteIndex(for: note)
+        rewriteHeadingLinksIfNeeded(for: note, previousBody: previousBody, nextBody: text)
         reloadNotes(selecting: note)
+        refreshWikiLinkStates()
+        updateWikiAutocomplete()
         syncTasks(for: note, body: text)
         if showStatus {
           status = "Autosaved \(displayTitle(for: note))"
@@ -403,6 +648,110 @@ public final class LatticeAppModel {
       try noteIndex.refresh(note: note, notesFolderURL: folderURL)
     } catch {
       // Autosave should not fail because the derived index could not refresh.
+    }
+  }
+
+  private func refreshWikiLinkStates() {
+    guard let folderURL else {
+      wikiLinkStates = []
+      return
+    }
+    do {
+      wikiLinkStates = try noteIndex.wikiLinkRenderStates(
+        body: text,
+        currentNote: selectedNote,
+        notesFolderURL: folderURL
+      )
+    } catch {
+      wikiLinkStates = []
+    }
+  }
+
+  private func rewriteHeadingLinksIfNeeded(for note: SavedNote, previousBody: String, nextBody: String) {
+    guard
+      let folderURL,
+      !previousBody.isEmpty,
+      previousBody != nextBody,
+      let indexed = try? indexedNote(for: note, notesFolderURL: folderURL)
+    else {
+      return
+    }
+
+    let previousHeadings = MarkdownHeadingScanner.headings(in: previousBody)
+    let nextHeadings = MarkdownHeadingScanner.headings(in: nextBody)
+    guard previousHeadings.count == nextHeadings.count else {
+      return
+    }
+
+    for (previous, next) in zip(previousHeadings, nextHeadings)
+      where previous.level == next.level && previous.title != next.title {
+      try? noteLibrary.rewriteWikiHeadingLinks(
+        targetNoteID: indexed.noteID,
+        oldHeading: previous.title,
+        newHeading: next.title
+      )
+    }
+    try? noteIndex.rebuild(notesFolderURL: folderURL)
+    if let updatedBody = try? noteLibrary.body(for: note), updatedBody != text {
+      text = updatedBody
+      selectedRange = NSRange(location: min(selectedRange.location, (updatedBody as NSString).length), length: 0)
+      session.updateSavedBody(updatedBody, for: note)
+    }
+  }
+
+  private func indexedNote(noteID: String, notesFolderURL: URL) throws -> IndexedNote? {
+    try noteIndex.indexedNotes(notesFolderURL: notesFolderURL, limit: 2_000)
+      .first { $0.noteID == noteID }
+  }
+
+  private func indexedNote(for note: SavedNote, notesFolderURL: URL) throws -> IndexedNote {
+    try noteIndex.refresh(note: note, notesFolderURL: notesFolderURL)
+    if let indexed = try noteIndex.indexedNotes(notesFolderURL: notesFolderURL, limit: 2_000)
+      .first(where: { $0.savedNote == note || $0.url.standardizedFileURL == note.url.standardizedFileURL }) {
+      return indexed
+    }
+    throw NoteIndexError.unreadableNote(note.url.path)
+  }
+
+  private func persistTarget(_ noteID: String, for link: WikiLinkOccurrence) {
+    text = WikiLinkParser.replacingTargetComment(in: text, for: link, noteID: noteID)
+    selectedRange = NSRange(location: min(NSMaxRange(link.range), (text as NSString).length), length: 0)
+    flushAutosave()
+    refreshWikiLinkStates()
+  }
+
+  private func selectHeading(_ heading: String?, in body: String) {
+    guard let range = headingRange(for: heading, in: body) else {
+      return
+    }
+    selectedRange = range
+    editorFocusToken += 1
+  }
+
+  private func headingRange(for heading: String?, in body: String) -> NSRange? {
+    guard let heading, !heading.isEmpty else {
+      return nil
+    }
+    let targetAnchor = WikiLinkParser.obsidianAnchor(for: heading)
+    return MarkdownHeadingScanner.headings(in: body)
+      .first { $0.anchor == targetAnchor || $0.title == heading }?
+      .range
+  }
+
+  private func targetHasHeading(noteID: String, heading: String, notesFolderURL: URL) -> Bool {
+    do {
+      let targetAnchor = WikiLinkParser.obsidianAnchor(for: heading)
+      return try noteIndex.wikiHeadingCandidates(
+        noteID: noteID,
+        stem: nil,
+        prefix: heading,
+        currentNote: nil,
+        notesFolderURL: notesFolderURL,
+        limit: 20
+      )
+      .contains { $0.anchor == targetAnchor || $0.title == heading }
+    } catch {
+      return false
     }
   }
 
@@ -657,6 +1006,31 @@ public struct CommandPaletteCommand: Identifiable {
   @MainActor
   public func perform() {
     action()
+  }
+}
+
+public struct WikiAutocompleteSuggestion: Identifiable, Equatable {
+  public let id = UUID()
+  public let title: String
+  public let subtitle: String
+  public let replacement: String
+  public let replacementRange: NSRange
+
+  public init(title: String, subtitle: String, replacement: String, replacementRange: NSRange) {
+    self.title = title
+    self.subtitle = subtitle
+    self.replacement = replacement
+    self.replacementRange = replacementRange
+  }
+}
+
+public struct AmbiguousWikiLinkResolution: Equatable {
+  public let link: WikiLinkOccurrence
+  public let candidates: [WikiNoteCandidate]
+
+  public init(link: WikiLinkOccurrence, candidates: [WikiNoteCandidate]) {
+    self.link = link
+    self.candidates = candidates
   }
 }
 

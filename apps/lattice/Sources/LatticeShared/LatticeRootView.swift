@@ -43,6 +43,20 @@ public struct LatticeRootView: View {
     } message: {
       Text(model.errorMessage ?? "")
     }
+    .alert("Rename Note", isPresented: Binding(
+      get: { model.renamingNote != nil },
+      set: { if !$0 { model.cancelRename() } }
+    )) {
+      TextField("Filename", text: $model.renameTitle)
+      Button("Rename") {
+        model.commitRename()
+      }
+      Button("Cancel", role: .cancel) {
+        model.cancelRename()
+      }
+    } message: {
+      Text("Wiki links to this note will be updated.")
+    }
     .sheet(isPresented: $model.isShowingCommandPalette) {
       CommandPaletteView(
         model: model,
@@ -51,6 +65,27 @@ public struct LatticeRootView: View {
     }
     .sheet(isPresented: $model.isShowingSettings) {
       TaskSyncSettingsView(model: model)
+    }
+    .confirmationDialog(
+      "Choose Note",
+      isPresented: Binding(
+        get: { model.ambiguousWikiLink != nil },
+        set: { if !$0 { model.dismissAmbiguousWikiLinkResolution() } }
+      ),
+      titleVisibility: .visible
+    ) {
+      if let pending = model.ambiguousWikiLink {
+        ForEach(pending.candidates) { candidate in
+          Button(candidate.relativePath) {
+            model.chooseAmbiguousWikiLinkTarget(candidate)
+          }
+        }
+      }
+      Button("Cancel", role: .cancel) {
+        model.dismissAmbiguousWikiLinkResolution()
+      }
+    } message: {
+      Text("Several notes match this link.")
     }
   }
 
@@ -106,6 +141,13 @@ private struct NoteSidebar: View {
                 }
               }
               .buttonStyle(.plain)
+              .contextMenu {
+                Button {
+                  model.beginRenaming(note)
+                } label: {
+                  Label("Rename", systemImage: "pencil")
+                }
+              }
             }
           }
         }
@@ -158,11 +200,22 @@ private struct NoteEditorPane: View {
         selectedRange: $model.selectedRange,
         fontSize: CGFloat(model.editorFontSize),
         focusToken: model.editorFocusToken,
+        wikiLinkStates: model.wikiLinkStates,
         onTextChange: {
-          model.scheduleAutosave()
+          model.noteTextDidChange()
+        },
+        onSelectionChange: {
+          model.noteSelectionDidChange()
+        },
+        onWikiLinkActivated: { characterIndex in
+          model.activateWikiLink(at: characterIndex)
+        },
+        onMarkdownLinkActivated: { characterIndex in
+          model.activateMarkdownLink(at: characterIndex)
         }
       )
       .ignoresSafeArea(.keyboard, edges: .bottom)
+      autocompleteBar
       statusBar
     }
     .navigationTitle(model.selectedNote.map { model.displayTitle(for: $0) } ?? "New Note")
@@ -206,6 +259,36 @@ private struct NoteEditorPane: View {
       .frame(maxWidth: .infinity)
       .padding(.vertical, 10)
       .background(.bar)
+  }
+
+  @ViewBuilder
+  private var autocompleteBar: some View {
+    if !model.wikiAutocompleteSuggestions.isEmpty {
+      ScrollView(.horizontal, showsIndicators: false) {
+        HStack(spacing: 8) {
+          ForEach(model.wikiAutocompleteSuggestions) { suggestion in
+            Button {
+              model.selectWikiAutocompleteSuggestion(suggestion)
+            } label: {
+              VStack(alignment: .leading, spacing: 2) {
+                Text(suggestion.title)
+                  .font(.callout.weight(.medium))
+                  .lineLimit(1)
+                Text(suggestion.subtitle)
+                  .font(.caption)
+                  .foregroundStyle(.secondary)
+                  .lineLimit(1)
+              }
+              .frame(minWidth: 120, alignment: .leading)
+            }
+            .buttonStyle(.bordered)
+          }
+        }
+        .padding(.horizontal, 12)
+        .padding(.vertical, 8)
+      }
+      .background(.bar)
+    }
   }
 
   private var statusText: String {

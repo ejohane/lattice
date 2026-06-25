@@ -4,6 +4,7 @@ import SQLite3
 public struct IndexedNote: Identifiable, Equatable, Sendable {
   public let url: URL
   public let relativePath: String
+  public let noteID: String
   public let dateString: String
   public let filename: String
   public let createdAt: Date?
@@ -28,6 +29,22 @@ public protocol NoteIndexing: AnyObject {
   func refresh(note: SavedNote, notesFolderURL: URL) throws
   func recentNotes(notesFolderURL: URL, limit: Int) throws -> [SavedNote]
   func searchNotes(query: String, notesFolderURL: URL, limit: Int) throws -> [SavedNote]
+  func indexedNotes(notesFolderURL: URL, limit: Int) throws -> [IndexedNote]
+  func wikiNoteCandidates(stem: String, notesFolderURL: URL, limit: Int) throws -> [WikiNoteCandidate]
+  func wikiHeadingCandidates(
+    noteID: String?,
+    stem: String?,
+    prefix: String,
+    currentNote: SavedNote?,
+    notesFolderURL: URL,
+    limit: Int
+  ) throws -> [WikiHeadingCandidate]
+  func wikiBacklinks(to noteID: String, notesFolderURL: URL, limit: Int) throws -> [WikiBacklink]
+  func wikiLinkRenderStates(
+    body: String,
+    currentNote: SavedNote?,
+    notesFolderURL: URL
+  ) throws -> [WikiLinkRenderState]
 }
 
 public enum NoteIndexError: LocalizedError, Equatable, Sendable {
@@ -153,7 +170,7 @@ public final class NoteIndex: NoteIndexing {
     let connection = try connection(for: notesFolderURL)
     let rows = try connection.query(
       """
-      SELECT relative_path, date_string, filename, created_at, modified_at, size,
+      SELECT relative_path, note_id, date_string, filename, created_at, modified_at, size,
              fingerprint, title, excerpt, indexed_at
       FROM notes
       ORDER BY date_string DESC, length(filename) DESC, filename DESC, modified_at DESC
@@ -164,6 +181,128 @@ public final class NoteIndex: NoteIndexing {
 
     return rows.compactMap { row in
       indexedNote(from: row, notesFolderURL: notesFolderURL)
+    }
+  }
+
+  public func wikiNoteCandidates(stem: String, notesFolderURL: URL, limit: Int = 20) throws -> [WikiNoteCandidate] {
+    let connection = try connection(for: notesFolderURL)
+    let normalizedStem = stem.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+    let rows = try connection.query(
+      """
+      SELECT relative_path, note_id, date_string, filename, modified_at, title
+      FROM notes
+      WHERE lower(replace(filename, '.md', '')) = ?
+      ORDER BY date_string DESC, relative_path ASC
+      LIMIT ?
+      """,
+      bindings: [.text(normalizedStem), .integer(Int64(limit))]
+    )
+    return rows.compactMap { row in
+      guard
+        let relativePath = row["relative_path"]?.stringValue,
+        let noteID = row["note_id"]?.stringValue,
+        let dateString = row["date_string"]?.stringValue,
+        let filename = row["filename"]?.stringValue,
+        let title = row["title"]?.stringValue
+      else {
+        return nil
+      }
+      let note = SavedNote(
+        url: notesFolderURL.appendingPathComponent(relativePath),
+        dateString: dateString,
+        modifiedAt: Self.date(from: row["modified_at"]?.stringValue)
+      )
+      return WikiNoteCandidate(
+        note: note,
+        noteID: noteID,
+        filenameStem: URL(fileURLWithPath: filename).deletingPathExtension().lastPathComponent,
+        title: title,
+        relativePath: relativePath
+      )
+    }
+  }
+
+  public func wikiHeadingCandidates(
+    noteID: String?,
+    stem: String?,
+    prefix: String,
+    currentNote: SavedNote?,
+    notesFolderURL: URL,
+    limit: Int = 20
+  ) throws -> [WikiHeadingCandidate] {
+    let connection = try connection(for: notesFolderURL)
+    let normalizedPrefix = prefix.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+    let rows: [[String: SQLiteValue]]
+
+    if let noteID {
+      rows = try headingRows(
+        connection: connection,
+        whereClause: "notes.note_id = ?",
+        bindings: [.text(noteID), .text("\(normalizedPrefix)%"), .integer(Int64(limit))]
+      )
+    } else if let stem, !stem.isEmpty {
+      rows = try headingRows(
+        connection: connection,
+        whereClause: "lower(replace(notes.filename, '.md', '')) = ?",
+        bindings: [.text(stem.lowercased()), .text("\(normalizedPrefix)%"), .integer(Int64(limit))]
+      )
+    } else if let currentNote, let relativePath = Self.relativePath(for: currentNote.url, in: notesFolderURL) {
+      rows = try headingRows(
+        connection: connection,
+        whereClause: "notes.relative_path = ?",
+        bindings: [.text(relativePath), .text("\(normalizedPrefix)%"), .integer(Int64(limit))]
+      )
+    } else {
+      return []
+    }
+
+    return rows.compactMap { headingCandidate(from: $0, notesFolderURL: notesFolderURL) }
+  }
+
+  public func wikiBacklinks(to noteID: String, notesFolderURL: URL, limit: Int = 100) throws -> [WikiBacklink] {
+    let connection = try connection(for: notesFolderURL)
+    let rows = try connection.query(
+      """
+      SELECT notes.relative_path, notes.date_string, notes.modified_at, notes.title, wiki_links.target_note_id, wiki_links.raw_text
+      FROM wiki_links
+      JOIN notes ON notes.relative_path = wiki_links.source_relative_path
+      WHERE wiki_links.target_note_id = ?
+      ORDER BY notes.date_string DESC, notes.relative_path ASC
+      LIMIT ?
+      """,
+      bindings: [.text(noteID), .integer(Int64(limit))]
+    )
+    return rows.compactMap { row in
+      guard
+        let relativePath = row["relative_path"]?.stringValue,
+        let dateString = row["date_string"]?.stringValue,
+        let title = row["title"]?.stringValue,
+        let targetNoteID = row["target_note_id"]?.stringValue,
+        let rawText = row["raw_text"]?.stringValue
+      else {
+        return nil
+      }
+      return WikiBacklink(
+        source: SavedNote(
+          url: notesFolderURL.appendingPathComponent(relativePath),
+          dateString: dateString,
+          modifiedAt: Self.date(from: row["modified_at"]?.stringValue)
+        ),
+        sourceTitle: title,
+        targetNoteID: targetNoteID,
+        rawText: rawText
+      )
+    }
+  }
+
+  public func wikiLinkRenderStates(
+    body: String,
+    currentNote: SavedNote?,
+    notesFolderURL: URL
+  ) throws -> [WikiLinkRenderState] {
+    try WikiLinkParser.links(in: body).map { link in
+      let status = try resolveRenderStatus(for: link, currentNote: currentNote, notesFolderURL: notesFolderURL)
+      return WikiLinkRenderState(range: link.range, status: status)
     }
   }
 
@@ -199,6 +338,7 @@ public final class NoteIndex: NoteIndexing {
       CREATE TABLE IF NOT EXISTS notes (
         id INTEGER PRIMARY KEY,
         relative_path TEXT NOT NULL UNIQUE,
+        note_id TEXT NOT NULL UNIQUE,
         date_string TEXT NOT NULL,
         filename TEXT NOT NULL,
         created_at TEXT,
@@ -211,6 +351,7 @@ public final class NoteIndex: NoteIndexing {
       )
       """
     )
+    try ensureColumn("notes", column: "note_id", definition: "TEXT NOT NULL DEFAULT ''", connection: connection)
     let ftsTables = try connection.query(
       "SELECT sql FROM sqlite_master WHERE type = 'table' AND name = 'notes_fts'"
     )
@@ -227,7 +368,54 @@ public final class NoteIndex: NoteIndexing {
       )
       """
     )
-    try connection.execute("PRAGMA user_version = 1")
+    try connection.execute(
+      """
+      CREATE TABLE IF NOT EXISTS note_headings (
+        id INTEGER PRIMARY KEY,
+        note_id TEXT NOT NULL,
+        note_relative_path TEXT NOT NULL,
+        heading_id TEXT,
+        title TEXT NOT NULL,
+        anchor TEXT NOT NULL,
+        level INTEGER NOT NULL,
+        range_location INTEGER NOT NULL,
+        range_length INTEGER NOT NULL
+      )
+      """
+    )
+    try connection.execute(
+      """
+      CREATE TABLE IF NOT EXISTS wiki_links (
+        id INTEGER PRIMARY KEY,
+        source_relative_path TEXT NOT NULL,
+        source_note_id TEXT NOT NULL,
+        target_note_id TEXT,
+        target_heading_id TEXT,
+        target_stem TEXT,
+        target_heading TEXT,
+        raw_text TEXT NOT NULL,
+        range_location INTEGER NOT NULL,
+        range_length INTEGER NOT NULL
+      )
+      """
+    )
+    try connection.execute("CREATE INDEX IF NOT EXISTS idx_notes_filename_stem ON notes(filename)")
+    try connection.execute("CREATE INDEX IF NOT EXISTS idx_headings_note ON note_headings(note_id)")
+    try connection.execute("CREATE INDEX IF NOT EXISTS idx_wiki_links_target ON wiki_links(target_note_id)")
+    try connection.execute("PRAGMA user_version = 2")
+  }
+
+  private func ensureColumn(
+    _ table: String,
+    column: String,
+    definition: String,
+    connection: SQLiteConnection
+  ) throws {
+    let rows = try connection.query("PRAGMA table_info(\(table))")
+    if rows.contains(where: { $0["name"]?.stringValue == column }) {
+      return
+    }
+    try connection.execute("ALTER TABLE \(table) ADD COLUMN \(column) \(definition)")
   }
 
   private func indexedDocuments(in notesFolderURL: URL) throws -> [IndexedDocument] {
@@ -274,9 +462,15 @@ public final class NoteIndex: NoteIndexing {
     guard let relativePath = Self.relativePath(for: noteURL, in: notesFolderURL) else {
       throw NoteIndexError.invalidNotesFolder(noteURL.path)
     }
-    guard let body = try? String(contentsOf: noteURL, encoding: .utf8) else {
+    guard var rawBody = try? String(contentsOf: noteURL, encoding: .utf8) else {
       throw NoteIndexError.unreadableNote(noteURL.path)
     }
+    if MarkdownDocumentMetadata.noteID(in: rawBody) == nil, !rawBody.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+      rawBody = MarkdownDocumentMetadata.ensureNoteID(in: rawBody)
+      try rawBody.write(to: noteURL, atomically: true, encoding: .utf8)
+    }
+    let body = MarkdownDocumentMetadata.strippingFrontMatter(from: rawBody)
+    let noteID = MarkdownDocumentMetadata.noteID(in: rawBody) ?? Self.stableHash(relativePath)
 
     let resourceValues = try noteURL.resourceValues(forKeys: [.contentModificationDateKey, .fileSizeKey])
     let filename = noteURL.lastPathComponent
@@ -287,6 +481,7 @@ public final class NoteIndex: NoteIndexing {
     let note = IndexedNote(
       url: noteURL.standardizedFileURL,
       relativePath: relativePath,
+      noteID: noteID,
       dateString: dateString,
       filename: filename,
       createdAt: Self.createdDate(from: filename),
@@ -302,14 +497,20 @@ public final class NoteIndex: NoteIndexing {
   }
 
   private func upsert(_ document: IndexedDocument, connection: SQLiteConnection) throws {
+    try deleteRowsWithNoteID(
+      document.note.noteID,
+      exceptRelativePath: document.note.relativePath,
+      connection: connection
+    )
     try connection.execute(
       """
       INSERT INTO notes (
-        relative_path, date_string, filename, created_at, modified_at, size,
+        relative_path, note_id, date_string, filename, created_at, modified_at, size,
         fingerprint, title, excerpt, indexed_at
       )
-      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
       ON CONFLICT(relative_path) DO UPDATE SET
+        note_id = excluded.note_id,
         date_string = excluded.date_string,
         filename = excluded.filename,
         created_at = excluded.created_at,
@@ -322,6 +523,7 @@ public final class NoteIndex: NoteIndexing {
       """,
       bindings: [
         .text(document.note.relativePath),
+        .text(document.note.noteID),
         .text(document.note.dateString),
         .text(document.note.filename),
         .nullableText(Self.isoString(from: document.note.createdAt)),
@@ -350,6 +552,8 @@ public final class NoteIndex: NoteIndexing {
         .text(document.body)
       ]
     )
+    try upsertHeadings(document, connection: connection)
+    try upsertWikiLinks(for: document, connection: connection)
   }
 
   private func deleteRowsNotIn(_ relativePaths: Set<String>, connection: SQLiteConnection) throws {
@@ -363,6 +567,8 @@ public final class NoteIndex: NoteIndexing {
         continue
       }
       try connection.execute("DELETE FROM notes_fts WHERE rowid = ?", bindings: [.integer(rowID)])
+      try connection.execute("DELETE FROM note_headings WHERE note_relative_path = ?", bindings: [.text(relativePath)])
+      try connection.execute("DELETE FROM wiki_links WHERE source_relative_path = ?", bindings: [.text(relativePath)])
       try connection.execute("DELETE FROM notes WHERE id = ?", bindings: [.integer(rowID)])
     }
   }
@@ -375,7 +581,218 @@ public final class NoteIndex: NoteIndexing {
       return
     }
     try connection.execute("DELETE FROM notes_fts WHERE rowid = ?", bindings: [.integer(rowID)])
+    try connection.execute("DELETE FROM note_headings WHERE note_relative_path = ?", bindings: [.text(relativePath)])
+    try connection.execute("DELETE FROM wiki_links WHERE source_relative_path = ?", bindings: [.text(relativePath)])
     try connection.execute("DELETE FROM notes WHERE id = ?", bindings: [.integer(rowID)])
+  }
+
+  private func deleteRowsWithNoteID(
+    _ noteID: String,
+    exceptRelativePath relativePathToKeep: String,
+    connection: SQLiteConnection
+  ) throws {
+    let rows = try connection.query(
+      "SELECT id, relative_path FROM notes WHERE note_id = ? AND relative_path != ?",
+      bindings: [.text(noteID), .text(relativePathToKeep)]
+    )
+    for row in rows {
+      guard
+        let rowID = row["id"]?.int64Value,
+        let relativePath = row["relative_path"]?.stringValue
+      else {
+        continue
+      }
+      try connection.execute("DELETE FROM notes_fts WHERE rowid = ?", bindings: [.integer(rowID)])
+      try connection.execute("DELETE FROM note_headings WHERE note_relative_path = ?", bindings: [.text(relativePath)])
+      try connection.execute("DELETE FROM wiki_links WHERE source_relative_path = ?", bindings: [.text(relativePath)])
+      try connection.execute("DELETE FROM notes WHERE id = ?", bindings: [.integer(rowID)])
+    }
+  }
+
+  private func upsertHeadings(_ document: IndexedDocument, connection: SQLiteConnection) throws {
+    try connection.execute("DELETE FROM note_headings WHERE note_relative_path = ?", bindings: [.text(document.note.relativePath)])
+    for heading in MarkdownHeadingScanner.headings(in: document.body) {
+      try connection.execute(
+        """
+        INSERT INTO note_headings (
+          note_id, note_relative_path, heading_id, title, anchor, level, range_location, range_length
+        )
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+        """,
+        bindings: [
+          .text(document.note.noteID),
+          .text(document.note.relativePath),
+          .nullableText(heading.headingID),
+          .text(heading.title),
+          .text(heading.anchor),
+          .integer(Int64(heading.level)),
+          .integer(Int64(heading.range.location)),
+          .integer(Int64(heading.range.length))
+        ]
+      )
+    }
+  }
+
+  private func upsertWikiLinks(for document: IndexedDocument, connection: SQLiteConnection) throws {
+    try connection.execute("DELETE FROM wiki_links WHERE source_relative_path = ?", bindings: [.text(document.note.relativePath)])
+    for link in WikiLinkParser.links(in: document.body) {
+      try connection.execute(
+        """
+        INSERT INTO wiki_links (
+          source_relative_path, source_note_id, target_note_id, target_heading_id,
+          target_stem, target_heading, raw_text, range_location, range_length
+        )
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+        """,
+        bindings: [
+          .text(document.note.relativePath),
+          .text(document.note.noteID),
+          .nullableText(link.targetNoteID),
+          .nullableText(link.targetHeadingID),
+          .nullableText(link.targetStem),
+          .nullableText(link.targetHeading),
+          .text(link.rawText),
+          .integer(Int64(link.range.location)),
+          .integer(Int64(link.range.length))
+        ]
+      )
+    }
+  }
+
+  private func headingRows(
+    connection: SQLiteConnection,
+    whereClause: String,
+    bindings: [SQLiteBinding]
+  ) throws -> [[String: SQLiteValue]] {
+    try connection.query(
+      """
+      SELECT notes.relative_path, notes.note_id, notes.date_string, notes.modified_at,
+             note_headings.title, note_headings.anchor, note_headings.heading_id, note_headings.level
+      FROM note_headings
+      JOIN notes ON notes.note_id = note_headings.note_id
+      WHERE \(whereClause) AND lower(note_headings.title) LIKE ?
+      ORDER BY note_headings.level ASC, note_headings.title ASC
+      LIMIT ?
+      """,
+      bindings: bindings
+    )
+  }
+
+  private func headingCandidate(
+    from row: [String: SQLiteValue],
+    notesFolderURL: URL
+  ) -> WikiHeadingCandidate? {
+    guard
+      let relativePath = row["relative_path"]?.stringValue,
+      let noteID = row["note_id"]?.stringValue,
+      let dateString = row["date_string"]?.stringValue,
+      let title = row["title"]?.stringValue,
+      let anchor = row["anchor"]?.stringValue,
+      let level = row["level"]?.int64Value
+    else {
+      return nil
+    }
+    return WikiHeadingCandidate(
+      noteID: noteID,
+      note: SavedNote(
+        url: notesFolderURL.appendingPathComponent(relativePath),
+        dateString: dateString,
+        modifiedAt: Self.date(from: row["modified_at"]?.stringValue)
+      ),
+      title: title,
+      anchor: anchor,
+      headingID: row["heading_id"]?.stringValue,
+      level: Int(level)
+    )
+  }
+
+  private func resolveRenderStatus(
+    for link: WikiLinkOccurrence,
+    currentNote: SavedNote?,
+    notesFolderURL: URL
+  ) throws -> WikiLinkRenderStatus {
+    if let targetNoteID = link.targetNoteID {
+      let connection = try connection(for: notesFolderURL)
+      let count = try connection.scalarInt64(
+        "SELECT COUNT(*) FROM notes WHERE note_id = ?",
+        bindings: [.text(targetNoteID)]
+      ) ?? 0
+      guard count > 0 else {
+        return .broken
+      }
+      if let heading = link.targetHeading, !heading.isEmpty {
+        return try headingExists(
+          connection: connection,
+          noteID: targetNoteID,
+          headingID: link.targetHeadingID,
+          headingTitle: heading
+        ) ? .resolved : .broken
+      }
+      return .resolved
+    }
+
+    if link.isCurrentNoteHeadingLink {
+      guard let currentNote, let relativePath = Self.relativePath(for: currentNote.url, in: notesFolderURL) else {
+        return .broken
+      }
+      let connection = try connection(for: notesFolderURL)
+      let row = try connection.query("SELECT note_id FROM notes WHERE relative_path = ?", bindings: [.text(relativePath)]).first
+      guard let noteID = row?["note_id"]?.stringValue else {
+        return .broken
+      }
+      return try headingExists(
+        connection: connection,
+        noteID: noteID,
+        headingID: nil,
+        headingTitle: link.targetHeading ?? ""
+      ) ? .resolved : .broken
+    }
+
+    guard let targetStem = link.targetStem else {
+      return .broken
+    }
+    let candidates = try wikiNoteCandidates(stem: targetStem, notesFolderURL: notesFolderURL, limit: 3)
+    guard !candidates.isEmpty else {
+      return .broken
+    }
+    if let heading = link.targetHeading, !heading.isEmpty {
+      let connection = try connection(for: notesFolderURL)
+      let candidatesWithHeading = try candidates.filter {
+        try headingExists(
+          connection: connection,
+          noteID: $0.noteID,
+          headingID: nil,
+          headingTitle: heading
+        )
+      }
+      if candidatesWithHeading.isEmpty {
+        return .broken
+      }
+      return candidatesWithHeading.count > 1 ? .ambiguous : .resolved
+    }
+    if candidates.count > 1 {
+      return .ambiguous
+    }
+    return .resolved
+  }
+
+  private func headingExists(
+    connection: SQLiteConnection,
+    noteID: String,
+    headingID: String?,
+    headingTitle: String
+  ) throws -> Bool {
+    if let headingID, !headingID.isEmpty {
+      return (try connection.scalarInt64(
+        "SELECT COUNT(*) FROM note_headings WHERE note_id = ? AND heading_id = ?",
+        bindings: [.text(noteID), .text(headingID)]
+      ) ?? 0) > 0
+    }
+    let anchor = WikiLinkParser.obsidianAnchor(for: headingTitle)
+    return (try connection.scalarInt64(
+      "SELECT COUNT(*) FROM note_headings WHERE note_id = ? AND anchor = ?",
+      bindings: [.text(noteID), .text(anchor)]
+    ) ?? 0) > 0
   }
 
   private func savedNote(from row: [String: SQLiteValue], notesFolderURL: URL) -> SavedNote? {
@@ -395,6 +812,7 @@ public final class NoteIndex: NoteIndexing {
   private func indexedNote(from row: [String: SQLiteValue], notesFolderURL: URL) -> IndexedNote? {
     guard
       let relativePath = row["relative_path"]?.stringValue,
+      let noteID = row["note_id"]?.stringValue,
       let dateString = row["date_string"]?.stringValue,
       let filename = row["filename"]?.stringValue,
       let size = row["size"]?.int64Value,
@@ -410,6 +828,7 @@ public final class NoteIndex: NoteIndexing {
     return IndexedNote(
       url: notesFolderURL.appendingPathComponent(relativePath),
       relativePath: relativePath,
+      noteID: noteID.isEmpty ? Self.stableHash(relativePath) : noteID,
       dateString: dateString,
       filename: filename,
       createdAt: Self.date(from: row["created_at"]?.stringValue),

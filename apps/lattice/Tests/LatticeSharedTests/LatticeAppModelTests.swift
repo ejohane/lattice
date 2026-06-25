@@ -30,7 +30,7 @@ struct LatticeAppModelTests {
     let note = try #require(section.notes.first)
     #expect(note.url.path.contains("/notes/"))
     #expect(note.url.lastPathComponent.hasSuffix(".md"))
-    #expect(try String(contentsOf: note.url, encoding: .utf8) == "# Universal Note\n\nBody\n")
+    #expect(try fixture.library.body(for: note) == "# Universal Note\n\nBody\n")
     #expect(model.displayTitle(for: note) == "Universal Note")
 
     model.createNewNote()
@@ -186,11 +186,103 @@ struct LatticeAppModelTests {
 
     let section = try #require(model.sections.first)
     let note = try #require(section.notes.first)
-    #expect(try String(contentsOf: note.url, encoding: .utf8) == "# Still Saves\n\nBody\n")
+    #expect(try fixture.library.body(for: note) == "# Still Saves\n\nBody\n")
 
     model.commandPaletteQuery = "still"
     let fallbackNotes = model.commandPaletteNotes()
     #expect(fallbackNotes.count == 1)
+  }
+
+  @Test("wiki link click creates a linked note and persists target identity")
+  func wikiLinkClickCreatesLinkedNote() throws {
+    let fixture = try Fixture()
+    defer { fixture.cleanup() }
+    let model = LatticeAppModel(
+      noteLibrary: fixture.library,
+      folderAccessStore: fixture.folderAccessStore,
+      noteIndex: NoteIndex(appSupportURL: fixture.appSupportURL)
+    )
+
+    try fixture.fileManager.createDirectory(at: fixture.root, withIntermediateDirectories: true)
+    model.chooseFolder(fixture.root)
+    model.text = "# Source\n\nSee [[Project Plan]]"
+    model.flushAutosave()
+    let source = try #require(model.selectedNote)
+    let linkLocation = (model.text as NSString).range(of: "[[Project Plan]]").location + 2
+
+    model.activateWikiLink(at: linkLocation)
+
+    let sections = model.sections
+    #expect(sections.flatMap(\.notes).contains { $0.filenameTitle == "Project Plan" })
+    #expect(model.selectedNote?.filenameTitle == "Project Plan")
+    let sourceBody = try fixture.library.body(for: source)
+    #expect(sourceBody.contains("[[Project Plan]]<!-- lattice:target="))
+  }
+
+  @Test("renaming a note rewrites wiki links while preserving aliases")
+  func renameRewritesWikiLinks() throws {
+    let fixture = try Fixture()
+    defer { fixture.cleanup() }
+    let model = LatticeAppModel(
+      noteLibrary: fixture.library,
+      folderAccessStore: fixture.folderAccessStore,
+      noteIndex: NoteIndex(appSupportURL: fixture.appSupportURL)
+    )
+
+    try fixture.fileManager.createDirectory(at: fixture.root, withIntermediateDirectories: true)
+    model.chooseFolder(fixture.root)
+    let target = try fixture.library.createLinkedNote(title: "Old Name")
+    let targetID = try #require(MarkdownDocumentMetadata.noteID(in: try fixture.library.rawBody(for: target)))
+    let source = try fixture.library.createNote(
+      body: "# Source\n\nSee [[Old Name|alias]]\(WikiLinkParser.targetComment(noteID: targetID))"
+    )
+
+    model.beginRenaming(target)
+    model.renameTitle = "New Name"
+    model.commitRename()
+
+    #expect(!fixture.fileManager.fileExists(atPath: target.url.path))
+    let sourceBody = try fixture.library.body(for: source)
+    #expect(sourceBody.contains("[[New Name|alias]]\(WikiLinkParser.targetComment(noteID: targetID))"))
+  }
+
+  @Test("missing heading links with duplicate note names do not open duplicate chooser")
+  func missingHeadingDuplicateLinkDoesNotOpenChooser() throws {
+    let fixture = try Fixture()
+    defer { fixture.cleanup() }
+    let model = LatticeAppModel(
+      noteLibrary: fixture.library,
+      folderAccessStore: fixture.folderAccessStore,
+      noteIndex: NoteIndex(appSupportURL: fixture.appSupportURL)
+    )
+
+    try fixture.fileManager.createDirectory(
+      at: fixture.root.appendingPathComponent("notes/2026-06-25", isDirectory: true),
+      withIntermediateDirectories: true
+    )
+    try fixture.fileManager.createDirectory(
+      at: fixture.root.appendingPathComponent("notes/2026-06-24", isDirectory: true),
+      withIntermediateDirectories: true
+    )
+    try "# Meeting Notes\n\n## Decisions\n".write(
+      to: fixture.root.appendingPathComponent("notes/2026-06-25/Meeting Notes.md"),
+      atomically: true,
+      encoding: .utf8
+    )
+    try "# Meeting Notes\n\n## Decisions\n".write(
+      to: fixture.root.appendingPathComponent("notes/2026-06-24/Meeting Notes.md"),
+      atomically: true,
+      encoding: .utf8
+    )
+    model.chooseFolder(fixture.root)
+    model.text = "# Source\n\n[[Meeting Notes#Missing]]"
+    model.flushAutosave()
+    let source = try #require(model.selectedNote)
+
+    model.activateWikiLink(at: (model.text as NSString).range(of: "[[Meeting Notes#Missing]]").location + 2)
+
+    #expect(model.ambiguousWikiLink == nil)
+    #expect(model.selectedNote == source)
   }
 }
 
@@ -242,6 +334,37 @@ private final class FailingNoteIndex: NoteIndexing {
   }
 
   func searchNotes(query: String, notesFolderURL: URL, limit: Int) throws -> [SavedNote] {
+    throw FixtureError.defaultsUnavailable
+  }
+
+  func indexedNotes(notesFolderURL: URL, limit: Int) throws -> [IndexedNote] {
+    throw FixtureError.defaultsUnavailable
+  }
+
+  func wikiNoteCandidates(stem: String, notesFolderURL: URL, limit: Int) throws -> [WikiNoteCandidate] {
+    throw FixtureError.defaultsUnavailable
+  }
+
+  func wikiHeadingCandidates(
+    noteID: String?,
+    stem: String?,
+    prefix: String,
+    currentNote: SavedNote?,
+    notesFolderURL: URL,
+    limit: Int
+  ) throws -> [WikiHeadingCandidate] {
+    throw FixtureError.defaultsUnavailable
+  }
+
+  func wikiBacklinks(to noteID: String, notesFolderURL: URL, limit: Int) throws -> [WikiBacklink] {
+    throw FixtureError.defaultsUnavailable
+  }
+
+  func wikiLinkRenderStates(
+    body: String,
+    currentNote: SavedNote?,
+    notesFolderURL: URL
+  ) throws -> [WikiLinkRenderState] {
     throw FixtureError.defaultsUnavailable
   }
 }
