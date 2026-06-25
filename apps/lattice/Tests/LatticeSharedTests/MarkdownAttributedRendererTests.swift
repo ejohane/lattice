@@ -18,7 +18,7 @@ struct MarkdownAttributedRendererTests {
 
   @Test("renders inactive unordered list markers as bullets")
   func rendersInactiveListMarkersAsBullets() {
-    let attributed = MarkdownAttributedRenderer.render("- bullets", activeRanges: [NSRange(location: 9, length: 0)])
+    let attributed = MarkdownAttributedRenderer.render("- bullets\nnext", activeRanges: [NSRange(location: 10, length: 0)])
     let glyphInfo = attributed.attribute(.glyphInfo, at: 0, effectiveRange: nil) as? NSGlyphInfo
     let markerFont = attributed.attribute(.font, at: 0, effectiveRange: nil) as? NSFont
     let paragraphStyle = attributed.attribute(.paragraphStyle, at: 0, effectiveRange: nil) as? NSParagraphStyle
@@ -28,6 +28,18 @@ struct MarkdownAttributedRendererTests {
     #expect(paragraphStyle?.headIndent == 28)
     #expect(paragraphStyle?.lineSpacing == 4)
     #expect(paragraphStyle?.paragraphSpacing == paragraphStyle?.lineSpacing)
+  }
+
+  @Test("shows unordered list markers as editable source at line boundaries")
+  func showsUnorderedListMarkersAsEditableSourceAtLineBoundaries() {
+    let startAttributed = MarkdownAttributedRenderer.render("- bullets", activeRanges: [NSRange(location: 0, length: 0)])
+    let endAttributed = MarkdownAttributedRenderer.render("- bullets", activeRanges: [NSRange(location: 9, length: 0)])
+
+    let startGlyphInfo = startAttributed.attribute(.glyphInfo, at: 0, effectiveRange: nil) as? NSGlyphInfo
+    let endGlyphInfo = endAttributed.attribute(.glyphInfo, at: 0, effectiveRange: nil) as? NSGlyphInfo
+
+    #expect(startGlyphInfo == nil)
+    #expect(endGlyphInfo == nil)
   }
 
   @Test("shows active unordered list markers as editable source")
@@ -44,7 +56,7 @@ struct MarkdownAttributedRendererTests {
 
   @Test("styles checked task list content as completed")
   func stylesCheckedTaskListContentAsCompleted() {
-    let attributed = MarkdownAttributedRenderer.render("- [x] done", activeRanges: [NSRange(location: 0, length: 0)])
+    let attributed = MarkdownAttributedRenderer.render("- [x] done\nnext", activeRanges: [NSRange(location: 11, length: 0)])
     let string = attributed.string as NSString
     let contentRange = string.range(of: "done")
 
@@ -59,7 +71,7 @@ struct MarkdownAttributedRendererTests {
 
   @Test("does not complete unchecked task list content")
   func doesNotCompleteUncheckedTaskListContent() {
-    let attributed = MarkdownAttributedRenderer.render("- [ ] todo", activeRanges: [NSRange(location: 0, length: 0)])
+    let attributed = MarkdownAttributedRenderer.render("- [ ] todo\nnext", activeRanges: [NSRange(location: 11, length: 0)])
     let string = attributed.string as NSString
     let contentRange = string.range(of: "todo")
 
@@ -72,13 +84,19 @@ struct MarkdownAttributedRendererTests {
 
   @Test("shows active task list markers as editable source")
   func showsActiveTaskListMarkersAsEditableSource() {
+    let startAttributed = MarkdownAttributedRenderer.render("- [ ] todo", activeRanges: [NSRange(location: 0, length: 0)])
     let attributed = MarkdownAttributedRenderer.render("- [ ] todo", activeRanges: [NSRange(location: 4, length: 0)])
+    let endAttributed = MarkdownAttributedRenderer.render("- [ ] todo", activeRanges: [NSRange(location: 10, length: 0)])
 
+    let startMarkerGlyphInfo = startAttributed.attribute(.glyphInfo, at: 0, effectiveRange: nil) as? NSGlyphInfo
     let markerGlyphInfo = attributed.attribute(.glyphInfo, at: 0, effectiveRange: nil) as? NSGlyphInfo
+    let endMarkerGlyphInfo = endAttributed.attribute(.glyphInfo, at: 0, effectiveRange: nil) as? NSGlyphInfo
     let markerColor = attributed.attribute(.foregroundColor, at: 0, effectiveRange: nil) as? NSColor
     let checkboxColor = attributed.attribute(.foregroundColor, at: 2, effectiveRange: nil) as? NSColor
 
+    #expect(startMarkerGlyphInfo == nil)
     #expect(markerGlyphInfo == nil)
+    #expect(endMarkerGlyphInfo == nil)
     #expect(markerColor == NSColor.controlAccentColor)
     #expect(checkboxColor == NSColor.controlAccentColor)
   }
