@@ -20,7 +20,8 @@ let package = Package(
     .target(
       name: "LatticeCore",
       linkerSettings: [
-        .linkedLibrary("sqlite3")
+        .linkedLibrary("sqlite3"),
+        .linkedFramework("EventKit")
       ]
     ),
     .target(

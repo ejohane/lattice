@@ -9,6 +9,7 @@ public final class LatticeAppModel {
   private let folderAccessStore: FolderAccessStore
   public let noteLibrary: NoteLibrary
   private let noteIndex: any NoteIndexing
+  private let taskSyncEngine: TaskSyncEngine
   private let session: NoteEditingSession
   private var autosaveWorkItem: DispatchWorkItem?
   private var scopedFolderURL: URL?
@@ -23,19 +24,30 @@ public final class LatticeAppModel {
   public var errorMessage: String?
   public var isShowingFolderImporter = false
   public var isShowingCommandPalette = false
+  public var isShowingSettings = false
   public var commandPaletteQuery = ""
   public var preferredCompactColumn = NavigationColumn.sidebar
   public var editorFocusToken = 0
   public var editorFontSize = 14.0
+  public var taskSyncProviderName = "Apple Reminders"
+  public var taskSyncAuthorizationStatus = TaskProviderAuthorizationStatus.notDetermined
+  public var taskSyncDestinations: [TaskDestination] = []
+  public var selectedTaskDestinationID: String?
+  public var isTaskSyncEnabled = false
+  public var taskSyncStatus = "Task sync is off"
+  public var taskSyncErrorMessage: String?
+  public var pendingInitialSyncTaskCount: Int?
 
   public init(
     noteLibrary: NoteLibrary = NoteLibrary(),
     folderAccessStore: FolderAccessStore = FolderAccessStore(),
-    noteIndex: any NoteIndexing = NoteIndex()
+    noteIndex: any NoteIndexing = NoteIndex(),
+    taskSyncEngine: TaskSyncEngine = TaskSyncEngine()
   ) {
     self.noteLibrary = noteLibrary
     self.folderAccessStore = folderAccessStore
     self.noteIndex = noteIndex
+    self.taskSyncEngine = taskSyncEngine
     self.session = NoteEditingSession(library: noteLibrary)
   }
 
@@ -85,9 +97,84 @@ public final class LatticeAppModel {
     isShowingCommandPalette = true
   }
 
+  public func showSettings() {
+    isShowingSettings = true
+  }
+
   public func dismissCommandPalette() {
     isShowingCommandPalette = false
     commandPaletteQuery = ""
+  }
+
+  public func refreshTaskSyncProviderState() async {
+    loadTaskSyncSettings()
+    taskSyncAuthorizationStatus = taskSyncEngine.authorizationStatus()
+    guard taskSyncAuthorizationStatus.allowsSync else {
+      taskSyncDestinations = []
+      if isTaskSyncEnabled {
+        taskSyncStatus = "Reminders access is required for task sync"
+      }
+      return
+    }
+
+    do {
+      taskSyncDestinations = try await taskSyncEngine.destinations()
+      if selectedTaskDestinationID == nil {
+        selectedTaskDestinationID = try await taskSyncEngine.defaultDestination()?.id
+        saveTaskSyncSettings(isEnabled: isTaskSyncEnabled, initialSyncConfirmed: false)
+      }
+    } catch {
+      taskSyncErrorMessage = error.localizedDescription
+      taskSyncStatus = "Could not load Reminders lists"
+    }
+  }
+
+  public func selectTaskSyncDestination(_ destinationID: String) {
+    selectedTaskDestinationID = destinationID.isEmpty ? nil : destinationID
+    saveTaskSyncSettings(isEnabled: isTaskSyncEnabled, initialSyncConfirmed: false)
+  }
+
+  public func requestEnableTaskSync() async {
+    guard let folderURL else {
+      taskSyncErrorMessage = TaskSyncError.missingNotesFolder.localizedDescription
+      return
+    }
+
+    do {
+      let authorization = try await taskSyncEngine.requestAuthorization()
+      taskSyncAuthorizationStatus = authorization
+      guard authorization.allowsSync else {
+        taskSyncStatus = "Reminders access was not granted"
+        return
+      }
+
+      try await ensureTaskSyncDestination()
+      let taskCount = try taskSyncEngine.existingTaskCount(notesFolderURL: folderURL)
+      if taskCount > 0 {
+        pendingInitialSyncTaskCount = taskCount
+      } else {
+        await enableTaskSync(syncExistingTasks: false)
+      }
+    } catch {
+      taskSyncErrorMessage = error.localizedDescription
+      taskSyncStatus = "Could not enable task sync"
+    }
+  }
+
+  public func confirmInitialTaskSync() async {
+    pendingInitialSyncTaskCount = nil
+    await enableTaskSync(syncExistingTasks: true)
+  }
+
+  public func cancelInitialTaskSync() {
+    pendingInitialSyncTaskCount = nil
+  }
+
+  public func disableTaskSync() {
+    pendingInitialSyncTaskCount = nil
+    isTaskSyncEnabled = false
+    saveTaskSyncSettings(isEnabled: false, initialSyncConfirmed: false)
+    taskSyncStatus = "Task sync is off"
   }
 
   public func useRecommendedFolder() {
@@ -238,6 +325,11 @@ public final class LatticeAppModel {
     status = url.lastPathComponent
     reloadNotes()
     rebuildNoteIndex()
+    loadTaskSyncSettings()
+    Task { @MainActor in
+      await refreshTaskSyncProviderState()
+      await syncAllTasks()
+    }
   }
 
   private func restoreActiveNote() {
@@ -266,6 +358,7 @@ public final class LatticeAppModel {
         selectedNote = note
         refreshNoteIndex(for: note)
         reloadNotes(selecting: note)
+        syncTasks(for: note, body: text)
         if showStatus {
           status = "Autosaved \(displayTitle(for: note))"
         }
@@ -311,6 +404,156 @@ public final class LatticeAppModel {
     } catch {
       // Autosave should not fail because the derived index could not refresh.
     }
+  }
+
+  private func loadTaskSyncSettings() {
+    guard let folderURL else {
+      isTaskSyncEnabled = false
+      selectedTaskDestinationID = nil
+      taskSyncStatus = "Choose a notes folder"
+      return
+    }
+
+    do {
+      let settings = try taskSyncEngine.settings(notesFolderURL: folderURL)
+      isTaskSyncEnabled = settings.isEnabled
+      selectedTaskDestinationID = settings.destinationID
+      taskSyncStatus = settings.isEnabled ? "Task sync is on" : "Task sync is off"
+    } catch {
+      taskSyncErrorMessage = error.localizedDescription
+      taskSyncStatus = "Could not load task sync settings"
+    }
+  }
+
+  private func saveTaskSyncSettings(isEnabled: Bool, initialSyncConfirmed: Bool) {
+    guard let folderURL else {
+      return
+    }
+
+    do {
+      var settings = try taskSyncEngine.settings(notesFolderURL: folderURL)
+      settings.isEnabled = isEnabled
+      settings.providerID = "apple-reminders"
+      settings.destinationID = selectedTaskDestinationID
+      settings.initialSyncConfirmed = initialSyncConfirmed
+      try taskSyncEngine.saveSettings(settings, notesFolderURL: folderURL)
+      isTaskSyncEnabled = isEnabled
+    } catch {
+      taskSyncErrorMessage = error.localizedDescription
+      taskSyncStatus = "Could not save task sync settings"
+    }
+  }
+
+  private func ensureTaskSyncDestination() async throws {
+    taskSyncDestinations = try await taskSyncEngine.destinations()
+    if selectedTaskDestinationID == nil {
+      selectedTaskDestinationID = try await taskSyncEngine.defaultDestination()?.id
+    }
+    guard selectedTaskDestinationID != nil else {
+      throw TaskSyncError.missingDestination
+    }
+  }
+
+  private func enableTaskSync(syncExistingTasks: Bool) async {
+    guard folderURL != nil else {
+      taskSyncErrorMessage = TaskSyncError.missingNotesFolder.localizedDescription
+      return
+    }
+
+    do {
+      try await ensureTaskSyncDestination()
+      saveTaskSyncSettings(isEnabled: true, initialSyncConfirmed: syncExistingTasks)
+      taskSyncStatus = "Task sync is on"
+      await syncAllTasks()
+    } catch {
+      taskSyncErrorMessage = error.localizedDescription
+      taskSyncStatus = "Could not enable task sync"
+    }
+  }
+
+  private func syncAllTasks() async {
+    guard let folderURL, isTaskSyncEnabled else {
+      return
+    }
+
+    do {
+      let summary = try await taskSyncEngine.syncAll(notesFolderURL: folderURL)
+      applyTaskSyncSummary(summary)
+    } catch {
+      taskSyncErrorMessage = error.localizedDescription
+      taskSyncStatus = "Task sync needs attention"
+    }
+  }
+
+  private func syncTasks(for note: SavedNote, body: String) {
+    guard let folderURL, isTaskSyncEnabled else {
+      return
+    }
+
+    Task { @MainActor in
+      do {
+        let summary = try await taskSyncEngine.sync(
+          note: note,
+          body: body,
+          notesFolderURL: folderURL
+        )
+        applyTaskSyncSummary(summary)
+      } catch {
+        taskSyncErrorMessage = error.localizedDescription
+        taskSyncStatus = "Task sync needs attention"
+      }
+    }
+  }
+
+  private func applyTaskSyncSummary(_ summary: TaskSyncSummary) {
+    if !summary.updatedNoteRelativePaths.isEmpty {
+      reloadSelectedNoteIfNeeded(updatedRelativePaths: summary.updatedNoteRelativePaths)
+      for relativePath in summary.updatedNoteRelativePaths {
+        refreshNoteIndex(forRelativePath: relativePath)
+      }
+    }
+
+    guard summary.scannedTasks > 0 || summary.createdExternalTasks > 0 || summary.updatedMarkdownTasks > 0 else {
+      taskSyncStatus = isTaskSyncEnabled ? "Task sync is on" : "Task sync is off"
+      return
+    }
+
+    let changes = summary.createdExternalTasks
+      + summary.updatedExternalTasks
+      + summary.completedExternalTasks
+      + summary.updatedMarkdownTasks
+      + summary.unlinkedTasks
+    taskSyncStatus = changes == 0
+      ? "Task sync is up to date"
+      : "Task sync updated \(changes) task\(changes == 1 ? "" : "s")"
+  }
+
+  private func reloadSelectedNoteIfNeeded(updatedRelativePaths: Set<String>) {
+    guard
+      let folderURL,
+      let selectedNote,
+      let relativePath = MarkdownTaskScanner.relativePath(for: selectedNote.url, in: folderURL),
+      updatedRelativePaths.contains(relativePath)
+    else {
+      return
+    }
+
+    do {
+      let updatedBody = try noteLibrary.body(for: selectedNote)
+      text = updatedBody
+      selectedRange = NSRange(location: min(selectedRange.location, (updatedBody as NSString).length), length: 0)
+      session.updateSavedBody(updatedBody, for: selectedNote)
+    } catch {
+      taskSyncErrorMessage = error.localizedDescription
+    }
+  }
+
+  private func refreshNoteIndex(forRelativePath relativePath: String) {
+    guard let folderURL else {
+      return
+    }
+    let note = SavedNote(url: folderURL.appendingPathComponent(relativePath))
+    refreshNoteIndex(for: note)
   }
 
   private func reloadNotes(selecting note: SavedNote? = nil) {
