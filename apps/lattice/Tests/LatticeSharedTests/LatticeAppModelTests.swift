@@ -78,6 +78,66 @@ struct LatticeAppModelTests {
     #expect(!model.canIncreaseEditorFontSize)
   }
 
+  @Test("persists per-device editor preferences")
+  func persistsEditorPreferences() throws {
+    let defaultsSuiteName = "editor-preferences-\(UUID().uuidString)"
+    guard let defaults = UserDefaults(suiteName: defaultsSuiteName) else {
+      throw FixtureError.defaultsUnavailable
+    }
+    defer {
+      defaults.removePersistentDomain(forName: defaultsSuiteName)
+    }
+    let model = LatticeAppModel(
+      noteLibrary: NoteLibrary(defaults: defaults),
+      folderAccessStore: FolderAccessStore(defaults: defaults),
+      editorPreferencesStore: EditorPreferencesStore(defaults: defaults)
+    )
+
+    #expect(!model.isVimModeEnabled)
+    #expect(!model.showsRelativeLineNumbers)
+    #expect(model.vimState.mode == .insert)
+
+    model.setVimModeEnabled(true)
+    model.setRelativeLineNumbersEnabled(true)
+
+    let restored = LatticeAppModel(
+      noteLibrary: NoteLibrary(defaults: defaults),
+      folderAccessStore: FolderAccessStore(defaults: defaults),
+      editorPreferencesStore: EditorPreferencesStore(defaults: defaults)
+    )
+
+    #expect(restored.isVimModeEnabled)
+    #expect(restored.showsRelativeLineNumbers)
+    #expect(restored.vimState.mode == .normal)
+  }
+
+  @Test("dismisses wiki autocomplete suggestions")
+  func dismissesWikiAutocompleteSuggestions() {
+    let model = LatticeAppModel()
+    model.wikiAutocompleteSuggestions = [
+      WikiAutocompleteSuggestion(
+        title: "Daily Note",
+        subtitle: "notes/today.md",
+        replacement: "[[Daily Note]]",
+        replacementRange: NSRange(location: 0, length: 2)
+      )
+    ]
+
+    model.dismissWikiAutocomplete()
+
+    #expect(model.wikiAutocompleteSuggestions.isEmpty)
+  }
+
+  @Test("clears vim status when editing resumes")
+  func clearsVimStatusWhenEditingResumes() {
+    let model = LatticeAppModel()
+    model.setVimStatusMessage("Saved")
+
+    model.noteTextDidChange()
+
+    #expect(model.vimStatusMessage == nil)
+  }
+
   @Test("command palette only exposes update checking without a folder")
   func commandPaletteCommandsWithoutFolder() throws {
     let defaultsSuiteName = "command-palette-setup-\(UUID().uuidString)"

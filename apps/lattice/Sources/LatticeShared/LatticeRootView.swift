@@ -241,8 +241,12 @@ private struct NoteEditorPane: View {
       MarkdownTextEditor(
         text: $model.text,
         selectedRange: $model.selectedRange,
+        vimState: $model.vimState,
         fontSize: CGFloat(model.editorFontSize),
         focusToken: model.editorFocusToken,
+        isVimModeEnabled: model.isVimModeEnabled,
+        showsRelativeLineNumbers: model.showsRelativeLineNumbers,
+        hasAutocompleteSuggestions: !model.wikiAutocompleteSuggestions.isEmpty,
         wikiLinkStates: model.wikiLinkStates,
         onTextChange: {
           model.noteTextDidChange()
@@ -255,6 +259,15 @@ private struct NoteEditorPane: View {
         },
         onMarkdownLinkActivated: { characterIndex in
           model.activateMarkdownLink(at: characterIndex)
+        },
+        onDismissAutocomplete: {
+          model.dismissWikiAutocomplete()
+        },
+        onVimWrite: {
+          model.vimWrite()
+        },
+        onVimStatusChange: { message in
+          model.setVimStatusMessage(message)
         }
       )
       .ignoresSafeArea(.keyboard, edges: .bottom)
@@ -307,7 +320,26 @@ private struct NoteEditorPane: View {
   private var statusText: String {
     let count = model.text.count
     let unit = count == 1 ? "character" : "characters"
-    return model.status.isEmpty ? "\(count) \(unit)" : "\(model.status) - \(count) \(unit)"
+    var parts: [String] = []
+    if model.isVimModeEnabled {
+      switch model.vimState.mode {
+      case .insert:
+        parts.append("INSERT")
+      case .normal:
+        parts.append("NORMAL")
+      case .visual:
+        parts.append("VISUAL")
+      case .commandLine:
+        parts.append(":\(model.vimState.commandText)")
+      }
+    }
+    if let vimStatusMessage = model.vimStatusMessage, !vimStatusMessage.isEmpty {
+      parts.append(vimStatusMessage)
+    } else if !model.status.isEmpty {
+      parts.append(model.status)
+    }
+    parts.append("\(count) \(unit)")
+    return parts.joined(separator: " - ")
   }
 
   private func markdownButton(

@@ -12,6 +12,7 @@ public struct TaskSyncSettingsView: View {
   public var body: some View {
     NavigationStack {
       Form {
+        editorSection
         providerSection
         destinationSection
         syncSection
@@ -43,6 +44,18 @@ public struct TaskSyncSettingsView: View {
     } message: {
       Text(initialSyncMessage)
     }
+  }
+
+  @ViewBuilder
+  private var editorSection: some View {
+    #if os(macOS)
+    Section("Editor") {
+      Toggle("Vim Mode", isOn: vimModeBinding)
+      Toggle("Relative Line Numbers", isOn: relativeLineNumbersBinding)
+    }
+    #else
+    EmptyView()
+    #endif
   }
 
   private var providerSection: some View {
@@ -126,6 +139,22 @@ public struct TaskSyncSettingsView: View {
       model.selectedTaskDestinationID ?? model.taskSyncDestinations.first?.id ?? ""
     } set: { value in
       model.selectTaskSyncDestination(value)
+    }
+  }
+
+  private var vimModeBinding: Binding<Bool> {
+    Binding {
+      model.isVimModeEnabled
+    } set: { value in
+      model.setVimModeEnabled(value)
+    }
+  }
+
+  private var relativeLineNumbersBinding: Binding<Bool> {
+    Binding {
+      model.showsRelativeLineNumbers
+    } set: { value in
+      model.setRelativeLineNumbersEnabled(value)
     }
   }
 

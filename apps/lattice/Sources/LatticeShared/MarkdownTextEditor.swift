@@ -8,34 +8,55 @@ import AppKit
 public struct MarkdownTextEditor: NSViewRepresentable {
   @Binding var text: String
   @Binding var selectedRange: NSRange
+  @Binding var vimState: VimEditorState
   let fontSize: CGFloat
   let focusToken: Int
+  let isVimModeEnabled: Bool
+  let showsRelativeLineNumbers: Bool
+  let hasAutocompleteSuggestions: Bool
   let wikiLinkStates: [WikiLinkRenderState]
   let onTextChange: () -> Void
   let onSelectionChange: () -> Void
   let onWikiLinkActivated: (Int) -> Void
   let onMarkdownLinkActivated: (Int) -> Void
+  let onDismissAutocomplete: () -> Void
+  let onVimWrite: () -> Void
+  let onVimStatusChange: (String?) -> Void
 
   public init(
     text: Binding<String>,
     selectedRange: Binding<NSRange>,
+    vimState: Binding<VimEditorState>,
     fontSize: CGFloat,
     focusToken: Int,
+    isVimModeEnabled: Bool,
+    showsRelativeLineNumbers: Bool,
+    hasAutocompleteSuggestions: Bool,
     wikiLinkStates: [WikiLinkRenderState],
     onTextChange: @escaping () -> Void,
     onSelectionChange: @escaping () -> Void,
     onWikiLinkActivated: @escaping (Int) -> Void,
-    onMarkdownLinkActivated: @escaping (Int) -> Void
+    onMarkdownLinkActivated: @escaping (Int) -> Void,
+    onDismissAutocomplete: @escaping () -> Void,
+    onVimWrite: @escaping () -> Void,
+    onVimStatusChange: @escaping (String?) -> Void
   ) {
     self._text = text
     self._selectedRange = selectedRange
+    self._vimState = vimState
     self.fontSize = fontSize
     self.focusToken = focusToken
+    self.isVimModeEnabled = isVimModeEnabled
+    self.showsRelativeLineNumbers = showsRelativeLineNumbers
+    self.hasAutocompleteSuggestions = hasAutocompleteSuggestions
     self.wikiLinkStates = wikiLinkStates
     self.onTextChange = onTextChange
     self.onSelectionChange = onSelectionChange
     self.onWikiLinkActivated = onWikiLinkActivated
     self.onMarkdownLinkActivated = onMarkdownLinkActivated
+    self.onDismissAutocomplete = onDismissAutocomplete
+    self.onVimWrite = onVimWrite
+    self.onVimStatusChange = onVimStatusChange
   }
 
   public func makeCoordinator() -> Coordinator {
@@ -47,6 +68,7 @@ public struct MarkdownTextEditor: NSViewRepresentable {
     scrollView.drawsBackground = false
     scrollView.hasVerticalScroller = true
     scrollView.autohidesScrollers = true
+    scrollView.contentView.postsBoundsChangedNotifications = true
 
     let textView = MarkdownTextView()
     textView.delegate = context.coordinator
@@ -75,6 +97,7 @@ public struct MarkdownTextEditor: NSViewRepresentable {
     textView.setAccessibilityIdentifier("noteEditor")
 
     scrollView.documentView = textView
+    textView.configureLineNumberRuler(isVisible: showsRelativeLineNumbers)
     context.coordinator.textView = textView
     return scrollView
   }
@@ -89,6 +112,8 @@ public struct MarkdownTextEditor: NSViewRepresentable {
       || context.coordinator.lastRenderedWikiLinkStates != wikiLinkStates {
       context.coordinator.render(text, in: textView, preserving: selectedRange)
     }
+    textView.configureLineNumberRuler(isVisible: showsRelativeLineNumbers)
+    textView.invalidateVimCursor()
     if context.coordinator.lastFocusToken != focusToken {
       context.coordinator.lastFocusToken = focusToken
       DispatchQueue.main.async {
@@ -100,7 +125,7 @@ public struct MarkdownTextEditor: NSViewRepresentable {
   @MainActor
   public final class Coordinator: NSObject, NSTextViewDelegate {
     var parent: MarkdownTextEditor
-    weak var textView: NSTextView?
+    fileprivate weak var textView: MarkdownTextView?
     var lastFocusToken = 0
     var lastRenderedFontSize: CGFloat?
     var lastRenderedWikiLinkStates: [WikiLinkRenderState] = []
@@ -144,6 +169,7 @@ public struct MarkdownTextEditor: NSViewRepresentable {
       textView.textStorage?.setAttributedString(attributed)
       textView.setSelectedRange(clamped(selection, length: (text as NSString).length))
       textView.typingAttributes = MarkdownAttributedRenderer.baseTypingAttributes(fontSize: parent.fontSize)
+      (textView as? MarkdownTextView)?.invalidateLineNumberRuler()
       lastRenderedFontSize = parent.fontSize
       lastRenderedWikiLinkStates = parent.wikiLinkStates
       isRendering = false
@@ -153,6 +179,42 @@ public struct MarkdownTextEditor: NSViewRepresentable {
 
 private final class MarkdownTextView: NSTextView {
   weak var coordinator: MarkdownTextEditor.Coordinator?
+  private var lastBlockCursorRect: NSRect?
+
+  override func keyDown(with event: NSEvent) {
+    guard let coordinator else {
+      super.keyDown(with: event)
+      return
+    }
+
+    if coordinator.parent.hasAutocompleteSuggestions, Self.isEscape(event) {
+      coordinator.parent.onDismissAutocomplete()
+      return
+    }
+
+    guard coordinator.parent.isVimModeEnabled else {
+      super.keyDown(with: event)
+      return
+    }
+
+    if coordinator.parent.vimState.mode == .insert, !Self.isEscape(event) {
+      super.keyDown(with: event)
+      return
+    }
+
+    guard let input = vimInput(from: event) else {
+      super.keyDown(with: event)
+      return
+    }
+
+    let result = VimTextEditing.handle(
+      input,
+      body: string,
+      selection: selectedRange(),
+      state: coordinator.parent.vimState
+    )
+    applyVimResult(result)
+  }
 
   override func draw(_ dirtyRect: NSRect) {
     super.draw(dirtyRect)
@@ -185,6 +247,23 @@ private final class MarkdownTextView: NSTextView {
     }
 
     super.mouseDown(with: event)
+  }
+
+  override func drawInsertionPoint(in rect: NSRect, color: NSColor, turnedOn flag: Bool) {
+    guard usesVimBlockCursor else {
+      super.drawInsertionPoint(in: rect, color: color, turnedOn: flag)
+      return
+    }
+
+    let cursorRect = blockCursorRect(fallback: rect)
+    lastBlockCursorRect = cursorRect
+    guard flag else {
+      setNeedsDisplay(cursorRect.insetBy(dx: -1, dy: -1))
+      return
+    }
+
+    NSColor.controlAccentColor.setFill()
+    cursorRect.fill()
   }
 
   override func insertTab(_ sender: Any?) {
@@ -231,6 +310,143 @@ private final class MarkdownTextView: NSTextView {
     }
 
     return true
+  }
+
+  private func vimInput(from event: NSEvent) -> VimKeyInput? {
+    let flags = event.modifierFlags.intersection(.deviceIndependentFlagsMask).subtracting(.shift)
+    guard flags.isEmpty else {
+      return nil
+    }
+
+    if Self.isEscape(event) {
+      return .escape
+    }
+    if event.keyCode == 36 {
+      return .returnKey
+    }
+    if event.keyCode == 51 {
+      return .deleteBackward
+    }
+    guard let characters = event.characters, characters.count == 1 else {
+      return nil
+    }
+    return .character(characters)
+  }
+
+  private func applyVimResult(_ result: VimEditResult) {
+    guard let coordinator else {
+      return
+    }
+
+    coordinator.parent.vimState = result.state
+    coordinator.parent.onVimStatusChange(result.statusMessage)
+
+    if let replacementRange = result.replacementRange,
+       let replacement = result.replacement {
+      guard shouldChangeText(in: replacementRange, replacementString: replacement) else {
+        return
+      }
+      textStorage?.replaceCharacters(in: replacementRange, with: replacement)
+      setSelectedRange(result.selection)
+      didChangeText()
+    } else {
+      setSelectedRange(clamped(result.selection, length: (string as NSString).length))
+      coordinator.parent.selectedRange = selectedRange()
+      coordinator.parent.onSelectionChange()
+      invalidateLineNumberRuler()
+    }
+
+    if result.action == .write {
+      coordinator.parent.onVimWrite()
+    }
+  }
+
+  private static func isEscape(_ event: NSEvent) -> Bool {
+    event.keyCode == 53
+  }
+
+  func configureLineNumberRuler(isVisible: Bool) {
+    guard let scrollView = enclosingScrollView else {
+      return
+    }
+
+    if isVisible {
+      if !(scrollView.verticalRulerView is RelativeLineNumberRulerView) {
+        scrollView.verticalRulerView = RelativeLineNumberRulerView(textView: self)
+      }
+      scrollView.hasVerticalRuler = true
+      scrollView.rulersVisible = true
+      invalidateLineNumberRuler()
+    } else {
+      scrollView.rulersVisible = false
+      scrollView.hasVerticalRuler = false
+      scrollView.verticalRulerView = nil
+    }
+  }
+
+  func invalidateLineNumberRuler() {
+    enclosingScrollView?.verticalRulerView?.needsDisplay = true
+  }
+
+  func invalidateVimCursor() {
+    if let lastBlockCursorRect {
+      setNeedsDisplay(lastBlockCursorRect.insetBy(dx: -1, dy: -1))
+    }
+    setNeedsDisplay(blockCursorRect(fallback: NSRect.zero).insetBy(dx: -1, dy: -1))
+  }
+
+  private var usesVimBlockCursor: Bool {
+    guard
+      let coordinator,
+      coordinator.parent.isVimModeEnabled,
+      coordinator.parent.vimState.mode == .normal,
+      selectedRange().length == 0
+    else {
+      return false
+    }
+    return true
+  }
+
+  private func blockCursorRect(fallback: NSRect) -> NSRect {
+    guard
+      let layoutManager,
+      let textContainer
+    else {
+      return fallback
+    }
+
+    let nsString = string as NSString
+    let location = max(0, min(selectedRange().location, nsString.length))
+    let bodyFont = font ?? NSFont.systemFont(ofSize: NSFont.systemFontSize)
+    let characterWidth = max(
+      8,
+      ("M" as NSString).size(withAttributes: [.font: bodyFont]).width
+    )
+    let lineHeight = max(16, bodyFont.ascender - bodyFont.descender + bodyFont.leading)
+
+    guard nsString.length > 0, location < nsString.length else {
+      var rect = fallback == .zero ? NSRect(x: textContainerOrigin.x, y: textContainerOrigin.y, width: characterWidth, height: lineHeight) : fallback
+      rect.size.width = max(characterWidth, rect.width)
+      return rect.integral
+    }
+
+    let glyphRange = layoutManager.glyphRange(
+      forCharacterRange: NSRange(location: location, length: 1),
+      actualCharacterRange: nil
+    )
+    var rect = layoutManager.boundingRect(forGlyphRange: glyphRange, in: textContainer)
+    rect.origin.x += textContainerOrigin.x
+    rect.origin.y += textContainerOrigin.y
+    rect.size.width = max(characterWidth, rect.width)
+    rect.size.height = max(lineHeight, rect.height)
+
+    if rect.isEmpty || !rect.origin.x.isFinite || !rect.origin.y.isFinite {
+      rect = fallback
+      rect.size.width = max(characterWidth, rect.width)
+    }
+
+    rect.size.width = max(2, rect.width * 0.5)
+    return rect.integral
   }
 
   private func toggleTaskCheckbox(at event: NSEvent) -> Bool {
@@ -355,40 +571,165 @@ private final class MarkdownTextView: NSTextView {
   }
 }
 
+private final class RelativeLineNumberRulerView: NSRulerView {
+  private weak var textView: NSTextView?
+  private let rulerWidth: CGFloat = 44
+
+  init(textView: NSTextView) {
+    self.textView = textView
+    super.init(scrollView: textView.enclosingScrollView, orientation: .verticalRuler)
+    clientView = textView
+    ruleThickness = rulerWidth
+  }
+
+  @available(*, unavailable)
+  required init(coder: NSCoder) {
+    fatalError("init(coder:) has not been implemented")
+  }
+
+  override var requiredThickness: CGFloat {
+    rulerWidth
+  }
+
+  override func drawHashMarksAndLabels(in rect: NSRect) {
+    guard
+      let textView,
+      let layoutManager = textView.layoutManager,
+      let textContainer = textView.textContainer
+    else {
+      return
+    }
+
+    NSColor.clear.setFill()
+    rect.fill()
+
+    let nsString = textView.string as NSString
+    let selectedLine = lineNumber(at: textView.selectedRange().location, in: nsString)
+    let visibleRect = textView.visibleRect
+    let origin = textView.textContainerOrigin
+    let attributes: [NSAttributedString.Key: Any] = [
+      .font: NSFont.monospacedDigitSystemFont(ofSize: 11, weight: .regular),
+      .foregroundColor: NSColor.secondaryLabelColor
+    ]
+    let activeAttributes: [NSAttributedString.Key: Any] = [
+      .font: NSFont.monospacedDigitSystemFont(ofSize: 11, weight: .medium),
+      .foregroundColor: NSColor.labelColor
+    ]
+
+    var lineNumber = 1
+    var location = 0
+    while location <= nsString.length {
+      let lineRange = nsString.lineRange(for: NSRange(location: location, length: 0))
+      let glyphRange = layoutManager.glyphRange(
+        forCharacterRange: NSRange(location: lineRange.location, length: max(0, lineRange.length)),
+        actualCharacterRange: nil
+      )
+      let lineRect = layoutManager.boundingRect(forGlyphRange: glyphRange, in: textContainer)
+      let y = lineRect.minY + origin.y
+
+      if y >= visibleRect.minY - 24, y <= visibleRect.maxY + 24 {
+        let value = VimTextEditing.relativeLineNumber(
+          lineNumber: lineNumber,
+          activeLineNumber: selectedLine
+        )
+        draw("\(value)", y: y, attributes: lineNumber == selectedLine ? activeAttributes : attributes)
+      }
+
+      let nextLocation = NSMaxRange(lineRange)
+      if nextLocation >= nsString.length {
+        break
+      }
+      location = nextLocation
+      lineNumber += 1
+    }
+  }
+
+  private func draw(
+    _ label: String,
+    y: CGFloat,
+    attributes: [NSAttributedString.Key: Any]
+  ) {
+    let attributed = NSAttributedString(string: label, attributes: attributes)
+    let size = attributed.size()
+    let point = NSPoint(
+      x: max(4, bounds.width - size.width - 8),
+      y: y
+    )
+    attributed.draw(at: point)
+  }
+
+  private func lineNumber(at location: Int, in nsString: NSString) -> Int {
+    var line = 1
+    var offset = 0
+    let clampedLocation = max(0, min(location, nsString.length))
+    while offset < clampedLocation {
+      let range = nsString.lineRange(for: NSRange(location: offset, length: 0))
+      let nextOffset = NSMaxRange(range)
+      if nextOffset > clampedLocation || nextOffset <= offset {
+        break
+      }
+      offset = nextOffset
+      line += 1
+    }
+    return line
+  }
+}
+
 #elseif os(iOS)
 import UIKit
 
 public struct MarkdownTextEditor: UIViewRepresentable {
   @Binding var text: String
   @Binding var selectedRange: NSRange
+  @Binding var vimState: VimEditorState
   let fontSize: CGFloat
   let focusToken: Int
+  let isVimModeEnabled: Bool
+  let showsRelativeLineNumbers: Bool
+  let hasAutocompleteSuggestions: Bool
   let wikiLinkStates: [WikiLinkRenderState]
   let onTextChange: () -> Void
   let onSelectionChange: () -> Void
   let onWikiLinkActivated: (Int) -> Void
   let onMarkdownLinkActivated: (Int) -> Void
+  let onDismissAutocomplete: () -> Void
+  let onVimWrite: () -> Void
+  let onVimStatusChange: (String?) -> Void
 
   public init(
     text: Binding<String>,
     selectedRange: Binding<NSRange>,
+    vimState: Binding<VimEditorState>,
     fontSize: CGFloat,
     focusToken: Int,
+    isVimModeEnabled: Bool,
+    showsRelativeLineNumbers: Bool,
+    hasAutocompleteSuggestions: Bool,
     wikiLinkStates: [WikiLinkRenderState],
     onTextChange: @escaping () -> Void,
     onSelectionChange: @escaping () -> Void,
     onWikiLinkActivated: @escaping (Int) -> Void,
-    onMarkdownLinkActivated: @escaping (Int) -> Void
+    onMarkdownLinkActivated: @escaping (Int) -> Void,
+    onDismissAutocomplete: @escaping () -> Void,
+    onVimWrite: @escaping () -> Void,
+    onVimStatusChange: @escaping (String?) -> Void
   ) {
     self._text = text
     self._selectedRange = selectedRange
+    self._vimState = vimState
     self.fontSize = fontSize
     self.focusToken = focusToken
+    self.isVimModeEnabled = isVimModeEnabled
+    self.showsRelativeLineNumbers = showsRelativeLineNumbers
+    self.hasAutocompleteSuggestions = hasAutocompleteSuggestions
     self.wikiLinkStates = wikiLinkStates
     self.onTextChange = onTextChange
     self.onSelectionChange = onSelectionChange
     self.onWikiLinkActivated = onWikiLinkActivated
     self.onMarkdownLinkActivated = onMarkdownLinkActivated
+    self.onDismissAutocomplete = onDismissAutocomplete
+    self.onVimWrite = onVimWrite
+    self.onVimStatusChange = onVimStatusChange
   }
 
   public func makeCoordinator() -> Coordinator {
