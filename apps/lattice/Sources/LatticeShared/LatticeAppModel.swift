@@ -10,6 +10,7 @@ public final class LatticeAppModel {
   public let noteLibrary: NoteLibrary
   private let noteIndex: any NoteIndexing
   private let taskSyncEngine: TaskSyncEngine
+  private let editorPreferencesStore: EditorPreferencesStore
   private let taskSyncPollIntervalNanoseconds: UInt64
   private let session: NoteEditingSession
   private var autosaveWorkItem: DispatchWorkItem?
@@ -31,6 +32,10 @@ public final class LatticeAppModel {
   public var preferredCompactColumn = NavigationColumn.sidebar
   public var editorFocusToken = 0
   public var editorFontSize = 14.0
+  public var isVimModeEnabled = false
+  public var showsRelativeLineNumbers = false
+  public var vimState = VimEditorState(mode: .insert)
+  public var vimStatusMessage: String?
   public var wikiLinkStates: [WikiLinkRenderState] = []
   public var wikiAutocompleteSuggestions: [WikiAutocompleteSuggestion] = []
   public var ambiguousWikiLink: AmbiguousWikiLinkResolution?
@@ -50,14 +55,20 @@ public final class LatticeAppModel {
     folderAccessStore: FolderAccessStore = FolderAccessStore(),
     noteIndex: any NoteIndexing = NoteIndex(),
     taskSyncEngine: TaskSyncEngine = TaskSyncEngine(),
+    editorPreferencesStore: EditorPreferencesStore = EditorPreferencesStore(),
     taskSyncPollIntervalNanoseconds: UInt64 = 15_000_000_000
   ) {
     self.noteLibrary = noteLibrary
     self.folderAccessStore = folderAccessStore
     self.noteIndex = noteIndex
     self.taskSyncEngine = taskSyncEngine
+    self.editorPreferencesStore = editorPreferencesStore
     self.taskSyncPollIntervalNanoseconds = taskSyncPollIntervalNanoseconds
     self.session = NoteEditingSession(library: noteLibrary)
+    let editorPreferences = editorPreferencesStore.load()
+    self.isVimModeEnabled = editorPreferences.isVimModeEnabled
+    self.showsRelativeLineNumbers = editorPreferences.showsRelativeLineNumbers
+    self.vimState = VimEditorState(mode: editorPreferences.isVimModeEnabled ? .normal : .insert)
   }
 
   public var hasFolder: Bool {
@@ -217,6 +228,7 @@ public final class LatticeAppModel {
     selectedRange = NSRange(location: 0, length: 0)
     wikiLinkStates = []
     wikiAutocompleteSuggestions = []
+    vimStatusMessage = nil
     ambiguousWikiLink = nil
     status = "New note"
     preferredCompactColumn = .detail
@@ -236,6 +248,7 @@ public final class LatticeAppModel {
       text = restored.body
       selectedRange = headingRange(for: heading, in: restored.body)
         ?? NSRange(location: (restored.body as NSString).length, length: 0)
+      vimStatusMessage = nil
       status = "Opened \(displayTitle(for: restored.note))"
       preferredCompactColumn = .detail
       reloadNotes(selecting: restored.note)
@@ -402,6 +415,10 @@ public final class LatticeAppModel {
     editorFocusToken += 1
   }
 
+  public func dismissWikiAutocomplete() {
+    wikiAutocompleteSuggestions = []
+  }
+
   public func updateWikiAutocomplete() {
     guard let folderURL, let context = WikiLinkParser.autocompleteContext(in: text, selection: selectedRange) else {
       wikiAutocompleteSuggestions = []
@@ -463,6 +480,7 @@ public final class LatticeAppModel {
     let result = MarkdownTextEditing.apply(command, to: text, selection: selectedRange)
     text = result.body
     selectedRange = result.selection
+    vimStatusMessage = nil
     scheduleAutosave()
     refreshWikiLinkStates()
     updateWikiAutocomplete()
@@ -470,6 +488,7 @@ public final class LatticeAppModel {
   }
 
   public func noteTextDidChange() {
+    vimStatusMessage = nil
     scheduleAutosave()
     refreshWikiLinkStates()
     updateWikiAutocomplete()
@@ -477,6 +496,28 @@ public final class LatticeAppModel {
 
   public func noteSelectionDidChange() {
     updateWikiAutocomplete()
+  }
+
+  public func setVimModeEnabled(_ isEnabled: Bool) {
+    isVimModeEnabled = isEnabled
+    vimState = VimEditorState(mode: isEnabled ? .normal : .insert)
+    vimStatusMessage = nil
+    saveEditorPreferences()
+    editorFocusToken += 1
+  }
+
+  public func setRelativeLineNumbersEnabled(_ isEnabled: Bool) {
+    showsRelativeLineNumbers = isEnabled
+    saveEditorPreferences()
+  }
+
+  public func setVimStatusMessage(_ message: String?) {
+    vimStatusMessage = message
+  }
+
+  public func vimWrite() {
+    flushAutosave()
+    vimStatusMessage = "Saved"
   }
 
   public func increaseEditorFontSize() {
@@ -591,6 +632,7 @@ public final class LatticeAppModel {
         selectedNote = restored.note
         text = restored.body
         selectedRange = NSRange(location: (restored.body as NSString).length, length: 0)
+        vimStatusMessage = nil
         status = "Opened \(displayTitle(for: restored.note))"
         preferredCompactColumn = .detail
         refreshWikiLinkStates()
@@ -966,6 +1008,13 @@ public final class LatticeAppModel {
 
   private func setEditorFontSize(_ size: Double) {
     editorFontSize = min(Self.maximumEditorFontSize, max(Self.minimumEditorFontSize, size))
+  }
+
+  private func saveEditorPreferences() {
+    editorPreferencesStore.save(EditorPreferences(
+      isVimModeEnabled: isVimModeEnabled,
+      showsRelativeLineNumbers: showsRelativeLineNumbers
+    ))
   }
 
   private var sharedCommandPaletteCommands: [CommandPaletteCommand] {
