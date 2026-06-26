@@ -43,7 +43,7 @@ public struct MarkdownTextEditor: NSViewRepresentable {
   }
 
   public func makeNSView(context: Context) -> NSScrollView {
-    let scrollView = NSScrollView()
+    let scrollView = MarkdownScrollView()
     scrollView.drawsBackground = false
     scrollView.hasVerticalScroller = true
     scrollView.autohidesScrollers = true
@@ -75,6 +75,7 @@ public struct MarkdownTextEditor: NSViewRepresentable {
     textView.setAccessibilityIdentifier("noteEditor")
 
     scrollView.documentView = textView
+    scrollView.textView = textView
     context.coordinator.textView = textView
     return scrollView
   }
@@ -89,6 +90,7 @@ public struct MarkdownTextEditor: NSViewRepresentable {
       || context.coordinator.lastRenderedWikiLinkStates != wikiLinkStates {
       context.coordinator.render(text, in: textView, preserving: selectedRange)
     }
+    (scrollView as? MarkdownScrollView)?.updateEditorScrollInsets()
     if context.coordinator.lastFocusToken != focusToken {
       context.coordinator.lastFocusToken = focusToken
       DispatchQueue.main.async {
@@ -147,7 +149,39 @@ public struct MarkdownTextEditor: NSViewRepresentable {
       lastRenderedFontSize = parent.fontSize
       lastRenderedWikiLinkStates = parent.wikiLinkStates
       isRendering = false
+      (textView.enclosingScrollView as? MarkdownScrollView)?.updateEditorScrollInsets()
     }
+  }
+}
+
+private final class MarkdownScrollView: NSScrollView {
+  weak var textView: NSTextView?
+
+  override func layout() {
+    super.layout()
+    updateEditorScrollInsets()
+  }
+
+  func updateEditorScrollInsets() {
+    guard let textView, let textContainer = textView.textContainer else {
+      return
+    }
+
+    let visibleHeight = contentView.bounds.height
+    guard visibleHeight > 0 else {
+      return
+    }
+
+    textView.layoutManager?.ensureLayout(for: textContainer)
+    let usedHeight = textView.layoutManager?.usedRect(for: textContainer).height ?? 0
+    let editorContentHeight = usedHeight + (textView.textContainerInset.height * 2)
+    let bottomInset = editorContentHeight >= visibleHeight * 0.67 ? visibleHeight / 2 : 0
+
+    guard abs(contentInsets.bottom - bottomInset) > 0.5 else {
+      return
+    }
+
+    contentInsets = NSEdgeInsets(top: 0, left: 0, bottom: bottomInset, right: 0)
   }
 }
 
@@ -354,7 +388,7 @@ public struct MarkdownTextEditor: UIViewRepresentable {
   }
 
   public func makeUIView(context: Context) -> UITextView {
-    let textView = UITextView()
+    let textView = MarkdownTextView()
     textView.delegate = context.coordinator
     textView.backgroundColor = .clear
     textView.isScrollEnabled = true
@@ -381,6 +415,7 @@ public struct MarkdownTextEditor: UIViewRepresentable {
     if textView.text != text || context.coordinator.lastRenderedWikiLinkStates != wikiLinkStates {
       context.coordinator.render(text, in: textView, preserving: selectedRange)
     }
+    (textView as? MarkdownTextView)?.updateEditorScrollInsets()
     if context.coordinator.lastFocusToken != focusToken {
       context.coordinator.lastFocusToken = focusToken
       DispatchQueue.main.async {
@@ -469,7 +504,43 @@ public struct MarkdownTextEditor: UIViewRepresentable {
       textView.typingAttributes = MarkdownAttributedRenderer.baseTypingAttributes()
       lastRenderedWikiLinkStates = parent.wikiLinkStates
       isRendering = false
+      (textView as? MarkdownTextView)?.updateEditorScrollInsets()
     }
+  }
+}
+
+private final class MarkdownTextView: UITextView {
+  private static let baseTextContainerInset = UIEdgeInsets(top: 34, left: 22, bottom: 34, right: 22)
+
+  override func layoutSubviews() {
+    super.layoutSubviews()
+    updateEditorScrollInsets()
+  }
+
+  func updateEditorScrollInsets() {
+    let visibleHeight = bounds.height
+    guard visibleHeight > 0 else {
+      return
+    }
+
+    layoutManager.ensureLayout(for: textContainer)
+    let usedHeight = layoutManager.usedRect(for: textContainer).height
+    let baseInsets = Self.baseTextContainerInset
+    let editorContentHeight = usedHeight + baseInsets.top + baseInsets.bottom
+    let centeringInset = editorContentHeight >= visibleHeight * 0.67 ? visibleHeight / 2 : 0
+    let nextTextInset = UIEdgeInsets(
+      top: baseInsets.top,
+      left: baseInsets.left,
+      bottom: baseInsets.bottom + centeringInset,
+      right: baseInsets.right
+    )
+
+    guard abs(textContainerInset.bottom - nextTextInset.bottom) > 0.5 else {
+      return
+    }
+
+    textContainerInset = nextTextInset
+    scrollIndicatorInsets = UIEdgeInsets(top: 0, left: 0, bottom: centeringInset, right: 0)
   }
 }
 
