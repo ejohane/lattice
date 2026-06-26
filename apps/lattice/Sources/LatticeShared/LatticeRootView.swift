@@ -302,9 +302,23 @@ private struct NoteEditorPane: View {
   }
 
   private var statusBar: some View {
-    Text(statusText)
-      .font(.footnote.weight(.medium))
-      .foregroundStyle(.secondary)
+    HStack(spacing: 8) {
+      if let modeText {
+        Text(modeText)
+          .font(.caption2.weight(.bold))
+          .foregroundStyle(modeText == "NORMAL" ? .white : .secondary)
+          .padding(.horizontal, 7)
+          .padding(.vertical, 3)
+          .background {
+            Capsule()
+              .fill(modeText == "NORMAL" ? Color.accentColor : Color.secondary.opacity(0.14))
+          }
+      }
+
+      Text(statusText)
+        .font(.footnote.weight(.medium))
+        .foregroundStyle(.secondary)
+    }
       .frame(maxWidth: .infinity)
       .padding(.vertical, 10)
       .background(.bar)
@@ -344,18 +358,6 @@ private struct NoteEditorPane: View {
     let count = model.text.count
     let unit = count == 1 ? "character" : "characters"
     var parts: [String] = []
-    if model.isVimModeEnabled {
-      switch model.vimState.mode {
-      case .insert:
-        parts.append("INSERT")
-      case .normal:
-        parts.append("NORMAL")
-      case .visual:
-        parts.append("VISUAL")
-      case .commandLine:
-        parts.append(":\(model.vimState.commandText)")
-      }
-    }
     if let vimStatusMessage = model.vimStatusMessage, !vimStatusMessage.isEmpty {
       parts.append(vimStatusMessage)
     } else if !model.status.isEmpty {
@@ -363,6 +365,23 @@ private struct NoteEditorPane: View {
     }
     parts.append("\(count) \(unit)")
     return parts.joined(separator: " - ")
+  }
+
+  private var modeText: String? {
+    guard model.isVimModeEnabled else {
+      return nil
+    }
+
+    switch model.vimState.mode {
+    case .insert:
+      return "INSERT"
+    case .normal:
+      return "NORMAL"
+    case .visual:
+      return "VISUAL"
+    case .commandLine:
+      return ":\(model.vimState.commandText)"
+    }
   }
 
   private func markdownButton(
