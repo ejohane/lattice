@@ -113,7 +113,7 @@ public struct MarkdownTextEditor: NSViewRepresentable {
       context.coordinator.render(text, in: textView, preserving: selectedRange)
     }
     textView.configureLineNumberRuler(isVisible: showsRelativeLineNumbers)
-    textView.invalidateVimCursor()
+    textView.needsDisplay = true
     if context.coordinator.lastFocusToken != focusToken {
       context.coordinator.lastFocusToken = focusToken
       DispatchQueue.main.async {
@@ -179,7 +179,6 @@ public struct MarkdownTextEditor: NSViewRepresentable {
 
 private final class MarkdownTextView: NSTextView {
   weak var coordinator: MarkdownTextEditor.Coordinator?
-  private var lastBlockCursorRect: NSRect?
 
   override func keyDown(with event: NSEvent) {
     guard let coordinator else {
@@ -247,23 +246,6 @@ private final class MarkdownTextView: NSTextView {
     }
 
     super.mouseDown(with: event)
-  }
-
-  override func drawInsertionPoint(in rect: NSRect, color: NSColor, turnedOn flag: Bool) {
-    guard usesVimBlockCursor else {
-      super.drawInsertionPoint(in: rect, color: color, turnedOn: flag)
-      return
-    }
-
-    let cursorRect = blockCursorRect(fallback: rect)
-    lastBlockCursorRect = cursorRect
-    guard flag else {
-      setNeedsDisplay(cursorRect.insetBy(dx: -1, dy: -1))
-      return
-    }
-
-    NSColor.controlAccentColor.setFill()
-    cursorRect.fill()
   }
 
   override func insertTab(_ sender: Any?) {
@@ -354,6 +336,7 @@ private final class MarkdownTextView: NSTextView {
       coordinator.parent.selectedRange = selectedRange()
       coordinator.parent.onSelectionChange()
       invalidateLineNumberRuler()
+      needsDisplay = true
     }
 
     if result.action == .write {
@@ -374,13 +357,17 @@ private final class MarkdownTextView: NSTextView {
       if !(scrollView.verticalRulerView is RelativeLineNumberRulerView) {
         scrollView.verticalRulerView = RelativeLineNumberRulerView(textView: self)
       }
+      scrollView.hasHorizontalRuler = false
+      scrollView.horizontalRulerView = nil
       scrollView.hasVerticalRuler = true
       scrollView.rulersVisible = true
       invalidateLineNumberRuler()
     } else {
       scrollView.rulersVisible = false
       scrollView.hasVerticalRuler = false
+      scrollView.hasHorizontalRuler = false
       scrollView.verticalRulerView = nil
+      scrollView.horizontalRulerView = nil
     }
   }
 
@@ -388,65 +375,13 @@ private final class MarkdownTextView: NSTextView {
     enclosingScrollView?.verticalRulerView?.needsDisplay = true
   }
 
-  func invalidateVimCursor() {
-    if let lastBlockCursorRect {
-      setNeedsDisplay(lastBlockCursorRect.insetBy(dx: -1, dy: -1))
-    }
-    setNeedsDisplay(blockCursorRect(fallback: NSRect.zero).insetBy(dx: -1, dy: -1))
-  }
-
-  private var usesVimBlockCursor: Bool {
-    guard
-      let coordinator,
-      coordinator.parent.isVimModeEnabled,
-      coordinator.parent.vimState.mode == .normal,
-      selectedRange().length == 0
-    else {
+  var showsVimNormalModeIndicator: Bool {
+    guard let coordinator else {
       return false
     }
-    return true
-  }
 
-  private func blockCursorRect(fallback: NSRect) -> NSRect {
-    guard
-      let layoutManager,
-      let textContainer
-    else {
-      return fallback
-    }
-
-    let nsString = string as NSString
-    let location = max(0, min(selectedRange().location, nsString.length))
-    let bodyFont = font ?? NSFont.systemFont(ofSize: NSFont.systemFontSize)
-    let characterWidth = max(
-      8,
-      ("M" as NSString).size(withAttributes: [.font: bodyFont]).width
-    )
-    let lineHeight = max(16, bodyFont.ascender - bodyFont.descender + bodyFont.leading)
-
-    guard nsString.length > 0, location < nsString.length else {
-      var rect = fallback == .zero ? NSRect(x: textContainerOrigin.x, y: textContainerOrigin.y, width: characterWidth, height: lineHeight) : fallback
-      rect.size.width = max(characterWidth, rect.width)
-      return rect.integral
-    }
-
-    let glyphRange = layoutManager.glyphRange(
-      forCharacterRange: NSRange(location: location, length: 1),
-      actualCharacterRange: nil
-    )
-    var rect = layoutManager.boundingRect(forGlyphRange: glyphRange, in: textContainer)
-    rect.origin.x += textContainerOrigin.x
-    rect.origin.y += textContainerOrigin.y
-    rect.size.width = max(characterWidth, rect.width)
-    rect.size.height = max(lineHeight, rect.height)
-
-    if rect.isEmpty || !rect.origin.x.isFinite || !rect.origin.y.isFinite {
-      rect = fallback
-      rect.size.width = max(characterWidth, rect.width)
-    }
-
-    rect.size.width = max(2, rect.width * 0.5)
-    return rect.integral
+    return coordinator.parent.isVimModeEnabled
+      && coordinator.parent.vimState.mode == .normal
   }
 
   private func toggleTaskCheckbox(at event: NSEvent) -> Bool {
@@ -572,10 +507,10 @@ private final class MarkdownTextView: NSTextView {
 }
 
 private final class RelativeLineNumberRulerView: NSRulerView {
-  private weak var textView: NSTextView?
+  private weak var textView: MarkdownTextView?
   private let rulerWidth: CGFloat = 44
 
-  init(textView: NSTextView) {
+  init(textView: MarkdownTextView) {
     self.textView = textView
     super.init(scrollView: textView.enclosingScrollView, orientation: .verticalRuler)
     clientView = textView
@@ -589,6 +524,10 @@ private final class RelativeLineNumberRulerView: NSRulerView {
 
   override var requiredThickness: CGFloat {
     rulerWidth
+  }
+
+  override func draw(_ dirtyRect: NSRect) {
+    drawHashMarksAndLabels(in: dirtyRect)
   }
 
   override func drawHashMarksAndLabels(in rect: NSRect) {
@@ -607,6 +546,7 @@ private final class RelativeLineNumberRulerView: NSRulerView {
     let selectedLine = lineNumber(at: textView.selectedRange().location, in: nsString)
     let visibleRect = textView.visibleRect
     let origin = textView.textContainerOrigin
+    layoutManager.ensureLayout(for: textContainer)
     let attributes: [NSAttributedString.Key: Any] = [
       .font: NSFont.monospacedDigitSystemFont(ofSize: 11, weight: .regular),
       .foregroundColor: NSColor.secondaryLabelColor
@@ -615,33 +555,115 @@ private final class RelativeLineNumberRulerView: NSRulerView {
       .font: NSFont.monospacedDigitSystemFont(ofSize: 11, weight: .medium),
       .foregroundColor: NSColor.labelColor
     ]
+    let normalModeActiveAttributes: [NSAttributedString.Key: Any] = [
+      .font: NSFont.monospacedDigitSystemFont(ofSize: 11, weight: .semibold),
+      .foregroundColor: NSColor.controlAccentColor
+    ]
+    let showsNormalModeIndicator = textView.showsVimNormalModeIndicator
+
+    if nsString.length == 0 {
+      let lineRect = layoutManager.extraLineFragmentRect
+      drawLineNumberIfVisible(
+        1,
+        selectedLine: selectedLine,
+        y: lineRect.minY + origin.y,
+        visibleRect: visibleRect,
+        attributes: attributes,
+        activeAttributes: activeAttributes,
+        normalModeActiveAttributes: normalModeActiveAttributes,
+        showsNormalModeIndicator: showsNormalModeIndicator
+      )
+      return
+    }
 
     var lineNumber = 1
     var location = 0
-    while location <= nsString.length {
+    while location < nsString.length {
       let lineRange = nsString.lineRange(for: NSRange(location: location, length: 0))
-      let glyphRange = layoutManager.glyphRange(
-        forCharacterRange: NSRange(location: lineRange.location, length: max(0, lineRange.length)),
-        actualCharacterRange: nil
+      let lineRect = lineRect(
+        forCharacterRange: lineRange,
+        layoutManager: layoutManager,
+        textContainer: textContainer
       )
-      let lineRect = layoutManager.boundingRect(forGlyphRange: glyphRange, in: textContainer)
-      let y = lineRect.minY + origin.y
-
-      if y >= visibleRect.minY - 24, y <= visibleRect.maxY + 24 {
-        let value = VimTextEditing.relativeLineNumber(
-          lineNumber: lineNumber,
-          activeLineNumber: selectedLine
-        )
-        draw("\(value)", y: y, attributes: lineNumber == selectedLine ? activeAttributes : attributes)
-      }
+      drawLineNumberIfVisible(
+        lineNumber,
+        selectedLine: selectedLine,
+        y: lineRect.minY + origin.y,
+        visibleRect: visibleRect,
+        attributes: attributes,
+        activeAttributes: activeAttributes,
+        normalModeActiveAttributes: normalModeActiveAttributes,
+        showsNormalModeIndicator: showsNormalModeIndicator
+      )
 
       let nextLocation = NSMaxRange(lineRange)
-      if nextLocation >= nsString.length {
+      if nextLocation <= location {
         break
       }
       location = nextLocation
       lineNumber += 1
     }
+
+    if location == nsString.length,
+       let scalar = Unicode.Scalar(nsString.character(at: nsString.length - 1)),
+       CharacterSet.newlines.contains(scalar) {
+      let lineRect = layoutManager.extraLineFragmentRect
+      drawLineNumberIfVisible(
+        lineNumber,
+        selectedLine: selectedLine,
+        y: lineRect.minY + origin.y,
+        visibleRect: visibleRect,
+        attributes: attributes,
+        activeAttributes: activeAttributes,
+        normalModeActiveAttributes: normalModeActiveAttributes,
+        showsNormalModeIndicator: showsNormalModeIndicator
+      )
+    }
+  }
+
+  private func lineRect(
+    forCharacterRange characterRange: NSRange,
+    layoutManager: NSLayoutManager,
+    textContainer: NSTextContainer
+  ) -> NSRect {
+    let glyphRange = layoutManager.glyphRange(
+      forCharacterRange: characterRange,
+      actualCharacterRange: nil
+    )
+    guard glyphRange.length > 0 else {
+      return layoutManager.extraLineFragmentRect
+    }
+    return layoutManager.lineFragmentRect(forGlyphAt: glyphRange.location, effectiveRange: nil)
+  }
+
+  private func drawLineNumberIfVisible(
+    _ lineNumber: Int,
+    selectedLine: Int,
+    y: CGFloat,
+    visibleRect: NSRect,
+    attributes: [NSAttributedString.Key: Any],
+    activeAttributes: [NSAttributedString.Key: Any],
+    normalModeActiveAttributes: [NSAttributedString.Key: Any],
+    showsNormalModeIndicator: Bool
+  ) {
+    guard y.isFinite, y >= visibleRect.minY - 24, y <= visibleRect.maxY + 24 else {
+      return
+    }
+
+    let isActiveLine = lineNumber == selectedLine
+    let value = VimTextEditing.relativeLineNumber(
+      lineNumber: lineNumber,
+      activeLineNumber: selectedLine
+    )
+    let lineAttributes: [NSAttributedString.Key: Any]
+    if isActiveLine, showsNormalModeIndicator {
+      lineAttributes = normalModeActiveAttributes
+    } else if isActiveLine {
+      lineAttributes = activeAttributes
+    } else {
+      lineAttributes = attributes
+    }
+    draw("\(value)", y: y, attributes: lineAttributes)
   }
 
   private func draw(
@@ -660,15 +682,19 @@ private final class RelativeLineNumberRulerView: NSRulerView {
 
   private func lineNumber(at location: Int, in nsString: NSString) -> Int {
     var line = 1
-    var offset = 0
     let clampedLocation = max(0, min(location, nsString.length))
-    while offset < clampedLocation {
-      let range = nsString.lineRange(for: NSRange(location: offset, length: 0))
-      let nextOffset = NSMaxRange(range)
-      if nextOffset > clampedLocation || nextOffset <= offset {
-        break
+
+    guard clampedLocation > 0 else {
+      return line
+    }
+
+    for index in 0..<clampedLocation {
+      guard
+        let scalar = Unicode.Scalar(nsString.character(at: index)),
+        CharacterSet.newlines.contains(scalar)
+      else {
+        continue
       }
-      offset = nextOffset
       line += 1
     }
     return line

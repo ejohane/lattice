@@ -36,7 +36,7 @@ struct LatticeAppModelTests {
     model.createNewNote()
     #expect(model.text == "")
     model.open(note)
-    #expect(model.text == "# Universal Note\n\nBody\n")
+    #expect(model.text == "# Universal Note\n\nBody")
   }
 
   @Test("records note navigation history and restores cursor positions")
@@ -434,7 +434,7 @@ struct LatticeAppModelTests {
     #expect(fixture.fileManager.fileExists(atPath: keptNote.url.path))
     #expect(!fixture.fileManager.fileExists(atPath: deletedNote.url.path))
     #expect(model.selectedNote == keptNote)
-    #expect(model.text == "# Keep Me\n\nBody\n")
+    #expect(model.text == "# Keep Me\n\nBody")
     #expect(model.sections.flatMap(\.notes) == [keptNote])
     #expect(fixture.library.activeNoteURL()?.path == keptNote.url.path)
   }
@@ -514,7 +514,7 @@ struct LatticeAppModelTests {
 
     try await Task.sleep(nanoseconds: 200_000_000)
 
-    #expect(model.text == "- [x] Buy milk\n- [ ] \n")
+    #expect(model.text == "- [x] Buy milk\n- [ ] ")
     #expect(try fixture.library.body(for: note) == "- [x] Buy milk\n- [ ] \n")
   }
 
@@ -558,7 +558,7 @@ struct LatticeAppModelTests {
 
     let rawBody = try fixture.library.rawBody(for: note)
     #expect(MarkdownDocumentMetadata.noteID(in: rawBody) == noteID)
-    #expect(model.text == "- [x] Buy milk\nMore context\n")
+    #expect(model.text == "- [x] Buy milk\nMore context")
     #expect(try fixture.library.body(for: note) == "- [x] Buy milk\nMore context\n")
   }
 }

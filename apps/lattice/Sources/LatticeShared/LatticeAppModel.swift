@@ -305,10 +305,11 @@ public final class LatticeAppModel {
         forwardStack.removeAll()
       }
       selectedNote = restored.note
-      text = restored.body
-      selectedRange = selection.map { clampedRange($0, in: restored.body) }
-        ?? headingRange(for: heading, in: restored.body)
-        ?? NSRange(location: (restored.body as NSString).length, length: 0)
+      let editorBody = Self.editorBody(from: restored.body)
+      text = editorBody
+      selectedRange = selection.map { clampedRange($0, in: editorBody) }
+        ?? headingRange(for: heading, in: editorBody)
+        ?? NSRange(location: (editorBody as NSString).length, length: 0)
       vimStatusMessage = nil
       status = "Opened \(displayTitle(for: restored.note))"
       preferredCompactColumn = .detail
@@ -717,8 +718,9 @@ public final class LatticeAppModel {
     do {
       if let restored = try session.restoreActiveNote() {
         selectedNote = restored.note
-        text = restored.body
-        selectedRange = NSRange(location: (restored.body as NSString).length, length: 0)
+        let editorBody = Self.editorBody(from: restored.body)
+        text = editorBody
+        selectedRange = NSRange(location: (editorBody as NSString).length, length: 0)
         vimStatusMessage = nil
         status = "Opened \(displayTitle(for: restored.note))"
         preferredCompactColumn = .detail
@@ -850,9 +852,13 @@ public final class LatticeAppModel {
       )
     }
     try? noteIndex.rebuild(notesFolderURL: folderURL)
-    if let updatedBody = try? noteLibrary.body(for: note), updatedBody != text {
-      text = updatedBody
-      selectedRange = NSRange(location: min(selectedRange.location, (updatedBody as NSString).length), length: 0)
+    if let updatedBody = try? noteLibrary.body(for: note) {
+      let editorBody = Self.editorBody(from: updatedBody)
+      guard editorBody != text else {
+        return
+      }
+      text = editorBody
+      selectedRange = NSRange(location: min(selectedRange.location, (editorBody as NSString).length), length: 0)
       session.updateSavedBody(updatedBody, for: note)
     }
   }
@@ -1142,12 +1148,21 @@ public final class LatticeAppModel {
 
     do {
       let updatedBody = try noteLibrary.body(for: selectedNote)
-      text = updatedBody
-      selectedRange = NSRange(location: min(selectedRange.location, (updatedBody as NSString).length), length: 0)
+      let editorBody = Self.editorBody(from: updatedBody)
+      text = editorBody
+      selectedRange = NSRange(location: min(selectedRange.location, (editorBody as NSString).length), length: 0)
       session.updateSavedBody(updatedBody, for: selectedNote)
     } catch {
       taskSyncErrorMessage = error.localizedDescription
     }
+  }
+
+  private static func editorBody(from storedBody: String) -> String {
+    var body = storedBody
+    while let scalar = body.unicodeScalars.last, CharacterSet.newlines.contains(scalar) {
+      body.removeLast()
+    }
+    return body
   }
 
   private func refreshNoteIndex(forRelativePath relativePath: String) {
