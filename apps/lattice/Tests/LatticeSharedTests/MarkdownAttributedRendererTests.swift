@@ -188,6 +188,41 @@ struct MarkdownAttributedRendererTests {
     #expect(destinationColor == NSColor.clear)
   }
 
+  @Test("renders inactive thematic breaks as rule lines")
+  func rendersInactiveThematicBreaksAsRuleLines() throws {
+    let text = "Before\n---\nAfter"
+    let attributed = MarkdownAttributedRenderer.render(
+      text,
+      activeRanges: [NSRange(location: (text as NSString).length, length: 0)]
+    )
+    let string = attributed.string as NSString
+    let ruleRange = string.range(of: "---")
+
+    let hasRuleAttribute = try #require(attributed.attribute(.latticeThematicBreak, at: ruleRange.location, effectiveRange: nil) as? Bool)
+    let color = attributed.attribute(.foregroundColor, at: ruleRange.location, effectiveRange: nil) as? NSColor
+    let font = try #require(attributed.attribute(.font, at: ruleRange.location, effectiveRange: nil) as? NSFont)
+
+    #expect(hasRuleAttribute)
+    #expect(color == NSColor.clear)
+    #expect(font.pointSize == 14)
+  }
+
+  @Test("shows active thematic break source")
+  func showsActiveThematicBreakSource() {
+    let attributed = MarkdownAttributedRenderer.render(
+      "Before\n---\nAfter",
+      activeRanges: [NSRange(location: 8, length: 0)]
+    )
+    let string = attributed.string as NSString
+    let ruleRange = string.range(of: "---")
+
+    let hasRuleAttribute = attributed.attribute(.latticeThematicBreak, at: ruleRange.location, effectiveRange: nil) as? Bool
+    let color = attributed.attribute(.foregroundColor, at: ruleRange.location, effectiveRange: nil) as? NSColor
+
+    #expect(hasRuleAttribute == nil)
+    #expect(color == NSColor.tertiaryLabelColor)
+  }
+
   @Test("shows active inline tokens as editable source")
   func showsActiveInlineTokensAsEditableSource() {
     let attributed = MarkdownAttributedRenderer.render(

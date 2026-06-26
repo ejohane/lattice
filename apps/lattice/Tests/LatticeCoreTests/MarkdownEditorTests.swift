@@ -51,6 +51,30 @@ struct MarkdownTextEditingTests {
     #expect(result.body == "[OpenAI](url)")
     #expect(result.selection == NSRange(location: 9, length: 3))
   }
+
+  @Test("inserts a horizontal rule")
+  func insertsHorizontalRule() {
+    let result = MarkdownTextEditing.apply(
+      .horizontalRule,
+      to: "Before",
+      selection: NSRange(location: 6, length: 0)
+    )
+
+    #expect(result.body == "Before\n---\n")
+    #expect(result.selection == NSRange(location: 11, length: 0))
+  }
+
+  @Test("replaces blank lines with a horizontal rule")
+  func insertsHorizontalRuleOnBlankLine() {
+    let result = MarkdownTextEditing.apply(
+      .horizontalRule,
+      to: "Before\n\nAfter",
+      selection: NSRange(location: 7, length: 0)
+    )
+
+    #expect(result.body == "Before\n---\nAfter")
+    #expect(result.selection == NSRange(location: 11, length: 0))
+  }
 }
 
 @Suite("MarkdownTaskList")
