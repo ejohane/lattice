@@ -9,9 +9,11 @@ public final class LatticeAppModel {
   private let folderAccessStore: FolderAccessStore
   public let noteLibrary: NoteLibrary
   private let noteIndex: any NoteIndexing
+  private let activityStore: any ActivityStoring
   private let taskSyncEngine: TaskSyncEngine
   private let editorPreferencesStore: EditorPreferencesStore
   private let taskSyncPollIntervalNanoseconds: UInt64
+  private let dateProvider: () -> Date
   private let session: NoteEditingSession
   private var autosaveWorkItem: DispatchWorkItem?
   private var taskSyncPollTask: Task<Void, Never>?
@@ -51,21 +53,26 @@ public final class LatticeAppModel {
   public var taskSyncStatus = "Task sync is off"
   public var taskSyncErrorMessage: String?
   public var pendingInitialSyncTaskCount: Int?
+  public var todayActivityEvents: [ActivityEvent] = []
 
   public init(
     noteLibrary: NoteLibrary = NoteLibrary(),
     folderAccessStore: FolderAccessStore = FolderAccessStore(),
     noteIndex: any NoteIndexing = NoteIndex(),
+    activityStore: any ActivityStoring = ActivityStore(),
     taskSyncEngine: TaskSyncEngine = TaskSyncEngine(),
     editorPreferencesStore: EditorPreferencesStore = EditorPreferencesStore(),
-    taskSyncPollIntervalNanoseconds: UInt64 = 15_000_000_000
+    taskSyncPollIntervalNanoseconds: UInt64 = 15_000_000_000,
+    dateProvider: @escaping () -> Date = Date.init
   ) {
     self.noteLibrary = noteLibrary
     self.folderAccessStore = folderAccessStore
     self.noteIndex = noteIndex
+    self.activityStore = activityStore
     self.taskSyncEngine = taskSyncEngine
     self.editorPreferencesStore = editorPreferencesStore
     self.taskSyncPollIntervalNanoseconds = taskSyncPollIntervalNanoseconds
+    self.dateProvider = dateProvider
     self.session = NoteEditingSession(library: noteLibrary)
     let editorPreferences = editorPreferencesStore.load()
     self.isVimModeEnabled = editorPreferences.isVimModeEnabled
@@ -706,6 +713,7 @@ public final class LatticeAppModel {
     status = url.lastPathComponent
     reloadNotes()
     rebuildNoteIndex()
+    refreshTodayActivity()
     loadTaskSyncSettings()
     updateTaskSyncPolling()
     Task { @MainActor in
@@ -738,6 +746,7 @@ public final class LatticeAppModel {
     autosaveWorkItem = nil
     do {
       let previousBody = session.savedBody
+      let wasExistingNote = session.currentNote != nil
       switch try session.save(body: text) {
       case .skippedEmptyDraft, .unchanged:
         return
@@ -748,8 +757,16 @@ public final class LatticeAppModel {
         reloadNotes(selecting: note)
         refreshWikiLinkStates()
         updateWikiAutocomplete()
+        let rawBody = try noteLibrary.rawBody(for: note)
+        recordSavedNoteActivity(
+          note: note,
+          kind: wasExistingNote ? .noteEdited : .noteCreated,
+          previousBody: previousBody,
+          nextBody: text,
+          rawBody: rawBody
+        )
         if syncSavedNote {
-          syncTasks(for: note, body: try noteLibrary.rawBody(for: note))
+          syncTasks(for: note, body: rawBody)
         }
         if showStatus {
           status = "Autosaved \(displayTitle(for: note))"
@@ -795,6 +812,55 @@ public final class LatticeAppModel {
       try noteIndex.refresh(note: note, notesFolderURL: folderURL)
     } catch {
       // Autosave should not fail because the derived index could not refresh.
+    }
+  }
+
+  private func recordSavedNoteActivity(
+    note: SavedNote,
+    kind: ActivityEvent.Kind,
+    previousBody: String,
+    nextBody: String,
+    rawBody: String
+  ) {
+    guard let folderURL else {
+      return
+    }
+    let event = ActivityEvent(
+      timestamp: dateProvider(),
+      kind: kind,
+      noteID: MarkdownDocumentMetadata.noteID(in: rawBody),
+      noteRelativePath: Self.relativePath(for: note.url, in: folderURL),
+      noteTitle: displayTitle(for: note),
+      beforeExcerpt: kind == .noteEdited ? Self.activityExcerpt(from: previousBody) : nil,
+      afterExcerpt: Self.activityExcerpt(from: nextBody)
+    )
+    try? appendActivityEvent(event, notesFolderURL: folderURL, surfaceErrors: false)
+  }
+
+  private func appendActivityEvent(
+    _ event: ActivityEvent,
+    notesFolderURL: URL,
+    surfaceErrors: Bool
+  ) throws {
+    do {
+      try activityStore.append(event, notesFolderURL: notesFolderURL)
+      refreshTodayActivity()
+    } catch {
+      if surfaceErrors {
+        throw error
+      }
+    }
+  }
+
+  private func refreshTodayActivity() {
+    guard let folderURL else {
+      todayActivityEvents = []
+      return
+    }
+    do {
+      todayActivityEvents = try activityStore.events(on: dateProvider(), notesFolderURL: folderURL)
+    } catch {
+      todayActivityEvents = []
     }
   }
 
@@ -1257,6 +1323,31 @@ public final class LatticeAppModel {
       return 1
     }
     return 2
+  }
+
+  private static func relativePath(for url: URL, in folderURL: URL) -> String? {
+    let folderPath = folderURL.standardizedFileURL.path
+    let notePath = url.standardizedFileURL.path
+    guard notePath == folderPath || notePath.hasPrefix("\(folderPath)/") else {
+      return nil
+    }
+    return String(notePath.dropFirst(folderPath.count + 1))
+  }
+
+  private static func activityExcerpt(from body: String, limit: Int = 240) -> String? {
+    let collapsed = body
+      .split(whereSeparator: { $0.isNewline })
+      .map { String($0).trimmingCharacters(in: .whitespacesAndNewlines) }
+      .filter { !$0.isEmpty }
+      .joined(separator: " ")
+    guard !collapsed.isEmpty else {
+      return nil
+    }
+    if collapsed.count <= limit {
+      return collapsed
+    }
+    let endIndex = collapsed.index(collapsed.startIndex, offsetBy: limit)
+    return "\(collapsed[..<endIndex])..."
   }
 }
 
