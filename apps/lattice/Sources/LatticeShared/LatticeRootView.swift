@@ -205,6 +205,24 @@ private struct NoteEditorPane: View {
       .navigationSplitViewColumnWidth(min: 260, ideal: 720)
       #endif
       .toolbar {
+        ToolbarItemGroup(placement: .primaryAction) {
+          Button {
+            model.navigateBack()
+          } label: {
+            Label("Back", systemImage: "chevron.left")
+          }
+          .help("Back")
+          .disabled(!model.canNavigateBack)
+
+          Button {
+            model.navigateForward()
+          } label: {
+            Label("Forward", systemImage: "chevron.right")
+          }
+          .help("Forward")
+          .disabled(!model.canNavigateForward)
+        }
+
         #if os(macOS)
         ToolbarItem(placement: .primaryAction) {
           Menu {

@@ -16,6 +16,8 @@ public final class LatticeAppModel {
   private var autosaveWorkItem: DispatchWorkItem?
   private var taskSyncPollTask: Task<Void, Never>?
   private var scopedFolderURL: URL?
+  private var backStack: [NavigationHistoryEntry] = []
+  private var forwardStack: [NavigationHistoryEntry] = []
 
   public var sections: [NoteSection] = []
   public var noteTitles: [String: String] = [:]
@@ -77,6 +79,14 @@ public final class LatticeAppModel {
 
   public var recommendedFolderURL: URL {
     noteLibrary.suggestedNotesFolderURL
+  }
+
+  public var canNavigateBack: Bool {
+    !backStack.isEmpty
+  }
+
+  public var canNavigateForward: Bool {
+    !forwardStack.isEmpty
   }
 
   public var canIncreaseEditorFontSize: Bool {
@@ -222,6 +232,7 @@ public final class LatticeAppModel {
 
   public func createNewNote() {
     flushAutosave()
+    forwardStack.removeAll()
     session.resetForNewNote()
     selectedNote = nil
     text = ""
@@ -237,16 +248,66 @@ public final class LatticeAppModel {
   }
 
   public func open(_ note: SavedNote) {
-    open(note, heading: nil)
+    open(note, heading: nil, selection: nil, recordHistory: true)
   }
 
-  private func open(_ note: SavedNote, heading: String?) {
+  public func navigateBack() {
+    guard let destination = backStack.popLast() else {
+      return
+    }
+
     flushAutosave()
+    let current = currentHistoryEntry()
+    if open(destination.note, heading: nil, selection: destination.selectedRange, recordHistory: false, flushBeforeOpen: false) {
+      if let current {
+        Self.appendHistoryEntry(current, to: &forwardStack)
+      }
+    } else {
+      Self.appendHistoryEntry(destination, to: &backStack)
+    }
+  }
+
+  public func navigateForward() {
+    guard let destination = forwardStack.popLast() else {
+      return
+    }
+
+    flushAutosave()
+    let current = currentHistoryEntry()
+    if open(destination.note, heading: nil, selection: destination.selectedRange, recordHistory: false, flushBeforeOpen: false) {
+      if let current {
+        Self.appendHistoryEntry(current, to: &backStack)
+      }
+    } else {
+      Self.appendHistoryEntry(destination, to: &forwardStack)
+    }
+  }
+
+  @discardableResult
+  private func open(
+    _ note: SavedNote,
+    heading: String?,
+    selection: NSRange?,
+    recordHistory: Bool,
+    flushBeforeOpen: Bool = true
+  ) -> Bool {
+    if flushBeforeOpen {
+      flushAutosave()
+    }
+    let pendingHistoryEntry = recordHistory ? currentHistoryEntry() : nil
+    let shouldRecordHistory = pendingHistoryEntry.map {
+      self.shouldRecordHistory($0, destination: note, heading: heading)
+    } ?? false
     do {
       let restored = try session.open(note)
+      if shouldRecordHistory, let pendingHistoryEntry {
+        Self.appendHistoryEntry(pendingHistoryEntry, to: &backStack)
+        forwardStack.removeAll()
+      }
       selectedNote = restored.note
       text = restored.body
-      selectedRange = headingRange(for: heading, in: restored.body)
+      selectedRange = selection.map { clampedRange($0, in: restored.body) }
+        ?? headingRange(for: heading, in: restored.body)
         ?? NSRange(location: (restored.body as NSString).length, length: 0)
       vimStatusMessage = nil
       status = "Opened \(displayTitle(for: restored.note))"
@@ -255,8 +316,10 @@ public final class LatticeAppModel {
       refreshWikiLinkStates()
       updateWikiAutocomplete()
       editorFocusToken += 1
+      return true
     } catch {
       errorMessage = error.localizedDescription
+      return false
     }
   }
 
@@ -274,12 +337,15 @@ public final class LatticeAppModel {
         if let heading = link.targetHeading, !targetHasHeading(noteID: targetNoteID, heading: heading, notesFolderURL: folderURL) {
           return
         }
-        open(target.savedNote, heading: link.targetHeading)
+        open(target.savedNote, heading: link.targetHeading, selection: nil, recordHistory: true)
         return
       }
 
       if link.isCurrentNoteHeadingLink {
-        selectHeading(link.targetHeading, in: text)
+        pushCurrentHistoryEntry(destination: selectedNote, heading: link.targetHeading)
+        if selectHeading(link.targetHeading, in: text) {
+          forwardStack.removeAll()
+        }
         return
       }
 
@@ -302,13 +368,13 @@ public final class LatticeAppModel {
         refreshNoteIndex(for: created)
         let target = try indexedNote(for: created, notesFolderURL: folderURL)
         persistTarget(target.noteID, for: link)
-        open(created, heading: nil)
+        open(created, heading: nil, selection: nil, recordHistory: true)
       } else if headingFilteredCandidates.isEmpty {
         return
       } else if headingFilteredCandidates.count == 1 {
         let candidate = headingFilteredCandidates[0]
         persistTarget(candidate.noteID, for: link)
-        open(candidate.note, heading: link.targetHeading)
+        open(candidate.note, heading: link.targetHeading, selection: nil, recordHistory: true)
       } else {
         ambiguousWikiLink = AmbiguousWikiLinkResolution(link: link, candidates: headingFilteredCandidates)
       }
@@ -339,7 +405,7 @@ public final class LatticeAppModel {
     else {
       return
     }
-    open(SavedNote(url: targetURL), heading: heading)
+    open(SavedNote(url: targetURL), heading: heading, selection: nil, recordHistory: true)
   }
 
   public func chooseAmbiguousWikiLinkTarget(_ candidate: WikiNoteCandidate) {
@@ -353,7 +419,7 @@ public final class LatticeAppModel {
     }
     persistTarget(candidate.noteID, for: pending.link)
     ambiguousWikiLink = nil
-    open(candidate.note, heading: pending.link.targetHeading)
+    open(candidate.note, heading: pending.link.targetHeading, selection: nil, recordHistory: true)
   }
 
   public func dismissAmbiguousWikiLinkResolution() {
@@ -392,7 +458,7 @@ public final class LatticeAppModel {
       renamingNote = nil
       renameTitle = ""
       if selectedNote == note {
-        open(renamed)
+        _ = open(renamed, heading: nil, selection: selectedRange, recordHistory: false)
       } else {
         reloadNotes(selecting: selectedNote)
         refreshWikiLinkStates()
@@ -614,6 +680,7 @@ public final class LatticeAppModel {
       try folderAccessStore.save(folderURL: url)
     }
     try noteLibrary.selectNotesFolder(url)
+    clearNavigationHistory()
     folderURL = url
     status = url.lastPathComponent
     reloadNotes()
@@ -778,12 +845,80 @@ public final class LatticeAppModel {
     refreshWikiLinkStates()
   }
 
-  private func selectHeading(_ heading: String?, in body: String) {
+  @discardableResult
+  private func selectHeading(_ heading: String?, in body: String) -> Bool {
     guard let range = headingRange(for: heading, in: body) else {
+      return false
+    }
+    let targetRange = clampedRange(range, in: body)
+    guard selectedRange != targetRange else {
+      return false
+    }
+    selectedRange = targetRange
+    editorFocusToken += 1
+    return true
+  }
+
+  private func currentHistoryEntry() -> NavigationHistoryEntry? {
+    guard let selectedNote else {
+      return nil
+    }
+    return NavigationHistoryEntry(
+      note: selectedNote,
+      selectedRange: clampedRange(selectedRange, in: text)
+    )
+  }
+
+  private func pushCurrentHistoryEntry(destination: SavedNote?, heading: String?) {
+    guard let entry = currentHistoryEntry(),
+          shouldRecordHistory(entry, destination: destination, heading: heading)
+    else {
       return
     }
-    selectedRange = range
-    editorFocusToken += 1
+    Self.appendHistoryEntry(entry, to: &backStack)
+    forwardStack.removeAll()
+  }
+
+  private func shouldRecordHistory(
+    _ entry: NavigationHistoryEntry,
+    destination: SavedNote?,
+    heading: String?
+  ) -> Bool {
+    guard let destination else {
+      return true
+    }
+    guard destination == entry.note else {
+      return true
+    }
+    guard let targetRange = headingRange(for: heading, in: text) else {
+      return false
+    }
+    return entry.selectedRange != clampedRange(targetRange, in: text)
+  }
+
+  private static func appendHistoryEntry(_ entry: NavigationHistoryEntry, to stack: inout [NavigationHistoryEntry]) {
+    guard stack.last != entry else {
+      return
+    }
+    stack.append(entry)
+    if stack.count > Self.maximumNavigationHistoryEntries {
+      stack.removeFirst(stack.count - Self.maximumNavigationHistoryEntries)
+    }
+  }
+
+  private func clearNavigationHistory() {
+    backStack = []
+    forwardStack = []
+  }
+
+  private func clampedRange(_ range: NSRange, in body: String) -> NSRange {
+    let length = (body as NSString).length
+    guard range.location != NSNotFound else {
+      return NSRange(location: length, length: 0)
+    }
+    let location = min(max(range.location, 0), length)
+    let rangeLength = min(max(range.length, 0), length - location)
+    return NSRange(location: location, length: rangeLength)
   }
 
   private func headingRange(for heading: String?, in body: String) -> NSRange? {
@@ -1024,6 +1159,24 @@ public final class LatticeAppModel {
 
     return [
       CommandPaletteCommand(
+        id: "lattice.navigateBack",
+        title: "Back",
+        subtitle: "Return to the previous note location",
+        systemImage: "chevron.left",
+        isEnabled: canNavigateBack
+      ) { [weak self] in
+        self?.navigateBack()
+      },
+      CommandPaletteCommand(
+        id: "lattice.navigateForward",
+        title: "Forward",
+        subtitle: "Go to the next note location",
+        systemImage: "chevron.right",
+        isEnabled: canNavigateForward
+      ) { [weak self] in
+        self?.navigateForward()
+      },
+      CommandPaletteCommand(
         id: "lattice.newNote",
         title: "New Note",
         subtitle: "Start a fresh Markdown note",
@@ -1126,8 +1279,14 @@ public struct AmbiguousWikiLinkResolution: Equatable {
   }
 }
 
+private struct NavigationHistoryEntry: Equatable {
+  let note: SavedNote
+  let selectedRange: NSRange
+}
+
 private extension LatticeAppModel {
   static let defaultEditorFontSize = 14.0
   static let minimumEditorFontSize = 10.0
   static let maximumEditorFontSize = 28.0
+  static let maximumNavigationHistoryEntries = 100
 }

@@ -84,6 +84,19 @@ struct LatticeMacApp: App {
           }
         }
       }
+      CommandMenu("Navigate") {
+        Button("Back") {
+          model.navigateBack()
+        }
+        .keyboardShortcut("[", modifiers: [.command])
+        .disabled(!model.canNavigateBack)
+
+        Button("Forward") {
+          model.navigateForward()
+        }
+        .keyboardShortcut("]", modifiers: [.command])
+        .disabled(!model.canNavigateForward)
+      }
       CommandMenu("Editor") {
         Button("Increase Font Size") {
           model.increaseEditorFontSize()
