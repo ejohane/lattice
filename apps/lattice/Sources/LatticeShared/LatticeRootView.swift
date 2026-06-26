@@ -192,8 +192,49 @@ private struct NoteSidebar: View {
 
 private struct NoteEditorPane: View {
   @Bindable var model: LatticeAppModel
+  private let maximumEditorWidth: CGFloat = 920
+  private let editorHorizontalPadding: CGFloat = 18
 
   var body: some View {
+    editorContent
+      .frame(maxWidth: maximumEditorWidth, maxHeight: .infinity)
+      .padding(.horizontal, editorHorizontalPadding)
+      .frame(maxWidth: .infinity, maxHeight: .infinity)
+      .navigationTitle(model.selectedNote.map { model.displayTitle(for: $0) } ?? "New Note")
+      #if os(macOS)
+      .navigationSplitViewColumnWidth(min: 260, ideal: 720)
+      #endif
+      .toolbar {
+        #if os(macOS)
+        ToolbarItem(placement: .primaryAction) {
+          Menu {
+            markdownButton(.heading, title: "Heading", systemImage: "textformat.size")
+            markdownButton(.bold, title: "Bold", systemImage: "bold")
+            markdownButton(.italic, title: "Italic", systemImage: "italic")
+            markdownButton(.bulletList, title: "List", systemImage: "list.bullet")
+            markdownButton(.taskList, title: "Checkbox", systemImage: "checklist")
+            markdownButton(.code, title: "Code", systemImage: "chevron.left.forwardslash.chevron.right")
+            markdownButton(.link, title: "Link", systemImage: "link")
+          } label: {
+            Label("Format", systemImage: "textformat")
+          }
+          .disabled(!model.hasFolder)
+        }
+        #else
+        ToolbarItemGroup(placement: .primaryAction) {
+          markdownButton(.heading, title: "Heading", systemImage: "textformat.size")
+          markdownButton(.bold, title: "Bold", systemImage: "bold")
+          markdownButton(.italic, title: "Italic", systemImage: "italic")
+          markdownButton(.bulletList, title: "List", systemImage: "list.bullet")
+          markdownButton(.taskList, title: "Checkbox", systemImage: "checklist")
+          markdownButton(.code, title: "Code", systemImage: "chevron.left.forwardslash.chevron.right")
+          markdownButton(.link, title: "Link", systemImage: "link")
+        }
+        #endif
+      }
+  }
+
+  private var editorContent: some View {
     VStack(spacing: 0) {
       MarkdownTextEditor(
         text: $model.text,
@@ -215,41 +256,11 @@ private struct NoteEditorPane: View {
         }
       )
       .ignoresSafeArea(.keyboard, edges: .bottom)
+      .frame(maxWidth: .infinity, maxHeight: .infinity)
       autocompleteBar
       statusBar
     }
-    .navigationTitle(model.selectedNote.map { model.displayTitle(for: $0) } ?? "New Note")
-    #if os(macOS)
-    .navigationSplitViewColumnWidth(min: 260, ideal: 560)
-    #endif
-    .toolbar {
-      #if os(macOS)
-      ToolbarItem(placement: .primaryAction) {
-        Menu {
-          markdownButton(.heading, title: "Heading", systemImage: "textformat.size")
-          markdownButton(.bold, title: "Bold", systemImage: "bold")
-          markdownButton(.italic, title: "Italic", systemImage: "italic")
-          markdownButton(.bulletList, title: "List", systemImage: "list.bullet")
-          markdownButton(.taskList, title: "Checkbox", systemImage: "checklist")
-          markdownButton(.code, title: "Code", systemImage: "chevron.left.forwardslash.chevron.right")
-          markdownButton(.link, title: "Link", systemImage: "link")
-        } label: {
-          Label("Format", systemImage: "textformat")
-        }
-        .disabled(!model.hasFolder)
-      }
-      #else
-      ToolbarItemGroup(placement: .primaryAction) {
-        markdownButton(.heading, title: "Heading", systemImage: "textformat.size")
-        markdownButton(.bold, title: "Bold", systemImage: "bold")
-        markdownButton(.italic, title: "Italic", systemImage: "italic")
-        markdownButton(.bulletList, title: "List", systemImage: "list.bullet")
-        markdownButton(.taskList, title: "Checkbox", systemImage: "checklist")
-        markdownButton(.code, title: "Code", systemImage: "chevron.left.forwardslash.chevron.right")
-        markdownButton(.link, title: "Link", systemImage: "link")
-      }
-      #endif
-    }
+    .frame(maxWidth: .infinity, maxHeight: .infinity)
   }
 
   private var statusBar: some View {

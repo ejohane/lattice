@@ -5,6 +5,9 @@ import SwiftUI
 
 @main
 struct LatticeMacApp: App {
+  private static let minimumWindowWidth: CGFloat = 420
+  private static let minimumWindowHeight: CGFloat = 280
+
   @NSApplicationDelegateAdaptor(MacAppDelegate.self) private var appDelegate
   @Environment(\.openWindow) private var openWindow
   @State private var model = LatticeAppModel()
@@ -15,8 +18,12 @@ struct LatticeMacApp: App {
         model: model,
         commandPalettePlatformCommands: { commandPalettePlatformCommands }
       )
-        .frame(minWidth: 420, minHeight: 420)
-        .background(WindowConfiguration(width: 420, height: 420, identifier: Self.mainWindowIdentifier))
+        .frame(minWidth: Self.minimumWindowWidth, minHeight: Self.minimumWindowHeight)
+        .background(WindowConfiguration(
+          width: Self.minimumWindowWidth,
+          height: Self.minimumWindowHeight,
+          identifier: Self.mainWindowIdentifier
+        ))
         .task {
           model.start()
         }
