@@ -39,6 +39,78 @@ struct LatticeAppModelTests {
     #expect(model.text == "# Universal Note\n\nBody\n")
   }
 
+  @Test("records note navigation history and restores cursor positions")
+  func recordsNoteNavigationHistory() throws {
+    let fixture = try Fixture()
+    defer { fixture.cleanup() }
+    let model = LatticeAppModel(
+      noteLibrary: fixture.library,
+      folderAccessStore: fixture.folderAccessStore,
+      noteIndex: NoteIndex(appSupportURL: fixture.appSupportURL)
+    )
+
+    try fixture.fileManager.createDirectory(at: fixture.root, withIntermediateDirectories: true)
+    try fixture.library.selectNotesFolder(fixture.root)
+    let first = try fixture.library.createNote(body: "# First\n\nAlpha")
+    let second = try fixture.library.createNote(body: "# Second\n\nBeta")
+
+    model.chooseFolder(fixture.root)
+    model.open(first)
+    let alphaRange = (model.text as NSString).range(of: "Alpha")
+    model.selectedRange = alphaRange
+
+    model.open(second)
+
+    #expect(model.selectedNote == second)
+    #expect(model.canNavigateBack)
+    #expect(!model.canNavigateForward)
+
+    model.navigateBack()
+
+    #expect(model.selectedNote == first)
+    #expect(model.selectedRange == alphaRange)
+    #expect(!model.canNavigateBack)
+    #expect(model.canNavigateForward)
+
+    model.navigateForward()
+
+    #expect(model.selectedNote == second)
+    #expect(model.canNavigateBack)
+    #expect(!model.canNavigateForward)
+  }
+
+  @Test("records same-note heading navigation history")
+  func recordsSameNoteHeadingNavigationHistory() throws {
+    let fixture = try Fixture()
+    defer { fixture.cleanup() }
+    let model = LatticeAppModel(
+      noteLibrary: fixture.library,
+      folderAccessStore: fixture.folderAccessStore,
+      noteIndex: NoteIndex(appSupportURL: fixture.appSupportURL)
+    )
+
+    try fixture.fileManager.createDirectory(at: fixture.root, withIntermediateDirectories: true)
+    try fixture.library.selectNotesFolder(fixture.root)
+    let note = try fixture.library.createNote(body: "# Source\n\n[[#Target]]\n\nIntro\n\n## Target\n\nBody")
+
+    model.chooseFolder(fixture.root)
+    model.open(note)
+    let introRange = (model.text as NSString).range(of: "Intro")
+    model.selectedRange = introRange
+    let linkLocation = (model.text as NSString).range(of: "[[#Target]]").location + 3
+
+    model.activateWikiLink(at: linkLocation)
+
+    #expect(model.selectedRange == (model.text as NSString).range(of: "Target", options: [], range: NSRange(location: 30, length: 9)))
+    #expect(model.canNavigateBack)
+
+    model.navigateBack()
+
+    #expect(model.selectedNote == note)
+    #expect(model.selectedRange == introRange)
+    #expect(model.canNavigateForward)
+  }
+
   @Test("adjusts editor font size with app-style bounds")
   func adjustsEditorFontSize() throws {
     let defaultsSuiteName = "font-size-\(UUID().uuidString)"
@@ -275,6 +347,10 @@ struct LatticeAppModelTests {
     let sections = model.sections
     #expect(sections.flatMap(\.notes).contains { $0.filenameTitle == "Project Plan" })
     #expect(model.selectedNote?.filenameTitle == "Project Plan")
+    #expect(model.canNavigateBack)
+    model.navigateBack()
+    #expect(model.selectedNote == source)
+    #expect(model.canNavigateForward)
     let sourceBody = try fixture.library.body(for: source)
     #expect(sourceBody.contains("[[Project Plan]]<!-- lattice:target="))
   }
