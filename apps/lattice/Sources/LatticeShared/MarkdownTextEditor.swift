@@ -154,6 +154,11 @@ public struct MarkdownTextEditor: NSViewRepresentable {
 private final class MarkdownTextView: NSTextView {
   weak var coordinator: MarkdownTextEditor.Coordinator?
 
+  override func draw(_ dirtyRect: NSRect) {
+    super.draw(dirtyRect)
+    drawThematicBreaks()
+  }
+
   override func performKeyEquivalent(with event: NSEvent) -> Bool {
     if handlePasteboardShortcut(event) {
       return true
@@ -311,6 +316,43 @@ private final class MarkdownTextView: NSTextView {
     let characterIndex = layoutManager.characterIndexForGlyph(at: glyphIndex)
     return characterIndex < string.utf16.count ? characterIndex : nil
   }
+
+  private func drawThematicBreaks() {
+    guard let layoutManager, let textContainer, let textStorage else {
+      return
+    }
+
+    let visibleGlyphRange = layoutManager.glyphRange(
+      forBoundingRect: visibleRect.offsetBy(dx: -textContainerOrigin.x, dy: -textContainerOrigin.y),
+      in: textContainer
+    )
+    let visibleCharacterRange = layoutManager.characterRange(
+      forGlyphRange: visibleGlyphRange,
+      actualGlyphRange: nil
+    )
+
+    textStorage.enumerateAttribute(.latticeThematicBreak, in: visibleCharacterRange) { value, range, _ in
+      guard value as? Bool == true else {
+        return
+      }
+
+      let glyphRange = layoutManager.glyphRange(forCharacterRange: range, actualCharacterRange: nil)
+      guard glyphRange.length > 0 else {
+        return
+      }
+
+      let lineRect = layoutManager.lineFragmentUsedRect(forGlyphAt: glyphRange.location, effectiveRange: nil)
+      let ruleWidth = max(0, bounds.width - textContainerInset.width - 2)
+      let y = textContainerOrigin.y + lineRect.midY
+      let pixelAlignedY = y.rounded(.down) + 0.5
+      let path = NSBezierPath()
+      path.lineWidth = 1
+      path.move(to: NSPoint(x: textContainerOrigin.x, y: pixelAlignedY))
+      path.line(to: NSPoint(x: textContainerOrigin.x + ruleWidth, y: pixelAlignedY))
+      NSColor.separatorColor.withAlphaComponent(0.85).setStroke()
+      path.stroke()
+    }
+  }
 }
 
 #elseif os(iOS)
@@ -354,7 +396,7 @@ public struct MarkdownTextEditor: UIViewRepresentable {
   }
 
   public func makeUIView(context: Context) -> UITextView {
-    let textView = UITextView()
+    let textView = MarkdownUIKitTextView()
     textView.delegate = context.coordinator
     textView.backgroundColor = .clear
     textView.isScrollEnabled = true
@@ -485,6 +527,50 @@ private extension UITextView {
     }
 
     return index
+  }
+}
+
+private final class MarkdownUIKitTextView: UITextView {
+  override func draw(_ rect: CGRect) {
+    super.draw(rect)
+    drawThematicBreaks()
+  }
+
+  private func drawThematicBreaks() {
+    guard let context = UIGraphicsGetCurrentContext() else {
+      return
+    }
+
+    let visibleBounds = bounds.inset(by: textContainerInset)
+    let visibleGlyphRange = layoutManager.glyphRange(
+      forBoundingRect: visibleBounds.offsetBy(dx: -textContainerInset.left, dy: -textContainerInset.top),
+      in: textContainer
+    )
+    let visibleCharacterRange = layoutManager.characterRange(
+      forGlyphRange: visibleGlyphRange,
+      actualGlyphRange: nil
+    )
+
+    textStorage.enumerateAttribute(.latticeThematicBreak, in: visibleCharacterRange) { value, range, _ in
+      guard value as? Bool == true else {
+        return
+      }
+
+      let glyphRange = layoutManager.glyphRange(forCharacterRange: range, actualCharacterRange: nil)
+      guard glyphRange.length > 0 else {
+        return
+      }
+
+      let lineRect = layoutManager.lineFragmentUsedRect(forGlyphAt: glyphRange.location, effectiveRange: nil)
+      let y = textContainerInset.top + lineRect.midY
+      let startX = textContainerInset.left + textContainer.lineFragmentPadding
+      let endX = bounds.width - textContainerInset.right - textContainer.lineFragmentPadding
+      context.setStrokeColor(UIColor.separator.withAlphaComponent(0.85).cgColor)
+      context.setLineWidth(1 / UIScreen.main.scale)
+      context.move(to: CGPoint(x: startX, y: y))
+      context.addLine(to: CGPoint(x: endX, y: y))
+      context.strokePath()
+    }
   }
 }
 #endif

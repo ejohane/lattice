@@ -2,6 +2,10 @@ import Foundation
 import LatticeCore
 import LatticeEditor
 
+extension NSAttributedString.Key {
+  static let latticeThematicBreak = NSAttributedString.Key("lattice.thematicBreak")
+}
+
 #if os(macOS)
 import AppKit
 
@@ -113,7 +117,7 @@ enum MarkdownAttributedRenderer {
         )
       } else if firstMatch("^\\s{0,3}(([-*_])\\s*){3,}$", in: line) != nil {
         attributed.addAttributes(
-          isActiveLine ? thematicBreakAttributes(fontSize: fontSize) : hiddenTokenAttributes(fontSize: fontSize),
+          isActiveLine ? thematicBreakAttributes(fontSize: fontSize) : thematicBreakLineAttributes(fontSize: fontSize),
           range: lineRange
         )
       }
@@ -410,6 +414,18 @@ enum MarkdownAttributedRenderer {
     ]
   }
 
+  private static func thematicBreakLineAttributes(fontSize: CGFloat) -> [NSAttributedString.Key: Any] {
+    let paragraphStyle = NSMutableParagraphStyle()
+    paragraphStyle.lineSpacing = 8 * fontSize / bodyFontSize
+    paragraphStyle.paragraphSpacing = 8 * fontSize / bodyFontSize
+    return [
+      .foregroundColor: NSColor.clear,
+      .font: bodyFont(size: fontSize),
+      .paragraphStyle: paragraphStyle,
+      .latticeThematicBreak: true
+    ]
+  }
+
   private static func codeBlockAttributes(fontSize: CGFloat) -> [NSAttributedString.Key: Any] {
     let paragraphStyle = NSMutableParagraphStyle()
     paragraphStyle.lineSpacing = 3 * fontSize / bodyFontSize
@@ -663,7 +679,7 @@ enum MarkdownAttributedRenderer {
     case .blockquote:
       return [.foregroundColor: UIColor.secondaryLabel]
     case .thematicBreak:
-      return [.foregroundColor: UIColor.tertiaryLabel]
+      return thematicBreakAttributes()
     case .codeBlock:
       return [.font: UIFont.monospacedSystemFont(ofSize: 18, weight: .regular), .backgroundColor: UIColor.secondarySystemBackground]
     case .inlineCode:
@@ -696,6 +712,18 @@ enum MarkdownAttributedRenderer {
     let descriptor = UIFont.systemFont(ofSize: 21).fontDescriptor.withSymbolicTraits(.traitItalic)
       ?? UIFont.systemFont(ofSize: 21).fontDescriptor
     return UIFont(descriptor: descriptor, size: 21)
+  }
+
+  private static func thematicBreakAttributes() -> [NSAttributedString.Key: Any] {
+    let paragraphStyle = NSMutableParagraphStyle()
+    paragraphStyle.lineSpacing = 8
+    paragraphStyle.paragraphSpacing = 8
+    return [
+      .foregroundColor: UIColor.clear,
+      .font: UIFont.preferredFont(forTextStyle: .title3),
+      .paragraphStyle: paragraphStyle,
+      .latticeThematicBreak: true
+    ]
   }
 
   private static func wikiLinkAttributes(for status: WikiLinkRenderStatus) -> [NSAttributedString.Key: Any] {

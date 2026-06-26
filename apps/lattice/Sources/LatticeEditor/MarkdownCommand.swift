@@ -4,6 +4,7 @@ public enum MarkdownCommand: CaseIterable, Equatable, Sendable {
   case heading
   case bold
   case italic
+  case horizontalRule
   case bulletList
   case taskList
   case code
@@ -33,6 +34,8 @@ public enum MarkdownTextEditing {
       return wrapSelection(prefix: "**", suffix: "**", in: body, selection: selection)
     case .italic:
       return wrapSelection(prefix: "*", suffix: "*", in: body, selection: selection)
+    case .horizontalRule:
+      return insertHorizontalRule(in: body, selection: selection)
     case .bulletList:
       return insertLinePrefix("- ", in: body, selection: selection)
     case .taskList:
@@ -81,6 +84,29 @@ public enum MarkdownTextEditing {
     return MarkdownEditResult(
       body: nextBody,
       selection: NSRange(location: range.location + prefix.count, length: range.length)
+    )
+  }
+
+  private static func insertHorizontalRule(in body: String, selection: NSRange) -> MarkdownEditResult {
+    let nsString = body as NSString
+    let range = clamped(selection, length: nsString.length)
+    let lineRange = nsString.lineRange(for: NSRange(location: range.location, length: 0))
+    let line = nsString.substring(with: lineRange) as NSString
+    let replacement: String
+    let replacementRange: NSRange
+
+    if line.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+      replacement = "---\n"
+      replacementRange = lineRange
+    } else {
+      replacement = "\n---\n"
+      replacementRange = NSRange(location: NSMaxRange(lineRange), length: 0)
+    }
+
+    let nextBody = nsString.replacingCharacters(in: replacementRange, with: replacement)
+    return MarkdownEditResult(
+      body: nextBody,
+      selection: NSRange(location: replacementRange.location + (replacement as NSString).length, length: 0)
     )
   }
 
