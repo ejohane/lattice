@@ -439,6 +439,16 @@ public final class NoteLibrary {
     return renamed
   }
 
+  public func deleteNote(_ note: SavedNote) throws {
+    guard fileManager.fileExists(atPath: note.url.path) else {
+      throw NoteLibraryError.missingNote(note.url.path)
+    }
+    try fileManager.removeItem(at: note.url)
+    if activeNoteURL()?.standardizedFileURL == note.url.standardizedFileURL {
+      clearActiveNote()
+    }
+  }
+
   public func rewriteWikiLinks(targetNoteID: String, oldStem: String, newStem: String) throws {
     guard let folderURL = activeNotesFolderURL() else {
       throw NoteLibraryError.noActiveNotesFolder
