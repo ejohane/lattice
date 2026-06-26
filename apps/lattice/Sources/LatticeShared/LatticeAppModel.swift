@@ -402,6 +402,26 @@ public final class LatticeAppModel {
     }
   }
 
+  public func delete(_ note: SavedNote) {
+    let title = displayTitle(for: note)
+    do {
+      flushAutosave()
+      let isDeletingSelectedNote = selectedNote == note
+      try noteLibrary.deleteNote(note)
+      refreshNoteIndex(for: note)
+      if isDeletingSelectedNote {
+        clearEditorAfterDeletingSelectedNote()
+      } else {
+        reloadNotes(selecting: selectedNote)
+        refreshWikiLinkStates()
+        updateWikiAutocomplete()
+      }
+      status = "Deleted \(title)"
+    } catch {
+      errorMessage = error.localizedDescription
+    }
+  }
+
   public func selectWikiAutocompleteSuggestion(_ suggestion: WikiAutocompleteSuggestion) {
     let nsString = text as NSString
     guard NSMaxRange(suggestion.replacementRange) <= nsString.length else {
@@ -707,6 +727,19 @@ public final class LatticeAppModel {
     } catch {
       // Autosave should not fail because the derived index could not refresh.
     }
+  }
+
+  private func clearEditorAfterDeletingSelectedNote() {
+    session.resetForNewNote()
+    selectedNote = nil
+    text = ""
+    selectedRange = NSRange(location: 0, length: 0)
+    wikiLinkStates = []
+    wikiAutocompleteSuggestions = []
+    ambiguousWikiLink = nil
+    vimStatusMessage = nil
+    preferredCompactColumn = .sidebar
+    reloadNotes(selecting: nil)
   }
 
   private func refreshWikiLinkStates() {

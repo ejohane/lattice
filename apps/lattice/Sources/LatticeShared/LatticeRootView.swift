@@ -147,6 +147,11 @@ private struct NoteSidebar: View {
                 } label: {
                   Label("Rename", systemImage: "pencil")
                 }
+                Button(role: .destructive) {
+                  model.delete(note)
+                } label: {
+                  Label("Delete", systemImage: "trash")
+                }
               }
             }
           }

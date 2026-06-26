@@ -306,6 +306,63 @@ struct LatticeAppModelTests {
     #expect(sourceBody.contains("[[New Name|alias]]\(WikiLinkParser.targetComment(noteID: targetID))"))
   }
 
+  @Test("deleting the selected note removes it and clears the editor")
+  func deletingSelectedNoteClearsEditor() throws {
+    let fixture = try Fixture()
+    defer { fixture.cleanup() }
+    let model = LatticeAppModel(
+      noteLibrary: fixture.library,
+      folderAccessStore: fixture.folderAccessStore,
+      noteIndex: NoteIndex(appSupportURL: fixture.appSupportURL)
+    )
+
+    try fixture.fileManager.createDirectory(at: fixture.root, withIntermediateDirectories: true)
+    model.chooseFolder(fixture.root)
+    model.text = "# Remove Me\n\nBody"
+    model.flushAutosave()
+    let note = try #require(model.selectedNote)
+
+    model.delete(note)
+
+    #expect(!fixture.fileManager.fileExists(atPath: note.url.path))
+    #expect(model.selectedNote == nil)
+    #expect(model.text == "")
+    #expect(model.sections.isEmpty)
+    #expect(fixture.library.activeNoteURL() == nil)
+    #expect(model.commandPaletteNotes().isEmpty)
+  }
+
+  @Test("deleting another note keeps the current note open")
+  func deletingUnselectedNoteKeepsCurrentNoteOpen() throws {
+    let fixture = try Fixture()
+    defer { fixture.cleanup() }
+    let model = LatticeAppModel(
+      noteLibrary: fixture.library,
+      folderAccessStore: fixture.folderAccessStore,
+      noteIndex: NoteIndex(appSupportURL: fixture.appSupportURL)
+    )
+
+    try fixture.fileManager.createDirectory(at: fixture.root, withIntermediateDirectories: true)
+    model.chooseFolder(fixture.root)
+    model.text = "# Keep Me\n\nBody"
+    model.flushAutosave()
+    let keptNote = try #require(model.selectedNote)
+    model.createNewNote()
+    model.text = "# Delete Me\n\nBody"
+    model.flushAutosave()
+    let deletedNote = try #require(model.selectedNote)
+    model.open(keptNote)
+
+    model.delete(deletedNote)
+
+    #expect(fixture.fileManager.fileExists(atPath: keptNote.url.path))
+    #expect(!fixture.fileManager.fileExists(atPath: deletedNote.url.path))
+    #expect(model.selectedNote == keptNote)
+    #expect(model.text == "# Keep Me\n\nBody\n")
+    #expect(model.sections.flatMap(\.notes) == [keptNote])
+    #expect(fixture.library.activeNoteURL()?.path == keptNote.url.path)
+  }
+
   @Test("missing heading links with duplicate note names do not open duplicate chooser")
   func missingHeadingDuplicateLinkDoesNotOpenChooser() throws {
     let fixture = try Fixture()

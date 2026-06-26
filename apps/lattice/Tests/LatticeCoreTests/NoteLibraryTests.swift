@@ -148,6 +148,21 @@ struct NoteLibraryTests {
       _ = try fixture.library.createNote(body: "   \n\t", now: fixture.date)
     }
   }
+
+  @Test("deletes markdown notes and clears active note state")
+  func deletesMarkdownNote() throws {
+    let fixture = try Fixture()
+    defer { fixture.cleanup() }
+
+    try fixture.library.selectNotesFolder(fixture.root)
+    let note = try fixture.library.createNote(body: "Delete me", now: fixture.date)
+
+    try fixture.library.deleteNote(note)
+
+    #expect(!fixture.fileManager.fileExists(atPath: note.url.path))
+    #expect(fixture.library.activeNoteURL() == nil)
+    #expect(try fixture.library.listNotes().isEmpty)
+  }
 }
 
 private struct Fixture {
