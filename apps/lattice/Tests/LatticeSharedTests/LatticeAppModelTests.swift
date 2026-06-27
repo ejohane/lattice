@@ -39,6 +39,33 @@ struct LatticeAppModelTests {
     #expect(model.text == "# Universal Note\n\nBody")
   }
 
+  @Test("autosave records note created and edited activity")
+  func autosaveRecordsNoteActivity() throws {
+    let fixture = try Fixture()
+    defer { fixture.cleanup() }
+    var now = fixture.date(hour: 9)
+    let model = LatticeAppModel(
+      noteLibrary: fixture.library,
+      folderAccessStore: fixture.folderAccessStore,
+      activityStore: fixture.activityStore,
+      dateProvider: { now }
+    )
+
+    try fixture.fileManager.createDirectory(at: fixture.root, withIntermediateDirectories: true)
+    model.chooseFolder(fixture.root)
+    model.text = "# Product\n\nFirst"
+    model.flushAutosave()
+    now = fixture.date(hour: 10)
+    model.text = "# Product\n\nFirst\n\nSecond"
+    model.flushAutosave()
+
+    #expect(model.todayActivityEvents.map(\.kind) == [.noteCreated, .noteEdited])
+    #expect(model.todayActivityEvents[0].noteTitle == "Product")
+    #expect(model.todayActivityEvents[0].noteRelativePath?.hasPrefix("notes/") == true)
+    #expect(model.todayActivityEvents[1].beforeExcerpt == "# Product First")
+    #expect(model.todayActivityEvents[1].afterExcerpt == "# Product First Second")
+  }
+
   @Test("records note navigation history and restores cursor positions")
   func recordsNoteNavigationHistory() throws {
     let fixture = try Fixture()
@@ -630,9 +657,11 @@ private struct Fixture {
   let appSupportURL: URL
   let library: NoteLibrary
   let folderAccessStore: FolderAccessStore
+  let activityStore: ActivityStore
   let defaults: UserDefaults
   let suiteName: String
   let fileManager = FileManager.default
+  let calendar: Calendar
 
   init() throws {
     root = FileManager.default.temporaryDirectory
@@ -644,8 +673,25 @@ private struct Fixture {
       throw FixtureError.defaultsUnavailable
     }
     self.defaults = defaults
+    var calendar = Calendar(identifier: .gregorian)
+    calendar.timeZone = TimeZone(secondsFromGMT: 0) ?? .current
+    self.calendar = calendar
     library = NoteLibrary(defaults: defaults, fileManager: fileManager)
     folderAccessStore = FolderAccessStore(defaults: defaults)
+    activityStore = ActivityStore(fileManager: fileManager, calendar: calendar)
+  }
+
+  func date(day: Int = 26, hour: Int = 10) -> Date {
+    var components = DateComponents()
+    components.calendar = calendar
+    components.timeZone = calendar.timeZone
+    components.year = 2026
+    components.month = 6
+    components.day = day
+    components.hour = hour
+    components.minute = 15
+    components.second = 0
+    return components.date ?? Date(timeIntervalSince1970: 0)
   }
 
   func cleanup() {
