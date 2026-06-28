@@ -260,7 +260,7 @@ public final class TaskSyncStore {
     )
   }
 
-  private func record(from row: [String: TaskSQLiteValue], providerID: String) -> StoredTaskRecord? {
+  private func record(from row: [String: SQLiteValue], providerID: String) -> StoredTaskRecord? {
     guard
       let id = row["id"]?.stringValue,
       let relativePath = row["relative_path"]?.stringValue,
@@ -340,40 +340,6 @@ public final class TaskSyncStore {
   }
 }
 
-private enum TaskSQLiteBinding {
-  case integer(Int64)
-  case text(String)
-  case nullableText(String?)
-}
-
-private enum TaskSQLiteValue {
-  case integer(Int64)
-  case text(String)
-  case null
-
-  var stringValue: String? {
-    switch self {
-    case .text(let value):
-      return value
-    case .integer(let value):
-      return String(value)
-    case .null:
-      return nil
-    }
-  }
-
-  var int64Value: Int64? {
-    switch self {
-    case .integer(let value):
-      return value
-    case .text(let value):
-      return Int64(value)
-    case .null:
-      return nil
-    }
-  }
-}
-
 private final class TaskSQLiteConnection {
   private let database: OpaquePointer?
 
@@ -391,7 +357,7 @@ private final class TaskSQLiteConnection {
     sqlite3_close(database)
   }
 
-  func execute(_ sql: String, bindings: [TaskSQLiteBinding] = []) throws {
+  func execute(_ sql: String, bindings: [SQLiteBinding] = []) throws {
     let statement = try prepare(sql, bindings: bindings)
     defer { sqlite3_finalize(statement) }
     let result = sqlite3_step(statement)
@@ -400,15 +366,15 @@ private final class TaskSQLiteConnection {
     }
   }
 
-  func query(_ sql: String, bindings: [TaskSQLiteBinding] = []) throws -> [[String: TaskSQLiteValue]] {
+  func query(_ sql: String, bindings: [SQLiteBinding] = []) throws -> [[String: SQLiteValue]] {
     let statement = try prepare(sql, bindings: bindings)
     defer { sqlite3_finalize(statement) }
 
-    var rows: [[String: TaskSQLiteValue]] = []
+    var rows: [[String: SQLiteValue]] = []
     var result = sqlite3_step(statement)
     while result == SQLITE_ROW {
       let count = sqlite3_column_count(statement)
-      var row: [String: TaskSQLiteValue] = [:]
+      var row: [String: SQLiteValue] = [:]
       for index in 0..<count {
         let name = String(cString: sqlite3_column_name(statement, index))
         row[name] = value(for: statement, index: index)
@@ -424,7 +390,7 @@ private final class TaskSQLiteConnection {
     return rows
   }
 
-  private func prepare(_ sql: String, bindings: [TaskSQLiteBinding]) throws -> OpaquePointer? {
+  private func prepare(_ sql: String, bindings: [SQLiteBinding]) throws -> OpaquePointer? {
     var statement: OpaquePointer?
     guard sqlite3_prepare_v2(database, sql, -1, &statement, nil) == SQLITE_OK else {
       throw error()
@@ -435,7 +401,7 @@ private final class TaskSQLiteConnection {
     return statement
   }
 
-  private func bind(_ binding: TaskSQLiteBinding, at index: Int32, statement: OpaquePointer?) throws {
+  private func bind(_ binding: SQLiteBinding, at index: Int32, statement: OpaquePointer?) throws {
     let result: Int32
     switch binding {
     case .integer(let value):
@@ -454,7 +420,7 @@ private final class TaskSQLiteConnection {
     }
   }
 
-  private func value(for statement: OpaquePointer?, index: Int32) -> TaskSQLiteValue {
+  private func value(for statement: OpaquePointer?, index: Int32) -> SQLiteValue {
     switch sqlite3_column_type(statement, index) {
     case SQLITE_INTEGER:
       return .integer(sqlite3_column_int64(statement, index))

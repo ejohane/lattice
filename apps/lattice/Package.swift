@@ -25,8 +25,7 @@ let package = Package(
       ]
     ),
     .target(
-      name: "LatticeEditor",
-      dependencies: ["LatticeCore"]
+      name: "LatticeEditor"
     ),
     .target(
       name: "LatticeShared",

@@ -42,7 +42,10 @@ public enum MarkdownTaskList {
   private static func taskMarker(containing location: Int, in nsString: NSString) -> TaskMarker? {
     let lineRange = nsString.lineRange(for: NSRange(location: min(location, nsString.length), length: 0))
     let line = nsString.substring(with: lineRange)
-    guard let match = firstRegexMatch("^([ \\t]*[-*+][ \\t]+)(\\[([ xX])\\])([ \\t]+)", in: line) else {
+    guard let match = MarkdownTextRange.firstRegexMatch(
+      "^([ \\t]*[-*+][ \\t]+)(\\[([ xX])\\])([ \\t]+)",
+      in: line
+    ) else {
       return nil
     }
 
@@ -81,11 +84,4 @@ public enum MarkdownTaskList {
     return replacedRange.location + max(0, delta)
   }
 
-  private static func firstRegexMatch(_ pattern: String, in string: String) -> NSTextCheckingResult? {
-    guard let regex = try? NSRegularExpression(pattern: pattern) else {
-      return nil
-    }
-
-    return regex.firstMatch(in: string, range: NSRange(location: 0, length: (string as NSString).length))
-  }
 }

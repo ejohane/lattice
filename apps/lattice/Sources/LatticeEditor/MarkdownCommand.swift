@@ -54,7 +54,7 @@ public enum MarkdownTextEditing {
     selection: NSRange
   ) -> MarkdownEditResult {
     let nsString = body as NSString
-    let range = clamped(selection, length: nsString.length)
+    let range = MarkdownTextRange.clamped(selection, length: nsString.length)
     let selectedText = nsString.substring(with: range)
     let replacement = prefix + selectedText + suffix
     let nextBody = nsString.replacingCharacters(in: range, with: replacement)
@@ -75,7 +75,7 @@ public enum MarkdownTextEditing {
     selection: NSRange
   ) -> MarkdownEditResult {
     let nsString = body as NSString
-    let range = clamped(selection, length: nsString.length)
+    let range = MarkdownTextRange.clamped(selection, length: nsString.length)
     let lineRange = nsString.lineRange(for: NSRange(location: range.location, length: 0))
     let nextBody = nsString.replacingCharacters(
       in: NSRange(location: lineRange.location, length: 0),
@@ -89,7 +89,7 @@ public enum MarkdownTextEditing {
 
   private static func insertHorizontalRule(in body: String, selection: NSRange) -> MarkdownEditResult {
     let nsString = body as NSString
-    let range = clamped(selection, length: nsString.length)
+    let range = MarkdownTextRange.clamped(selection, length: nsString.length)
     let lineRange = nsString.lineRange(for: NSRange(location: range.location, length: 0))
     let line = nsString.substring(with: lineRange) as NSString
     let replacement: String
@@ -112,7 +112,7 @@ public enum MarkdownTextEditing {
 
   private static func insertLink(in body: String, selection: NSRange) -> MarkdownEditResult {
     let nsString = body as NSString
-    let range = clamped(selection, length: nsString.length)
+    let range = MarkdownTextRange.clamped(selection, length: nsString.length)
     let selectedText = nsString.substring(with: range)
     let label = selectedText.isEmpty ? "link" : selectedText
     let replacement = "[\(label)](url)"
@@ -123,9 +123,4 @@ public enum MarkdownTextEditing {
     )
   }
 
-  private static func clamped(_ range: NSRange, length: Int) -> NSRange {
-    let location = max(0, min(range.location, length))
-    let maxLength = length - location
-    return NSRange(location: location, length: max(0, min(range.length, maxLength)))
-  }
 }

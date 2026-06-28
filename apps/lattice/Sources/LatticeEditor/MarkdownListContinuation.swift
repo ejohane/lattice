@@ -23,7 +23,7 @@ public enum MarkdownListContinuation {
 
   public static func applyReturn(to body: String, selection: NSRange) -> MarkdownListContinuationResult? {
     let nsString = body as NSString
-    let range = clamped(selection, length: nsString.length)
+    let range = MarkdownTextRange.clamped(selection, length: nsString.length)
     guard let marker = listMarker(at: range.location, in: nsString) else {
       return nil
     }
@@ -51,7 +51,7 @@ public enum MarkdownListContinuation {
   private static func listMarker(at location: Int, in nsString: NSString) -> ListMarker? {
     let safeLocation = min(location, nsString.length)
     let lineRange = nsString.lineRange(for: NSRange(location: safeLocation, length: 0))
-    let lineContentRange = contentRangeWithoutLineEnding(lineRange, in: nsString)
+    let lineContentRange = MarkdownTextRange.contentRangeWithoutLineEnding(lineRange, in: nsString)
     let line = nsString.substring(with: lineContentRange)
 
     if let marker = unorderedListMarker(line: line, lineContentRange: lineContentRange) {
@@ -62,7 +62,10 @@ public enum MarkdownListContinuation {
   }
 
   private static func unorderedListMarker(line: String, lineContentRange: NSRange) -> ListMarker? {
-    guard let match = firstRegexMatch("^([ \\t]*)([-*+])([ \\t]+)(?:(\\[[ xX]\\])([ \\t]+))?(.*)$", in: line) else {
+    guard let match = MarkdownTextRange.firstRegexMatch(
+      "^([ \\t]*)([-*+])([ \\t]+)(?:(\\[[ xX]\\])([ \\t]+))?(.*)$",
+      in: line
+    ) else {
       return nil
     }
 
@@ -90,7 +93,10 @@ public enum MarkdownListContinuation {
   }
 
   private static func orderedListMarker(line: String, lineContentRange: NSRange) -> ListMarker? {
-    guard let match = firstRegexMatch("^([ \\t]*)(\\d+)([.)])([ \\t]+)(.*)$", in: line) else {
+    guard let match = MarkdownTextRange.firstRegexMatch(
+      "^([ \\t]*)(\\d+)([.)])([ \\t]+)(.*)$",
+      in: line
+    ) else {
       return nil
     }
 
@@ -109,31 +115,4 @@ public enum MarkdownListContinuation {
     )
   }
 
-  private static func contentRangeWithoutLineEnding(_ lineRange: NSRange, in nsString: NSString) -> NSRange {
-    var end = NSMaxRange(lineRange)
-    while end > lineRange.location {
-      let character = nsString.character(at: end - 1)
-      if character == 10 || character == 13 {
-        end -= 1
-      } else {
-        break
-      }
-    }
-
-    return NSRange(location: lineRange.location, length: end - lineRange.location)
-  }
-
-  private static func firstRegexMatch(_ pattern: String, in string: String) -> NSTextCheckingResult? {
-    guard let regex = try? NSRegularExpression(pattern: pattern) else {
-      return nil
-    }
-
-    return regex.firstMatch(in: string, range: NSRange(location: 0, length: (string as NSString).length))
-  }
-
-  private static func clamped(_ range: NSRange, length: Int) -> NSRange {
-    let location = max(0, min(range.location, length))
-    let maxLength = length - location
-    return NSRange(location: location, length: max(0, min(range.length, maxLength)))
-  }
 }
