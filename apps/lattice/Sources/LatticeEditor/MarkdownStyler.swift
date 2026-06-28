@@ -154,18 +154,14 @@ public enum MarkdownStyler {
     skippedRanges: [NSRange],
     makeSpans: (NSTextCheckingResult) -> [MarkdownStyleSpan]
   ) -> [MarkdownStyleSpan] {
-    guard let regex = try? NSRegularExpression(pattern: pattern) else {
-      return []
-    }
+    let regex = try! NSRegularExpression(pattern: pattern)
     return regex.matches(in: text, range: fullRange)
       .filter { !intersectsAny($0.range, skippedRanges) }
       .flatMap(makeSpans)
   }
 
   private static func firstMatch(_ pattern: String, in string: String) -> NSTextCheckingResult? {
-    guard let regex = try? NSRegularExpression(pattern: pattern) else {
-      return nil
-    }
+    let regex = try! NSRegularExpression(pattern: pattern)
     return regex.firstMatch(
       in: string,
       range: NSRange(location: 0, length: (string as NSString).length)

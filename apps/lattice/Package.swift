@@ -18,10 +18,7 @@ let package = Package(
   ],
   targets: [
     .target(name: "LatticeCore"),
-    .target(
-      name: "LatticeEditor",
-      dependencies: ["LatticeCore"]
-    ),
+    .target(name: "LatticeEditor"),
     .target(
       name: "LatticeShared",
       dependencies: [
@@ -49,7 +46,10 @@ let package = Package(
     ),
     .testTarget(
       name: "LatticeSharedTests",
-      dependencies: ["LatticeShared"]
+      dependencies: [
+        "LatticeCore",
+        "LatticeShared"
+      ]
     )
   ]
 )

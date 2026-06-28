@@ -35,8 +35,8 @@ curl -fsSL https://raw.githubusercontent.com/ejohane/lattice/main/scripts/instal
 ```
 
 The installer downloads the matching `Lattice.app` release zip for your Mac
-architecture, verifies the `.sha256` checksum when `shasum` is available, and
-installs the app to `~/Applications` by default.
+architecture, verifies the `.sha256` checksum, and installs the app to
+`~/Applications` by default.
 
 Override the destination or version with environment variables:
 

@@ -60,6 +60,7 @@ public enum NoteLibraryError: LocalizedError, Equatable, Sendable {
   case emptyNote
   case missingNote(String)
   case invalidNotesFolder(String)
+  case fileSystemFailure(path: String, reason: String)
 
   public var errorDescription: String? {
     switch self {
@@ -71,6 +72,8 @@ public enum NoteLibraryError: LocalizedError, Equatable, Sendable {
       return "Note file does not exist: \(path)"
     case .invalidNotesFolder(let message):
       return message
+    case .fileSystemFailure(let path, let reason):
+      return "Could not access \(path): \(reason)"
     }
   }
 }
@@ -104,11 +107,7 @@ public final class NoteEditingSession {
     activeNote
   }
 
-  public var savedBody: String {
-    lastSavedBody
-  }
-
-  public func restoreActiveNote() throws -> RestoredNote? {
+  public func restoreActiveNote() throws(NoteLibraryError) -> RestoredNote? {
     guard let note = library.restoreActiveNote() else {
       activeNote = nil
       lastSavedBody = ""
@@ -128,7 +127,7 @@ public final class NoteEditingSession {
     }
   }
 
-  public func open(_ note: SavedNote) throws -> RestoredNote {
+  public func open(_ note: SavedNote) throws(NoteLibraryError) -> RestoredNote {
     let opened = try library.openNote(note)
     let body = try library.body(for: opened)
     activeNote = opened
@@ -143,7 +142,7 @@ public final class NoteEditingSession {
   }
 
   @discardableResult
-  public func save(body: String) throws -> NoteSaveResult {
+  public func save(body: String) throws(NoteLibraryError) -> NoteSaveResult {
     let normalizedBody = Self.normalizedBody(body)
     guard activeNote != nil || !normalizedBody.isEmpty else {
       return .skippedEmptyDraft
@@ -180,19 +179,14 @@ public final class NoteLibrary {
     self.fileManager = fileManager
   }
 
-  public var fallbackNotesFolderURL: URL {
-    (fileManager.urls(for: .documentDirectory, in: .userDomainMask).first
-      ?? URL(fileURLWithPath: NSHomeDirectory()).appendingPathComponent("Documents", isDirectory: true))
-      .appendingPathComponent("Lattice", isDirectory: true)
-  }
-
   public var suggestedNotesFolderURL: URL {
     if let cloudURL = fileManager.url(forUbiquityContainerIdentifier: nil) {
       return cloudURL
         .appendingPathComponent("Documents", isDirectory: true)
         .appendingPathComponent("Lattice", isDirectory: true)
     }
-    return fallbackNotesFolderURL
+    return fileManager.urls(for: .documentDirectory, in: .userDomainMask)[0]
+      .appendingPathComponent("Lattice", isDirectory: true)
   }
 
   public func activeNotesFolderURL() -> URL? {
@@ -226,8 +220,10 @@ public final class NoteLibrary {
     return note(at: url)
   }
 
-  public func body(for note: SavedNote) throws -> String {
-    try String(contentsOf: note.url, encoding: .utf8)
+  public func body(for note: SavedNote) throws(NoteLibraryError) -> String {
+    try withFileSystemError(path: note.url.path) {
+      try String(contentsOf: note.url, encoding: .utf8)
+    }
   }
 
   public func displayTitle(for note: SavedNote) -> String {
@@ -241,7 +237,7 @@ public final class NoteLibrary {
   }
 
   @discardableResult
-  public func openNote(_ note: SavedNote) throws -> SavedNote {
+  public func openNote(_ note: SavedNote) throws(NoteLibraryError) -> SavedNote {
     guard fileManager.fileExists(atPath: note.url.path) else {
       throw NoteLibraryError.missingNote(note.url.path)
     }
@@ -250,15 +246,10 @@ public final class NoteLibrary {
     return opened
   }
 
-  public func selectNotesFolder(_ url: URL) throws {
+  public func selectNotesFolder(_ url: URL) throws(NoteLibraryError) {
     let standardizedURL = url.standardizedFileURL
     try initializeNotesFolder(at: standardizedURL)
     defaults.set(standardizedURL.path, forKey: Self.activeNotesFolderPathKey)
-    clearActiveNote()
-  }
-
-  public func clearActiveNotesFolder() {
-    defaults.removeObject(forKey: Self.activeNotesFolderPathKey)
     clearActiveNote()
   }
 
@@ -286,36 +277,42 @@ public final class NoteLibrary {
     return .valid
   }
 
-  public func initializeNotesFolder(at url: URL) throws {
+  public func initializeNotesFolder(at url: URL) throws(NoteLibraryError) {
     try createDirectory(url)
     try createDirectory(notesDirectory(in: url))
   }
 
-  public func listNotes() throws -> [NoteSection] {
+  public func listNotes() throws(NoteLibraryError) -> [NoteSection] {
     guard let folderURL = activeNotesFolderURL() else {
       throw NoteLibraryError.noActiveNotesFolder
     }
 
     try initializeNotesFolder(at: folderURL)
     let notesURL = notesDirectory(in: folderURL)
-    let dateURLs = try fileManager.contentsOfDirectory(
-      at: notesURL,
-      includingPropertiesForKeys: [.isDirectoryKey],
-      options: [.skipsHiddenFiles]
-    )
+    let dateURLs = try withFileSystemError(path: notesURL.path) {
+      try fileManager.contentsOfDirectory(
+        at: notesURL,
+        includingPropertiesForKeys: [.isDirectoryKey],
+        options: [.skipsHiddenFiles]
+      )
+    }
 
     var sections: [NoteSection] = []
     for dateURL in dateURLs {
-      let resourceValues = try dateURL.resourceValues(forKeys: [.isDirectoryKey])
+      let resourceValues = try withFileSystemError(path: dateURL.path) {
+        try dateURL.resourceValues(forKeys: [.isDirectoryKey])
+      }
       guard resourceValues.isDirectory == true else {
         continue
       }
 
-      let noteURLs = try fileManager.contentsOfDirectory(
-        at: dateURL,
-        includingPropertiesForKeys: [.contentModificationDateKey, .isRegularFileKey],
-        options: [.skipsHiddenFiles]
-      )
+      let noteURLs = try withFileSystemError(path: dateURL.path) {
+        try fileManager.contentsOfDirectory(
+          at: dateURL,
+          includingPropertiesForKeys: [.contentModificationDateKey, .isRegularFileKey],
+          options: [.skipsHiddenFiles]
+        )
+      }
 
       let notes = noteURLs
         .filter { $0.pathExtension.lowercased() == "md" }
@@ -338,8 +335,8 @@ public final class NoteLibrary {
   }
 
   @discardableResult
-  public func createNote(body: String, now: Date = Date()) throws -> SavedNote {
-    let trimmedBody = body.trimmingCharacters(in: .whitespacesAndNewlines)
+  public func createNote(body: String, now: Date = Date()) throws(NoteLibraryError) -> SavedNote {
+    let trimmedBody = NoteEditingSession.normalizedBody(body)
     guard !trimmedBody.isEmpty else {
       throw NoteLibraryError.emptyNote
     }
@@ -360,8 +357,8 @@ public final class NoteLibrary {
   }
 
   @discardableResult
-  public func updateNote(_ note: SavedNote, body: String) throws -> SavedNote {
-    let trimmedBody = body.trimmingCharacters(in: .whitespacesAndNewlines)
+  public func updateNote(_ note: SavedNote, body: String) throws(NoteLibraryError) -> SavedNote {
+    let trimmedBody = NoteEditingSession.normalizedBody(body)
     guard fileManager.fileExists(atPath: note.url.path) else {
       throw NoteLibraryError.missingNote(note.url.path)
     }
@@ -400,7 +397,7 @@ public final class NoteLibrary {
     }
   }
 
-  private func availableNoteURL(in directoryURL: URL, now: Date) throws -> URL {
+  private func availableNoteURL(in directoryURL: URL, now: Date) throws(NoteLibraryError) -> URL {
     let baseName = Self.timestampString(from: now)
     let firstURL = directoryURL.appendingPathComponent("\(baseName).md")
     if !fileManager.fileExists(atPath: firstURL.path) {
@@ -418,14 +415,31 @@ public final class NoteLibrary {
     throw NoteLibraryError.invalidNotesFolder("Could not create a unique note filename.")
   }
 
-  private func createDirectory(_ url: URL) throws {
-    try fileManager.createDirectory(at: url, withIntermediateDirectories: true)
+  private func createDirectory(_ url: URL) throws(NoteLibraryError) {
+    try withFileSystemError(path: url.path) {
+      try fileManager.createDirectory(at: url, withIntermediateDirectories: true)
+    }
   }
 
-  private func writeNoteBody(_ body: String, to url: URL) throws {
+  private func writeNoteBody(_ body: String, to url: URL) throws(NoteLibraryError) {
     try createDirectory(url.deletingLastPathComponent())
     let output = body.isEmpty || body.hasSuffix("\n") ? body : "\(body)\n"
-    try output.write(to: url, atomically: true, encoding: .utf8)
+    try withFileSystemError(path: url.path) {
+      try output.write(to: url, atomically: true, encoding: .utf8)
+    }
+  }
+
+  private func withFileSystemError<T>(
+    path: String,
+    _ operation: () throws -> T
+  ) throws(NoteLibraryError) -> T {
+    do {
+      return try operation()
+    } catch let error as NoteLibraryError {
+      throw error
+    } catch {
+      throw NoteLibraryError.fileSystemFailure(path: path, reason: error.localizedDescription)
+    }
   }
 
   public static func firstHeading(in body: String) -> String? {
