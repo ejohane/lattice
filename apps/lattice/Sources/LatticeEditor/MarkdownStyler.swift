@@ -67,7 +67,7 @@ public enum MarkdownStyler {
       }
 
       let line = nsString.substring(with: lineRange)
-      if let match = firstMatch("^\\s*(#{1,6})(\\s+)(.+)$", in: line) {
+      if let match = MarkdownTextRange.firstRegexMatch("^\\s*(#{1,6})(\\s+)(.+)$", in: line) {
         let level = min(match.range(at: 1).length, 6)
         spans.append(MarkdownStyleSpan(
           kind: .headingMarker,
@@ -79,13 +79,13 @@ public enum MarkdownStyler {
           range: shifted(match.range(at: 3), by: lineRange.location),
           level: level
         ))
-      } else if let match = firstMatch("^\\s{0,3}>\\s?(.+)$", in: line) {
+      } else if let match = MarkdownTextRange.firstRegexMatch("^\\s{0,3}>\\s?(.+)$", in: line) {
         spans.append(MarkdownStyleSpan(kind: .blockquote, range: lineRange))
         spans.append(MarkdownStyleSpan(
           kind: .italic,
           range: shifted(match.range(at: 1), by: lineRange.location)
         ))
-      } else if let match = firstMatch("^\\s*([-*+])\\s+(\\[[ xX]\\])\\s+(.+)$", in: line) {
+      } else if let match = MarkdownTextRange.firstRegexMatch("^\\s*([-*+])\\s+(\\[[ xX]\\])\\s+(.+)$", in: line) {
         spans.append(MarkdownStyleSpan(
           kind: .listMarker,
           range: shifted(match.range(at: 1), by: lineRange.location)
@@ -101,17 +101,17 @@ public enum MarkdownStyler {
             range: shifted(match.range(at: 3), by: lineRange.location)
           ))
         }
-      } else if let match = firstMatch("^\\s*([-*+])\\s+(.+)$", in: line) {
+      } else if let match = MarkdownTextRange.firstRegexMatch("^\\s*([-*+])\\s+(.+)$", in: line) {
         spans.append(MarkdownStyleSpan(
           kind: .listMarker,
           range: shifted(match.range(at: 1), by: lineRange.location)
         ))
-      } else if let match = firstMatch("^\\s*(\\d+[.)])\\s+(.+)$", in: line) {
+      } else if let match = MarkdownTextRange.firstRegexMatch("^\\s*(\\d+[.)])\\s+(.+)$", in: line) {
         spans.append(MarkdownStyleSpan(
           kind: .listMarker,
           range: shifted(match.range(at: 1), by: lineRange.location)
         ))
-      } else if firstMatch("^\\s{0,3}(([-*_])\\s*){3,}$", in: line) != nil {
+      } else if MarkdownTextRange.firstRegexMatch("^\\s{0,3}(([-*_])\\s*){3,}$", in: line) != nil {
         spans.append(MarkdownStyleSpan(kind: .thematicBreak, range: lineRange))
       }
 
@@ -199,7 +199,7 @@ public enum MarkdownStyler {
     while location < nsString.length {
       let lineRange = nsString.lineRange(for: NSRange(location: location, length: 0))
       let line = nsString.substring(with: lineRange)
-      if firstMatch("^\\s*```", in: line) != nil {
+      if MarkdownTextRange.firstRegexMatch("^\\s*```", in: line) != nil {
         if let existingStart = start {
           ranges.append(NSRange(
             location: existingStart,
@@ -244,16 +244,6 @@ public enum MarkdownStyler {
     }
     return regex.matches(in: text, range: fullRange)
       .filter { !intersectsAny($0.range, skippedRanges) }
-  }
-
-  private static func firstMatch(_ pattern: String, in string: String) -> NSTextCheckingResult? {
-    guard let regex = try? NSRegularExpression(pattern: pattern) else {
-      return nil
-    }
-    return regex.firstMatch(
-      in: string,
-      range: NSRange(location: 0, length: (string as NSString).length)
-    )
   }
 
   private static func shifted(_ range: NSRange, by offset: Int) -> NSRange {

@@ -62,7 +62,7 @@ public enum MarkdownListIndentation {
     transform: (String) -> (line: String, edit: RelativeLineEdit)?
   ) -> MarkdownListIndentationResult? {
     let nsString = body as NSString
-    let range = clamped(selection, length: nsString.length)
+    let range = MarkdownTextRange.clamped(selection, length: nsString.length)
     let selectedLines = lineRanges(intersecting: range, in: nsString)
     guard let firstLine = selectedLines.first, let lastLine = selectedLines.last else {
       return nil
@@ -73,7 +73,7 @@ public enum MarkdownListIndentation {
     var changed = false
 
     for lineRange in selectedLines {
-      let contentRange = contentRangeWithoutLineEnding(lineRange, in: nsString)
+      let contentRange = MarkdownTextRange.contentRangeWithoutLineEnding(lineRange, in: nsString)
       let lineEndingRange = NSRange(
         location: NSMaxRange(contentRange),
         length: NSMaxRange(lineRange) - NSMaxRange(contentRange)
@@ -105,7 +105,7 @@ public enum MarkdownListIndentation {
     let nextBody = nsString.replacingCharacters(in: replacementRange, with: replacement)
     let selectionStart = transformedLocation(range.location, edits: edits)
     let selectionEnd = transformedLocation(NSMaxRange(range), edits: edits)
-    let nextSelection = clamped(
+    let nextSelection = MarkdownTextRange.clamped(
       NSRange(location: selectionStart, length: max(0, selectionEnd - selectionStart)),
       length: (nextBody as NSString).length
     )
@@ -125,7 +125,10 @@ public enum MarkdownListIndentation {
   }
 
   private static func isListItem(_ line: String) -> Bool {
-    firstRegexMatch("^([ \\t]*)(?:[-*+][ \\t]+(?:\\[[ xX]\\][ \\t]+)?|\\d+[.)][ \\t]+)", in: line) != nil
+    MarkdownTextRange.firstRegexMatch(
+      "^([ \\t]*)(?:[-*+][ \\t]+(?:\\[[ xX]\\][ \\t]+)?|\\d+[.)][ \\t]+)",
+      in: line
+    ) != nil
   }
 
   private static func lineRanges(intersecting selection: NSRange, in nsString: NSString) -> [NSRange] {
@@ -173,31 +176,4 @@ public enum MarkdownListIndentation {
     return max(0, location + offset)
   }
 
-  private static func contentRangeWithoutLineEnding(_ lineRange: NSRange, in nsString: NSString) -> NSRange {
-    var end = NSMaxRange(lineRange)
-    while end > lineRange.location {
-      let character = nsString.character(at: end - 1)
-      if character == 10 || character == 13 {
-        end -= 1
-      } else {
-        break
-      }
-    }
-
-    return NSRange(location: lineRange.location, length: end - lineRange.location)
-  }
-
-  private static func firstRegexMatch(_ pattern: String, in string: String) -> NSTextCheckingResult? {
-    guard let regex = try? NSRegularExpression(pattern: pattern) else {
-      return nil
-    }
-
-    return regex.firstMatch(in: string, range: NSRange(location: 0, length: (string as NSString).length))
-  }
-
-  private static func clamped(_ range: NSRange, length: Int) -> NSRange {
-    let location = max(0, min(range.location, length))
-    let maxLength = length - location
-    return NSRange(location: location, length: max(0, min(range.length, maxLength)))
-  }
 }
