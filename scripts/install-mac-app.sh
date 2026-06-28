@@ -30,33 +30,27 @@ download() {
 verify_checksum() {
   file="$1"
   checksum="$2"
-
-  if command -v shasum >/dev/null 2>&1; then
-    shasum -a 256 -c "$checksum"
-  else
-    printf 'warning: shasum not found; skipping checksum verification\n' >&2
-    return 0
-  fi
+  shasum -a 256 -c "$checksum"
 }
 
 detect_artifact() {
   os="$(uname -s)"
-  arch="$(uname -m)"
-
   if [ "$os" != "Darwin" ]; then
     printf 'error: the Lattice macOS app installer only supports macOS.\n' >&2
     exit 1
   fi
 
+  arch="$(uname -m)"
   case "$arch" in
-    arm64|aarch64) printf 'lattice-macos-app-darwin-arm64' ;;
-    x86_64|amd64) printf 'lattice-macos-app-darwin-x64' ;;
+    arm64) printf 'lattice-macos-app-darwin-arm64' ;;
+    x86_64) printf 'lattice-macos-app-darwin-x64' ;;
     *) printf 'error: unsupported macOS architecture: %s\n' "$arch" >&2; exit 1 ;;
   esac
 }
 
 need_cmd uname
 need_cmd unzip
+need_cmd shasum
 
 artifact="$(detect_artifact)"
 archive="$artifact.zip"

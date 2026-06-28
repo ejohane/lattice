@@ -126,6 +126,45 @@ struct NoteLibraryTests {
       _ = try fixture.library.createNote(body: "   \n\t", now: fixture.date)
     }
   }
+
+  @Test("wraps note folder filesystem failures in typed errors")
+  func wrapsFilesystemFailuresInTypedErrors() throws {
+    let fixture = try Fixture()
+    defer { fixture.cleanup() }
+
+    try "not a directory".write(to: fixture.root, atomically: true, encoding: .utf8)
+
+    do {
+      try fixture.library.initializeNotesFolder(at: fixture.root)
+      Issue.record("Expected a typed filesystem failure")
+    } catch let error {
+      guard case .fileSystemFailure(let path, let reason) = error else {
+        Issue.record("Expected fileSystemFailure, got \(error)")
+        return
+      }
+      #expect(path == fixture.root.path)
+      #expect(!reason.isEmpty)
+    }
+  }
+
+  @Test("wraps bookmark restore failures in typed errors")
+  func wrapsBookmarkRestoreFailuresInTypedErrors() throws {
+    let fixture = try Fixture()
+    defer { fixture.cleanup() }
+    fixture.defaults.set(Data([0x01, 0x02]), forKey: "selectedNotesFolderBookmark")
+    let store = FolderAccessStore(defaults: fixture.defaults)
+
+    do {
+      _ = try store.restoreFolderURL()
+      Issue.record("Expected a typed bookmark resolution failure")
+    } catch let error {
+      guard case .bookmarkResolutionFailed(let reason) = error else {
+        Issue.record("Expected bookmarkResolutionFailed, got \(error)")
+        return
+      }
+      #expect(!reason.isEmpty)
+    }
+  }
 }
 
 private struct Fixture {

@@ -3,64 +3,9 @@ import LatticeEditor
 
 #if os(macOS)
 import AppKit
-
-enum MarkdownAttributedRenderer {
-  static func render(_ text: String) -> NSAttributedString {
-    let attributed = NSMutableAttributedString(string: text, attributes: baseTypingAttributes())
-    applyStyles(to: attributed)
-    return attributed
-  }
-
-  static func baseTypingAttributes() -> [NSAttributedString.Key: Any] {
-    let paragraphStyle = NSMutableParagraphStyle()
-    paragraphStyle.lineSpacing = 5
-    paragraphStyle.paragraphSpacing = 12
-    return [
-      .font: NSFont.systemFont(ofSize: 21, weight: .regular),
-      .foregroundColor: NSColor.labelColor,
-      .paragraphStyle: paragraphStyle
-    ]
-  }
-
-  private static func applyStyles(to attributed: NSMutableAttributedString) {
-    for span in MarkdownStyler.spans(in: attributed.string) {
-      guard NSMaxRange(span.range) <= attributed.length else {
-        continue
-      }
-      attributed.addAttributes(attributes(for: span), range: span.range)
-    }
-  }
-
-  private static func attributes(for span: MarkdownStyleSpan) -> [NSAttributedString.Key: Any] {
-    switch span.kind {
-    case .heading:
-      let sizes: [CGFloat] = [34, 30, 26, 23, 21, 20]
-      let index = max(0, min((span.level ?? 1) - 1, sizes.count - 1))
-      return [.font: NSFont.systemFont(ofSize: sizes[index], weight: .bold)]
-    case .headingMarker:
-      return [.foregroundColor: NSColor.tertiaryLabelColor, .font: NSFont.monospacedSystemFont(ofSize: 16, weight: .regular)]
-    case .listMarker:
-      return [.foregroundColor: NSColor.controlAccentColor, .font: NSFont.systemFont(ofSize: 21, weight: .semibold)]
-    case .blockquote:
-      return [.foregroundColor: NSColor.secondaryLabelColor]
-    case .thematicBreak:
-      return [.foregroundColor: NSColor.tertiaryLabelColor]
-    case .codeBlock:
-      return [.font: NSFont.monospacedSystemFont(ofSize: 18, weight: .regular), .backgroundColor: NSColor.textBackgroundColor]
-    case .inlineCode:
-      return [.font: NSFont.monospacedSystemFont(ofSize: 18, weight: .regular), .foregroundColor: NSColor.systemPink]
-    case .bold:
-      return [.font: NSFont.systemFont(ofSize: 21, weight: .semibold)]
-    case .italic:
-      return [.font: NSFontManager.shared.convert(NSFont.systemFont(ofSize: 21), toHaveTrait: .italicFontMask)]
-    case .link:
-      return [.foregroundColor: NSColor.systemBlue, .underlineStyle: NSUnderlineStyle.single.rawValue]
-    }
-  }
-}
-
 #elseif os(iOS)
 import UIKit
+#endif
 
 enum MarkdownAttributedRenderer {
   static func render(_ text: String) -> NSAttributedString {
@@ -71,11 +16,11 @@ enum MarkdownAttributedRenderer {
 
   static func baseTypingAttributes() -> [NSAttributedString.Key: Any] {
     let paragraphStyle = NSMutableParagraphStyle()
-    paragraphStyle.lineSpacing = 5
-    paragraphStyle.paragraphSpacing = 12
+    paragraphStyle.lineSpacing = Metrics.lineSpacing
+    paragraphStyle.paragraphSpacing = Metrics.paragraphSpacing
     return [
-      .font: UIFont.preferredFont(forTextStyle: .title3),
-      .foregroundColor: UIColor.label,
+      .font: baseFont(),
+      .foregroundColor: labelColor(),
       .paragraphStyle: paragraphStyle
     ]
   }
@@ -92,34 +37,109 @@ enum MarkdownAttributedRenderer {
   private static func attributes(for span: MarkdownStyleSpan) -> [NSAttributedString.Key: Any] {
     switch span.kind {
     case .heading:
-      let sizes: [CGFloat] = [34, 30, 26, 23, 21, 20]
-      let index = max(0, min((span.level ?? 1) - 1, sizes.count - 1))
-      return [.font: UIFont.systemFont(ofSize: sizes[index], weight: .bold)]
+      return [.font: headingFont(level: span.level)]
     case .headingMarker:
-      return [.foregroundColor: UIColor.tertiaryLabel, .font: UIFont.monospacedSystemFont(ofSize: 16, weight: .regular)]
+      return [.foregroundColor: tertiaryLabelColor(), .font: monospacedFont(ofSize: Metrics.markerFontSize)]
     case .listMarker:
-      return [.foregroundColor: UIColor.tintColor, .font: UIFont.systemFont(ofSize: 21, weight: .semibold)]
+      return [.foregroundColor: accentColor(), .font: bodyFont(weight: .semibold)]
     case .blockquote:
-      return [.foregroundColor: UIColor.secondaryLabel]
+      return [.foregroundColor: secondaryLabelColor()]
     case .thematicBreak:
-      return [.foregroundColor: UIColor.tertiaryLabel]
+      return [.foregroundColor: tertiaryLabelColor()]
     case .codeBlock:
-      return [.font: UIFont.monospacedSystemFont(ofSize: 18, weight: .regular), .backgroundColor: UIColor.secondarySystemBackground]
+      return [.font: monospacedFont(ofSize: Metrics.codeFontSize), .backgroundColor: codeBlockBackgroundColor()]
     case .inlineCode:
-      return [.font: UIFont.monospacedSystemFont(ofSize: 18, weight: .regular), .foregroundColor: UIColor.systemPink]
+      return [.font: monospacedFont(ofSize: Metrics.codeFontSize), .foregroundColor: systemPinkColor()]
     case .bold:
-      return [.font: UIFont.systemFont(ofSize: 21, weight: .semibold)]
+      return [.font: bodyFont(weight: .semibold)]
     case .italic:
       return [.font: italicBodyFont()]
     case .link:
-      return [.foregroundColor: UIColor.systemBlue, .underlineStyle: NSUnderlineStyle.single.rawValue]
+      return [.foregroundColor: systemBlueColor(), .underlineStyle: NSUnderlineStyle.single.rawValue]
     }
   }
 
-  private static func italicBodyFont() -> UIFont {
-    let descriptor = UIFont.systemFont(ofSize: 21).fontDescriptor.withSymbolicTraits(.traitItalic)
-      ?? UIFont.systemFont(ofSize: 21).fontDescriptor
-    return UIFont(descriptor: descriptor, size: 21)
+  private static func headingFont(level: Int?) -> PlatformFont {
+    let index = max(0, min((level ?? 1) - 1, Metrics.headingFontSizes.count - 1))
+    return bodyFont(ofSize: Metrics.headingFontSizes[index], weight: .bold)
   }
+
+  #if os(macOS)
+  private typealias PlatformFont = NSFont
+  private typealias PlatformFontWeight = NSFont.Weight
+  private typealias PlatformColor = NSColor
+
+  private static func baseFont() -> PlatformFont {
+    bodyFont(ofSize: Metrics.bodyFontSize, weight: .regular)
+  }
+
+  private static func bodyFont(weight: PlatformFontWeight) -> PlatformFont {
+    bodyFont(ofSize: Metrics.bodyFontSize, weight: weight)
+  }
+
+  private static func bodyFont(ofSize size: CGFloat, weight: PlatformFontWeight) -> PlatformFont {
+    NSFont.systemFont(ofSize: size, weight: weight)
+  }
+
+  private static func monospacedFont(ofSize size: CGFloat) -> PlatformFont {
+    NSFont.monospacedSystemFont(ofSize: size, weight: .regular)
+  }
+
+  private static func italicBodyFont() -> PlatformFont {
+    NSFontManager.shared.convert(bodyFont(ofSize: Metrics.bodyFontSize, weight: .regular), toHaveTrait: .italicFontMask)
+  }
+
+  private static func labelColor() -> PlatformColor { .labelColor }
+  private static func secondaryLabelColor() -> PlatformColor { .secondaryLabelColor }
+  private static func tertiaryLabelColor() -> PlatformColor { .tertiaryLabelColor }
+  private static func accentColor() -> PlatformColor { .controlAccentColor }
+  private static func codeBlockBackgroundColor() -> PlatformColor { .textBackgroundColor }
+  private static func systemPinkColor() -> PlatformColor { .systemPink }
+  private static func systemBlueColor() -> PlatformColor { .systemBlue }
+  #elseif os(iOS)
+  private typealias PlatformFont = UIFont
+  private typealias PlatformFontWeight = UIFont.Weight
+  private typealias PlatformColor = UIColor
+
+  private static func baseFont() -> PlatformFont {
+    UIFont.preferredFont(forTextStyle: .title3)
+  }
+
+  private static func bodyFont(weight: PlatformFontWeight) -> PlatformFont {
+    bodyFont(ofSize: Metrics.bodyFontSize, weight: weight)
+  }
+
+  private static func bodyFont(ofSize size: CGFloat, weight: PlatformFontWeight) -> PlatformFont {
+    UIFont.systemFont(ofSize: size, weight: weight)
+  }
+
+  private static func monospacedFont(ofSize size: CGFloat) -> PlatformFont {
+    UIFont.monospacedSystemFont(ofSize: size, weight: .regular)
+  }
+
+  private static func italicBodyFont() -> PlatformFont {
+    let descriptor = bodyFont(ofSize: Metrics.bodyFontSize, weight: .regular)
+      .fontDescriptor
+      .withSymbolicTraits(.traitItalic)
+      ?? bodyFont(ofSize: Metrics.bodyFontSize, weight: .regular).fontDescriptor
+    return UIFont(descriptor: descriptor, size: Metrics.bodyFontSize)
+  }
+
+  private static func labelColor() -> PlatformColor { .label }
+  private static func secondaryLabelColor() -> PlatformColor { .secondaryLabel }
+  private static func tertiaryLabelColor() -> PlatformColor { .tertiaryLabel }
+  private static func accentColor() -> PlatformColor { .tintColor }
+  private static func codeBlockBackgroundColor() -> PlatformColor { .secondarySystemBackground }
+  private static func systemPinkColor() -> PlatformColor { .systemPink }
+  private static func systemBlueColor() -> PlatformColor { .systemBlue }
+  #endif
 }
-#endif
+
+private enum Metrics {
+  static let bodyFontSize: CGFloat = 21
+  static let codeFontSize: CGFloat = 18
+  static let markerFontSize: CGFloat = 16
+  static let lineSpacing: CGFloat = 5
+  static let paragraphSpacing: CGFloat = 12
+  static let headingFontSizes: [CGFloat] = [34, 30, 26, 23, 21, 20]
+}
