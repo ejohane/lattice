@@ -84,6 +84,7 @@ public struct MarkdownTextEditor: NSViewRepresentable {
     weak var textView: NSTextView?
     var lastFocusToken = 0
     private var isRendering = false
+    private var activeNoteLinkRange: NSRange?
 
     init(parent: MarkdownTextEditor) {
       self.parent = parent
@@ -100,10 +101,19 @@ public struct MarkdownTextEditor: NSViewRepresentable {
     }
 
     public func textViewDidChangeSelection(_ notification: Notification) {
-      guard let textView = notification.object as? NSTextView else {
+      guard let textView = notification.object as? NSTextView, !isRendering else {
         return
       }
-      parent.selectedRange = textView.selectedRange()
+      let selection = textView.selectedRange()
+      parent.selectedRange = selection
+      let clampedSelection = clamped(selection, length: (textView.string as NSString).length)
+      let nextActiveNoteLinkRange = MarkdownStyler.noteLinkContainerRange(
+        in: textView.string,
+        containing: clampedSelection
+      )
+      if nextActiveNoteLinkRange != activeNoteLinkRange {
+        render(textView.string, in: textView, preserving: clampedSelection)
+      }
     }
 
     func render(_ text: String, in textView: NSTextView, preserving selection: NSRange) {
@@ -111,9 +121,11 @@ public struct MarkdownTextEditor: NSViewRepresentable {
         return
       }
       isRendering = true
-      let attributed = MarkdownAttributedRenderer.render(text)
+      let clampedSelection = clamped(selection, length: (text as NSString).length)
+      activeNoteLinkRange = MarkdownStyler.noteLinkContainerRange(in: text, containing: clampedSelection)
+      let attributed = MarkdownAttributedRenderer.render(text, selection: clampedSelection)
       textView.textStorage?.setAttributedString(attributed)
-      textView.setSelectedRange(clamped(selection, length: (text as NSString).length))
+      textView.setSelectedRange(clampedSelection)
       textView.typingAttributes = MarkdownAttributedRenderer.baseTypingAttributes()
       isRendering = false
     }
@@ -180,6 +192,7 @@ public struct MarkdownTextEditor: UIViewRepresentable {
     var parent: MarkdownTextEditor
     var lastFocusToken = 0
     private var isRendering = false
+    private var activeNoteLinkRange: NSRange?
 
     init(parent: MarkdownTextEditor) {
       self.parent = parent
@@ -196,7 +209,18 @@ public struct MarkdownTextEditor: UIViewRepresentable {
     }
 
     public func textViewDidChangeSelection(_ textView: UITextView) {
+      guard !isRendering else {
+        return
+      }
       parent.selectedRange = textView.selectedRange
+      let clampedSelection = clamped(textView.selectedRange, length: (textView.text as NSString).length)
+      let nextActiveNoteLinkRange = MarkdownStyler.noteLinkContainerRange(
+        in: textView.text,
+        containing: clampedSelection
+      )
+      if nextActiveNoteLinkRange != activeNoteLinkRange {
+        render(textView.text, in: textView, preserving: clampedSelection)
+      }
     }
 
     func render(_ text: String, in textView: UITextView, preserving selection: NSRange) {
@@ -204,8 +228,10 @@ public struct MarkdownTextEditor: UIViewRepresentable {
         return
       }
       isRendering = true
-      textView.attributedText = MarkdownAttributedRenderer.render(text)
-      textView.selectedRange = clamped(selection, length: (text as NSString).length)
+      let clampedSelection = clamped(selection, length: (text as NSString).length)
+      activeNoteLinkRange = MarkdownStyler.noteLinkContainerRange(in: text, containing: clampedSelection)
+      textView.attributedText = MarkdownAttributedRenderer.render(text, selection: clampedSelection)
+      textView.selectedRange = clampedSelection
       textView.typingAttributes = MarkdownAttributedRenderer.baseTypingAttributes()
       isRendering = false
     }

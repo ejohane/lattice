@@ -11,17 +11,26 @@ public enum MarkdownStyleKind: String, Equatable, Sendable {
   case bold
   case italic
   case link
+  case noteLink
+  case noteLinkDelimiter
 }
 
 public struct MarkdownStyleSpan: Equatable, Sendable {
   public let kind: MarkdownStyleKind
   public let range: NSRange
   public let level: Int?
+  public let containerRange: NSRange?
 
-  public init(kind: MarkdownStyleKind, range: NSRange, level: Int? = nil) {
+  public init(
+    kind: MarkdownStyleKind,
+    range: NSRange,
+    level: Int? = nil,
+    containerRange: NSRange? = nil
+  ) {
     self.kind = kind
     self.range = range
     self.level = level
+    self.containerRange = containerRange
   }
 }
 
@@ -45,6 +54,18 @@ public enum MarkdownStyler {
       }
       return $0.range.location < $1.range.location
     }
+  }
+
+  public static func noteLinkContainerRange(in text: String, containing selection: NSRange) -> NSRange? {
+    spans(in: text).first { span in
+      guard let containerRange = span.containerRange, span.kind == .noteLink else {
+        return false
+      }
+      if selection.length == 0 {
+        return NSLocationInRange(selection.location, containerRange)
+      }
+      return NSIntersectionRange(selection, containerRange).length > 0
+    }?.containerRange
   }
 
   private static func blockSpans(in nsString: NSString, codeBlocks: [NSRange]) -> [MarkdownStyleSpan] {
@@ -117,6 +138,26 @@ public enum MarkdownStyler {
     }
     spans += matches(pattern: "\\[([^\\]\\n]+)\\]\\(([^)\\n]+)\\)", in: text, fullRange: fullRange, skippedRanges: skippedRanges) {
       [MarkdownStyleSpan(kind: .link, range: $0.range(at: 1))]
+    }
+    spans += matches(pattern: "\\[\\[([^\\]\\n]+)\\]\\]", in: text, fullRange: fullRange, skippedRanges: skippedRanges) {
+      let fullRange = $0.range(at: 0)
+      return [
+        MarkdownStyleSpan(
+          kind: .noteLinkDelimiter,
+          range: NSRange(location: fullRange.location, length: 2),
+          containerRange: fullRange
+        ),
+        MarkdownStyleSpan(
+          kind: .noteLink,
+          range: $0.range(at: 1),
+          containerRange: fullRange
+        ),
+        MarkdownStyleSpan(
+          kind: .noteLinkDelimiter,
+          range: NSRange(location: NSMaxRange(fullRange) - 2, length: 2),
+          containerRange: fullRange
+        )
+      ]
     }
     return spans
   }

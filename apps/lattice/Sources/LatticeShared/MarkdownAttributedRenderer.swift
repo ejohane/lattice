@@ -5,9 +5,9 @@ import LatticeEditor
 import AppKit
 
 enum MarkdownAttributedRenderer {
-  static func render(_ text: String) -> NSAttributedString {
+  static func render(_ text: String, selection: NSRange? = nil) -> NSAttributedString {
     let attributed = NSMutableAttributedString(string: text, attributes: baseTypingAttributes())
-    applyStyles(to: attributed)
+    applyStyles(to: attributed, selection: selection)
     return attributed
   }
 
@@ -22,16 +22,16 @@ enum MarkdownAttributedRenderer {
     ]
   }
 
-  private static func applyStyles(to attributed: NSMutableAttributedString) {
+  private static func applyStyles(to attributed: NSMutableAttributedString, selection: NSRange?) {
     for span in MarkdownStyler.spans(in: attributed.string) {
       guard NSMaxRange(span.range) <= attributed.length else {
         continue
       }
-      attributed.addAttributes(attributes(for: span), range: span.range)
+      attributed.addAttributes(attributes(for: span, selection: selection), range: span.range)
     }
   }
 
-  private static func attributes(for span: MarkdownStyleSpan) -> [NSAttributedString.Key: Any] {
+  private static func attributes(for span: MarkdownStyleSpan, selection: NSRange?) -> [NSAttributedString.Key: Any] {
     switch span.kind {
     case .heading:
       let sizes: [CGFloat] = [34, 30, 26, 23, 21, 20]
@@ -55,7 +55,35 @@ enum MarkdownAttributedRenderer {
       return [.font: NSFontManager.shared.convert(NSFont.systemFont(ofSize: 21), toHaveTrait: .italicFontMask)]
     case .link:
       return [.foregroundColor: NSColor.systemBlue, .underlineStyle: NSUnderlineStyle.single.rawValue]
+    case .noteLink:
+      return [.foregroundColor: NSColor.systemBlue, .underlineStyle: NSUnderlineStyle.single.rawValue]
+    case .noteLinkDelimiter:
+      if isActiveNoteLink(span, selection: selection) {
+        return [
+          .foregroundColor: NSColor.tertiaryLabelColor,
+          .font: NSFont.monospacedSystemFont(ofSize: 16, weight: .regular)
+        ]
+      }
+      return hiddenDelimiterAttributes()
     }
+  }
+
+  private static func hiddenDelimiterAttributes() -> [NSAttributedString.Key: Any] {
+    [
+      .foregroundColor: NSColor.clear,
+      .font: NSFont.systemFont(ofSize: 0.1),
+      .kern: -0.1
+    ]
+  }
+
+  private static func isActiveNoteLink(_ span: MarkdownStyleSpan, selection: NSRange?) -> Bool {
+    guard let selection, let containerRange = span.containerRange else {
+      return false
+    }
+    if selection.length == 0 {
+      return NSLocationInRange(selection.location, containerRange)
+    }
+    return NSIntersectionRange(selection, containerRange).length > 0
   }
 }
 
@@ -63,9 +91,9 @@ enum MarkdownAttributedRenderer {
 import UIKit
 
 enum MarkdownAttributedRenderer {
-  static func render(_ text: String) -> NSAttributedString {
+  static func render(_ text: String, selection: NSRange? = nil) -> NSAttributedString {
     let attributed = NSMutableAttributedString(string: text, attributes: baseTypingAttributes())
-    applyStyles(to: attributed)
+    applyStyles(to: attributed, selection: selection)
     return attributed
   }
 
@@ -80,16 +108,16 @@ enum MarkdownAttributedRenderer {
     ]
   }
 
-  private static func applyStyles(to attributed: NSMutableAttributedString) {
+  private static func applyStyles(to attributed: NSMutableAttributedString, selection: NSRange?) {
     for span in MarkdownStyler.spans(in: attributed.string) {
       guard NSMaxRange(span.range) <= attributed.length else {
         continue
       }
-      attributed.addAttributes(attributes(for: span), range: span.range)
+      attributed.addAttributes(attributes(for: span, selection: selection), range: span.range)
     }
   }
 
-  private static func attributes(for span: MarkdownStyleSpan) -> [NSAttributedString.Key: Any] {
+  private static func attributes(for span: MarkdownStyleSpan, selection: NSRange?) -> [NSAttributedString.Key: Any] {
     switch span.kind {
     case .heading:
       let sizes: [CGFloat] = [34, 30, 26, 23, 21, 20]
@@ -113,7 +141,35 @@ enum MarkdownAttributedRenderer {
       return [.font: italicBodyFont()]
     case .link:
       return [.foregroundColor: UIColor.systemBlue, .underlineStyle: NSUnderlineStyle.single.rawValue]
+    case .noteLink:
+      return [.foregroundColor: UIColor.systemBlue, .underlineStyle: NSUnderlineStyle.single.rawValue]
+    case .noteLinkDelimiter:
+      if isActiveNoteLink(span, selection: selection) {
+        return [
+          .foregroundColor: UIColor.tertiaryLabel,
+          .font: UIFont.monospacedSystemFont(ofSize: 16, weight: .regular)
+        ]
+      }
+      return hiddenDelimiterAttributes()
     }
+  }
+
+  private static func hiddenDelimiterAttributes() -> [NSAttributedString.Key: Any] {
+    [
+      .foregroundColor: UIColor.clear,
+      .font: UIFont.systemFont(ofSize: 0.1),
+      .kern: -0.1
+    ]
+  }
+
+  private static func isActiveNoteLink(_ span: MarkdownStyleSpan, selection: NSRange?) -> Bool {
+    guard let selection, let containerRange = span.containerRange else {
+      return false
+    }
+    if selection.length == 0 {
+      return NSLocationInRange(selection.location, containerRange)
+    }
+    return NSIntersectionRange(selection, containerRange).length > 0
   }
 
   private static func italicBodyFont() -> UIFont {

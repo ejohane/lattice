@@ -49,7 +49,7 @@ struct MarkdownStylerTests {
     # Heading
     - item
     > quote
-    **bold** *italic* `code` [link](https://example.com)
+    **bold** *italic* `code` [link](https://example.com) [[Note]]
     ---
     ```
     let value = 1
@@ -66,8 +66,34 @@ struct MarkdownStylerTests {
     #expect(kinds.contains(.italic))
     #expect(kinds.contains(.inlineCode))
     #expect(kinds.contains(.link))
+    #expect(kinds.contains(.noteLink))
+    #expect(kinds.contains(.noteLinkDelimiter))
     #expect(kinds.contains(.thematicBreak))
     #expect(kinds.contains(.codeBlock))
+  }
+
+  @Test("generates note link content and delimiter spans")
+  func generatesNoteLinkSpans() throws {
+    let text = "See [[Project Plan]] today"
+    let spans = MarkdownStyler.spans(in: text)
+    let noteLink = try #require(spans.first { $0.kind == .noteLink })
+    let delimiters = spans.filter { $0.kind == .noteLinkDelimiter }
+
+    #expect((text as NSString).substring(with: noteLink.range) == "Project Plan")
+    #expect(noteLink.containerRange == NSRange(location: 4, length: 16))
+    #expect(delimiters.map(\.range) == [
+      NSRange(location: 4, length: 2),
+      NSRange(location: 18, length: 2)
+    ])
+    #expect(delimiters.allSatisfy { $0.containerRange == noteLink.containerRange })
+    #expect(MarkdownStyler.noteLinkContainerRange(
+      in: text,
+      containing: NSRange(location: 8, length: 0)
+    ) == noteLink.containerRange)
+    #expect(MarkdownStyler.noteLinkContainerRange(
+      in: text,
+      containing: NSRange(location: 21, length: 0)
+    ) == nil)
   }
 
   @Test("does not style inline markdown inside fenced code blocks")
