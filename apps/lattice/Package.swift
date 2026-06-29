@@ -17,10 +17,15 @@ let package = Package(
     .package(url: "https://github.com/sparkle-project/Sparkle", from: "2.9.3")
   ],
   targets: [
-    .target(name: "LatticeCore"),
     .target(
-      name: "LatticeEditor",
-      dependencies: ["LatticeCore"]
+      name: "LatticeCore",
+      linkerSettings: [
+        .linkedLibrary("sqlite3"),
+        .linkedFramework("EventKit")
+      ]
+    ),
+    .target(
+      name: "LatticeEditor"
     ),
     .target(
       name: "LatticeShared",
@@ -28,6 +33,11 @@ let package = Package(
         "LatticeCore",
         "LatticeEditor"
       ]
+    ),
+    .target(
+      name: "LatticeTestSupport",
+      dependencies: ["LatticeCore"],
+      path: "Tests/LatticeTestSupport"
     ),
     .executableTarget(
       name: "Lattice",
@@ -44,12 +54,16 @@ let package = Package(
       name: "LatticeCoreTests",
       dependencies: [
         "LatticeCore",
-        "LatticeEditor"
+        "LatticeEditor",
+        "LatticeTestSupport"
       ]
     ),
     .testTarget(
       name: "LatticeSharedTests",
-      dependencies: ["LatticeShared"]
+      dependencies: [
+        "LatticeShared",
+        "LatticeTestSupport"
+      ]
     )
   ]
 )

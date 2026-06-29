@@ -142,6 +142,13 @@ public final class NoteEditingSession {
     library.clearActiveNote()
   }
 
+  public func updateSavedBody(_ body: String, for note: SavedNote) {
+    guard activeNote == note else {
+      return
+    }
+    lastSavedBody = Self.normalizedBody(body)
+  }
+
   @discardableResult
   public func save(body: String) throws -> NoteSaveResult {
     let normalizedBody = Self.normalizedBody(body)
@@ -164,7 +171,11 @@ public final class NoteEditingSession {
   }
 
   public static func normalizedBody(_ body: String) -> String {
-    body.trimmingCharacters(in: .whitespacesAndNewlines)
+    guard !body.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {
+      return ""
+    }
+    let bodyWithoutTrailingNewlines = body.trimmingCharacters(in: .newlines)
+    return bodyWithoutTrailingNewlines
   }
 }
 
@@ -227,6 +238,11 @@ public final class NoteLibrary {
   }
 
   public func body(for note: SavedNote) throws -> String {
+    let rawBody = try rawBody(for: note)
+    return MarkdownDocumentMetadata.strippingFrontMatter(from: rawBody)
+  }
+
+  public func rawBody(for note: SavedNote) throws -> String {
     try String(contentsOf: note.url, encoding: .utf8)
   }
 
@@ -339,8 +355,8 @@ public final class NoteLibrary {
 
   @discardableResult
   public func createNote(body: String, now: Date = Date()) throws -> SavedNote {
-    let trimmedBody = body.trimmingCharacters(in: .whitespacesAndNewlines)
-    guard !trimmedBody.isEmpty else {
+    let normalizedBody = NoteEditingSession.normalizedBody(body)
+    guard !normalizedBody.isEmpty else {
       throw NoteLibraryError.emptyNote
     }
 
@@ -354,21 +370,159 @@ public final class NoteLibrary {
     try createDirectory(dateDirectory)
 
     let noteURL = try availableNoteURL(in: dateDirectory, now: now)
-    try writeNoteBody(trimmedBody, to: noteURL)
+    try writeNoteBody(MarkdownDocumentMetadata.ensureNoteID(in: normalizedBody), to: noteURL)
+    defaults.set(noteURL.standardizedFileURL.path, forKey: Self.activeNotePathKey)
+    return SavedNote(url: noteURL)
+  }
+
+  @discardableResult
+  public func createLinkedNote(title: String, now: Date = Date()) throws -> SavedNote {
+    let trimmedTitle = sanitizedFilenameStem(title)
+    guard !trimmedTitle.isEmpty else {
+      throw NoteLibraryError.emptyNote
+    }
+
+    guard let folderURL = activeNotesFolderURL() else {
+      throw NoteLibraryError.noActiveNotesFolder
+    }
+    try initializeNotesFolder(at: folderURL)
+
+    let dateDirectory = notesDirectory(in: folderURL)
+      .appendingPathComponent(Self.localDateString(from: now), isDirectory: true)
+    try createDirectory(dateDirectory)
+
+    let noteURL = try availableLinkedNoteURL(title: trimmedTitle, in: dateDirectory)
+    let body = MarkdownDocumentMetadata.ensureNoteID(in: "# \(trimmedTitle)\n")
+    try writeNoteBody(body, to: noteURL)
     defaults.set(noteURL.standardizedFileURL.path, forKey: Self.activeNotePathKey)
     return SavedNote(url: noteURL)
   }
 
   @discardableResult
   public func updateNote(_ note: SavedNote, body: String) throws -> SavedNote {
-    let trimmedBody = body.trimmingCharacters(in: .whitespacesAndNewlines)
+    let normalizedBody = NoteEditingSession.normalizedBody(body)
     guard fileManager.fileExists(atPath: note.url.path) else {
       throw NoteLibraryError.missingNote(note.url.path)
     }
 
-    try writeNoteBody(trimmedBody, to: note.url)
+    let existingID = (try? rawBody(for: note)).flatMap { MarkdownDocumentMetadata.noteID(in: $0) }
+    let nextBody = normalizedBody.isEmpty
+      ? ""
+      : MarkdownDocumentMetadata.ensureNoteID(
+        in: normalizedBody,
+        id: existingID ?? UUID().uuidString
+      )
+    try writeNoteBody(nextBody, to: note.url)
     defaults.set(note.url.standardizedFileURL.path, forKey: Self.activeNotePathKey)
     return note
+  }
+
+  @discardableResult
+  public func renameNote(_ note: SavedNote, to title: String) throws -> SavedNote {
+    let trimmedTitle = sanitizedFilenameStem(title)
+    guard !trimmedTitle.isEmpty else {
+      throw NoteLibraryError.emptyNote
+    }
+    guard fileManager.fileExists(atPath: note.url.path) else {
+      throw NoteLibraryError.missingNote(note.url.path)
+    }
+    let destination = note.url.deletingLastPathComponent().appendingPathComponent("\(trimmedTitle).md")
+    guard destination.standardizedFileURL != note.url.standardizedFileURL else {
+      return note
+    }
+    if fileManager.fileExists(atPath: destination.path) {
+      throw NoteLibraryError.invalidNotesFolder("A note named \(trimmedTitle).md already exists in this folder.")
+    }
+    try fileManager.moveItem(at: note.url, to: destination)
+    let renamed = SavedNote(url: destination, dateString: note.dateString)
+    defaults.set(renamed.url.standardizedFileURL.path, forKey: Self.activeNotePathKey)
+    return renamed
+  }
+
+  public func deleteNote(_ note: SavedNote) throws {
+    guard fileManager.fileExists(atPath: note.url.path) else {
+      throw NoteLibraryError.missingNote(note.url.path)
+    }
+    try fileManager.removeItem(at: note.url)
+    if activeNoteURL()?.standardizedFileURL == note.url.standardizedFileURL {
+      clearActiveNote()
+    }
+  }
+
+  public func rewriteWikiLinks(targetNoteID: String, oldStem: String, newStem: String) throws {
+    guard let folderURL = activeNotesFolderURL() else {
+      throw NoteLibraryError.noActiveNotesFolder
+    }
+    for section in try listNotes() {
+      for note in section.notes {
+        let raw = try rawBody(for: note)
+        let links = WikiLinkParser.links(in: MarkdownDocumentMetadata.strippingFrontMatter(from: raw))
+        guard !links.isEmpty else {
+          continue
+        }
+        var body = MarkdownDocumentMetadata.strippingFrontMatter(from: raw)
+        var didChange = false
+        for link in links.reversed() {
+          let matchesID = link.targetNoteID == targetNoteID
+          let matchesUniqueText = link.targetNoteID == nil && link.targetStem == oldStem
+          guard matchesID || matchesUniqueText else {
+            continue
+          }
+          let replacement = Self.rewrittenWikiLink(link, newStem: newStem, targetNoteID: targetNoteID)
+          body = (body as NSString).replacingCharacters(in: link.totalRange, with: replacement)
+          didChange = true
+        }
+        if didChange {
+          let id = MarkdownDocumentMetadata.noteID(in: raw) ?? UUID().uuidString
+          try writeNoteBody(MarkdownDocumentMetadata.ensureNoteID(in: body, id: id), to: note.url)
+        }
+      }
+    }
+    try initializeNotesFolder(at: folderURL)
+  }
+
+  public func rewriteWikiHeadingLinks(
+    targetNoteID: String,
+    oldHeading: String,
+    newHeading: String
+  ) throws {
+    guard let folderURL = activeNotesFolderURL() else {
+      throw NoteLibraryError.noActiveNotesFolder
+    }
+    let oldAnchor = WikiLinkParser.obsidianAnchor(for: oldHeading)
+    for section in try listNotes() {
+      for note in section.notes {
+        let raw = try rawBody(for: note)
+        var body = MarkdownDocumentMetadata.strippingFrontMatter(from: raw)
+        let links = WikiLinkParser.links(in: body)
+        guard !links.isEmpty else {
+          continue
+        }
+        var didChange = false
+        for link in links.reversed() {
+          guard
+            link.targetNoteID == targetNoteID,
+            let linkHeading = link.targetHeading,
+            WikiLinkParser.obsidianAnchor(for: linkHeading) == oldAnchor
+          else {
+            continue
+          }
+          let replacement = Self.rewrittenWikiLink(
+            link,
+            newStem: link.targetStem ?? "",
+            targetNoteID: targetNoteID,
+            newHeading: newHeading
+          )
+          body = (body as NSString).replacingCharacters(in: link.totalRange, with: replacement)
+          didChange = true
+        }
+        if didChange {
+          let id = MarkdownDocumentMetadata.noteID(in: raw) ?? UUID().uuidString
+          try writeNoteBody(MarkdownDocumentMetadata.ensureNoteID(in: body, id: id), to: note.url)
+        }
+      }
+    }
+    try initializeNotesFolder(at: folderURL)
   }
 
   public func notesDirectory(in rootURL: URL) -> URL {
@@ -418,6 +572,29 @@ public final class NoteLibrary {
     throw NoteLibraryError.invalidNotesFolder("Could not create a unique note filename.")
   }
 
+  private func availableLinkedNoteURL(title: String, in directoryURL: URL) throws -> URL {
+    let firstURL = directoryURL.appendingPathComponent("\(title).md")
+    if !fileManager.fileExists(atPath: firstURL.path) {
+      return firstURL
+    }
+
+    for index in 2..<100 {
+      let candidate = directoryURL.appendingPathComponent("\(title) \(index).md")
+      if !fileManager.fileExists(atPath: candidate.path) {
+        return candidate
+      }
+    }
+
+    throw NoteLibraryError.invalidNotesFolder("Could not create a unique note filename for \(title).")
+  }
+
+  private func sanitizedFilenameStem(_ title: String) -> String {
+    title
+      .trimmingCharacters(in: .whitespacesAndNewlines)
+      .replacingOccurrences(of: "/", with: "-")
+      .replacingOccurrences(of: ":", with: "-")
+  }
+
   private func createDirectory(_ url: URL) throws {
     try fileManager.createDirectory(at: url, withIntermediateDirectories: true)
   }
@@ -463,5 +640,21 @@ public final class NoteLibrary {
     formatter.calendar = Calendar(identifier: .gregorian)
     formatter.dateFormat = "yyyy-MM-dd'T'HH-mm-ss"
     return formatter.string(from: date)
+  }
+
+  private static func rewrittenWikiLink(
+    _ link: WikiLinkOccurrence,
+    newStem: String,
+    targetNoteID: String,
+    newHeading: String? = nil
+  ) -> String {
+    var target = newStem
+    if let heading = newHeading ?? link.targetHeading, !heading.isEmpty {
+      target += "#\(heading)"
+    }
+    if let alias = link.alias, !alias.isEmpty {
+      target += "|\(alias)"
+    }
+    return "[[\(target)]]\(WikiLinkParser.targetComment(noteID: targetNoteID, headingID: link.targetHeadingID))"
   }
 }

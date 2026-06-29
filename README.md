@@ -99,6 +99,10 @@ Run the standard verification command:
 bun run verify
 ```
 
+The mac editor intentionally live-renders Markdown while keeping notes as plain
+`.md` files. See [docs/mac-markdown-editor.md](docs/mac-markdown-editor.md)
+before changing editor rendering or keyboard behavior.
+
 ## Sparkle Updates
 
 Build a development macOS app with Sparkle updates enabled:

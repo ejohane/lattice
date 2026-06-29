@@ -4,7 +4,9 @@ public enum MarkdownCommand: CaseIterable, Equatable, Sendable {
   case heading
   case bold
   case italic
+  case horizontalRule
   case bulletList
+  case taskList
   case code
   case link
 }
@@ -32,8 +34,12 @@ public enum MarkdownTextEditing {
       return wrapSelection(prefix: "**", suffix: "**", in: body, selection: selection)
     case .italic:
       return wrapSelection(prefix: "*", suffix: "*", in: body, selection: selection)
+    case .horizontalRule:
+      return insertHorizontalRule(in: body, selection: selection)
     case .bulletList:
       return insertLinePrefix("- ", in: body, selection: selection)
+    case .taskList:
+      return insertLinePrefix("- [ ] ", in: body, selection: selection)
     case .code:
       return wrapSelection(prefix: "`", suffix: "`", in: body, selection: selection)
     case .link:
@@ -48,7 +54,7 @@ public enum MarkdownTextEditing {
     selection: NSRange
   ) -> MarkdownEditResult {
     let nsString = body as NSString
-    let range = clamped(selection, length: nsString.length)
+    let range = MarkdownTextRange.clamped(selection, length: nsString.length)
     let selectedText = nsString.substring(with: range)
     let replacement = prefix + selectedText + suffix
     let nextBody = nsString.replacingCharacters(in: range, with: replacement)
@@ -69,7 +75,7 @@ public enum MarkdownTextEditing {
     selection: NSRange
   ) -> MarkdownEditResult {
     let nsString = body as NSString
-    let range = clamped(selection, length: nsString.length)
+    let range = MarkdownTextRange.clamped(selection, length: nsString.length)
     let lineRange = nsString.lineRange(for: NSRange(location: range.location, length: 0))
     let nextBody = nsString.replacingCharacters(
       in: NSRange(location: lineRange.location, length: 0),
@@ -81,9 +87,32 @@ public enum MarkdownTextEditing {
     )
   }
 
+  private static func insertHorizontalRule(in body: String, selection: NSRange) -> MarkdownEditResult {
+    let nsString = body as NSString
+    let range = MarkdownTextRange.clamped(selection, length: nsString.length)
+    let lineRange = nsString.lineRange(for: NSRange(location: range.location, length: 0))
+    let line = nsString.substring(with: lineRange) as NSString
+    let replacement: String
+    let replacementRange: NSRange
+
+    if line.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+      replacement = "---\n"
+      replacementRange = lineRange
+    } else {
+      replacement = "\n---\n"
+      replacementRange = NSRange(location: NSMaxRange(lineRange), length: 0)
+    }
+
+    let nextBody = nsString.replacingCharacters(in: replacementRange, with: replacement)
+    return MarkdownEditResult(
+      body: nextBody,
+      selection: NSRange(location: replacementRange.location + (replacement as NSString).length, length: 0)
+    )
+  }
+
   private static func insertLink(in body: String, selection: NSRange) -> MarkdownEditResult {
     let nsString = body as NSString
-    let range = clamped(selection, length: nsString.length)
+    let range = MarkdownTextRange.clamped(selection, length: nsString.length)
     let selectedText = nsString.substring(with: range)
     let label = selectedText.isEmpty ? "link" : selectedText
     let replacement = "[\(label)](url)"
@@ -94,9 +123,4 @@ public enum MarkdownTextEditing {
     )
   }
 
-  private static func clamped(_ range: NSRange, length: Int) -> NSRange {
-    let location = max(0, min(range.location, length))
-    let maxLength = length - location
-    return NSRange(location: location, length: max(0, min(range.length, maxLength)))
-  }
 }

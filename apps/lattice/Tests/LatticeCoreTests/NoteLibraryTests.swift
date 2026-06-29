@@ -26,7 +26,8 @@ struct NoteLibraryTests {
     let note = try fixture.library.createNote(body: "Hello\n\nWorld", now: fixture.date)
 
     #expect(note.url.path.hasSuffix("/notes/2026-06-17/2026-06-17T14-32-10.md"))
-    #expect(try String(contentsOf: note.url, encoding: .utf8) == "Hello\n\nWorld\n")
+    #expect(try fixture.library.body(for: note) == "Hello\n\nWorld\n")
+    #expect(MarkdownDocumentMetadata.noteID(in: try String(contentsOf: note.url, encoding: .utf8)) != nil)
     #expect(fixture.library.activeNoteURL()?.path == note.url.path)
   }
 
@@ -49,8 +50,29 @@ struct NoteLibraryTests {
     }
 
     #expect(updated == note)
-    #expect(try String(contentsOf: note.url, encoding: .utf8) == "Second\n")
+    #expect(try fixture.library.body(for: note) == "Second\n")
     #expect(try session.save(body: "Second") == .unchanged)
+  }
+
+  @Test("editing session preserves in-progress list marker spacing")
+  func editingSessionPreservesInProgressListMarkerSpacing() throws {
+    let fixture = try Fixture()
+    defer { fixture.cleanup() }
+
+    try fixture.library.selectNotesFolder(fixture.root)
+    let session = NoteEditingSession(library: fixture.library)
+
+    guard case .saved(let note) = try session.save(body: "- item") else {
+      Issue.record("Expected first list item to create a note")
+      return
+    }
+
+    #expect(try session.save(body: "- item\n- ") == .saved(note))
+    #expect(try fixture.library.body(for: note) == "- item\n- \n")
+    #expect(try session.save(body: "- item\n- ") == .unchanged)
+
+    #expect(NoteEditingSession.normalizedBody("- [x] item\n- [ ] ") == "- [x] item\n- [ ] ")
+    #expect(NoteEditingSession.normalizedBody("   \n") == "")
   }
 
   @Test("active note state is per defaults store")
@@ -125,6 +147,21 @@ struct NoteLibraryTests {
     #expect(throws: NoteLibraryError.emptyNote) {
       _ = try fixture.library.createNote(body: "   \n\t", now: fixture.date)
     }
+  }
+
+  @Test("deletes markdown notes and clears active note state")
+  func deletesMarkdownNote() throws {
+    let fixture = try Fixture()
+    defer { fixture.cleanup() }
+
+    try fixture.library.selectNotesFolder(fixture.root)
+    let note = try fixture.library.createNote(body: "Delete me", now: fixture.date)
+
+    try fixture.library.deleteNote(note)
+
+    #expect(!fixture.fileManager.fileExists(atPath: note.url.path))
+    #expect(fixture.library.activeNoteURL() == nil)
+    #expect(try fixture.library.listNotes().isEmpty)
   }
 }
 

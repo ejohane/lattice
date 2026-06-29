@@ -4,6 +4,8 @@ public enum MarkdownStyleKind: String, Equatable, Sendable {
   case heading
   case headingMarker
   case listMarker
+  case taskCheckbox
+  case completedTask
   case blockquote
   case thematicBreak
   case codeBlock
@@ -11,26 +13,24 @@ public enum MarkdownStyleKind: String, Equatable, Sendable {
   case bold
   case italic
   case link
-  case noteLink
-  case noteLinkDelimiter
 }
 
 public struct MarkdownStyleSpan: Equatable, Sendable {
   public let kind: MarkdownStyleKind
   public let range: NSRange
   public let level: Int?
-  public let containerRange: NSRange?
+  public let linkDestination: String?
 
   public init(
     kind: MarkdownStyleKind,
     range: NSRange,
     level: Int? = nil,
-    containerRange: NSRange? = nil
+    linkDestination: String? = nil
   ) {
     self.kind = kind
     self.range = range
     self.level = level
-    self.containerRange = containerRange
+    self.linkDestination = linkDestination
   }
 }
 
@@ -56,18 +56,6 @@ public enum MarkdownStyler {
     }
   }
 
-  public static func noteLinkContainerRange(in text: String, containing selection: NSRange) -> NSRange? {
-    spans(in: text).first { span in
-      guard let containerRange = span.containerRange, span.kind == .noteLink else {
-        return false
-      }
-      if selection.length == 0 {
-        return NSLocationInRange(selection.location, containerRange)
-      }
-      return NSIntersectionRange(selection, containerRange).length > 0
-    }?.containerRange
-  }
-
   private static func blockSpans(in nsString: NSString, codeBlocks: [NSRange]) -> [MarkdownStyleSpan] {
     var spans: [MarkdownStyleSpan] = []
     var location = 0
@@ -79,7 +67,7 @@ public enum MarkdownStyler {
       }
 
       let line = nsString.substring(with: lineRange)
-      if let match = firstMatch("^\\s*(#{1,6})(\\s+)(.+)$", in: line) {
+      if let match = MarkdownTextRange.firstRegexMatch("^\\s*(#{1,6})(\\s+)(.+)$", in: line) {
         let level = min(match.range(at: 1).length, 6)
         spans.append(MarkdownStyleSpan(
           kind: .headingMarker,
@@ -91,23 +79,39 @@ public enum MarkdownStyler {
           range: shifted(match.range(at: 3), by: lineRange.location),
           level: level
         ))
-      } else if let match = firstMatch("^\\s{0,3}>\\s?(.+)$", in: line) {
+      } else if let match = MarkdownTextRange.firstRegexMatch("^\\s{0,3}>\\s?(.+)$", in: line) {
         spans.append(MarkdownStyleSpan(kind: .blockquote, range: lineRange))
         spans.append(MarkdownStyleSpan(
           kind: .italic,
           range: shifted(match.range(at: 1), by: lineRange.location)
         ))
-      } else if let match = firstMatch("^\\s*([-*+])\\s+(\\[[ xX]\\]\\s+)?(.+)$", in: line) {
+      } else if let match = MarkdownTextRange.firstRegexMatch("^\\s*([-*+])\\s+(\\[[ xX]\\])\\s+(.+)$", in: line) {
         spans.append(MarkdownStyleSpan(
           kind: .listMarker,
           range: shifted(match.range(at: 1), by: lineRange.location)
         ))
-      } else if let match = firstMatch("^\\s*(\\d+[.)])\\s+(.+)$", in: line) {
+        spans.append(MarkdownStyleSpan(
+          kind: .taskCheckbox,
+          range: shifted(match.range(at: 2), by: lineRange.location)
+        ))
+        let checkbox = (line as NSString).substring(with: match.range(at: 2))
+        if checkbox.lowercased() == "[x]" {
+          spans.append(MarkdownStyleSpan(
+            kind: .completedTask,
+            range: shifted(match.range(at: 3), by: lineRange.location)
+          ))
+        }
+      } else if let match = MarkdownTextRange.firstRegexMatch("^\\s*([-*+])\\s+(.+)$", in: line) {
         spans.append(MarkdownStyleSpan(
           kind: .listMarker,
           range: shifted(match.range(at: 1), by: lineRange.location)
         ))
-      } else if firstMatch("^\\s{0,3}(([-*_])\\s*){3,}$", in: line) != nil {
+      } else if let match = MarkdownTextRange.firstRegexMatch("^\\s*(\\d+[.)])\\s+(.+)$", in: line) {
+        spans.append(MarkdownStyleSpan(
+          kind: .listMarker,
+          range: shifted(match.range(at: 1), by: lineRange.location)
+        ))
+      } else if MarkdownTextRange.firstRegexMatch("^\\s{0,3}(([-*_])\\s*){3,}$", in: line) != nil {
         spans.append(MarkdownStyleSpan(kind: .thematicBreak, range: lineRange))
       }
 
@@ -122,9 +126,11 @@ public enum MarkdownStyler {
     skippedRanges: [NSRange]
   ) -> [MarkdownStyleSpan] {
     var spans: [MarkdownStyleSpan] = []
-    spans += matches(pattern: "`([^`\\n]+)`", in: text, fullRange: fullRange, skippedRanges: skippedRanges) {
+    let inlineCodeSpans = matches(pattern: "`([^`\\n]+)`", in: text, fullRange: fullRange, skippedRanges: skippedRanges) {
       [MarkdownStyleSpan(kind: .inlineCode, range: $0.range(at: 0))]
     }
+    let inlineCodeRanges = inlineCodeSpans.map(\.range)
+    spans += inlineCodeSpans
     spans += matches(pattern: "(\\*\\*|__)(.+?)\\1", in: text, fullRange: fullRange, skippedRanges: skippedRanges) {
       [MarkdownStyleSpan(kind: .bold, range: $0.range(at: 2))]
     }
@@ -136,30 +142,54 @@ public enum MarkdownStyler {
     ) {
       [MarkdownStyleSpan(kind: .italic, range: $0.range(at: 1))]
     }
+    spans += matches(
+      pattern: "(?<!_)_(?!_)([^_\\n]+)(?<!_)_(?!_)",
+      in: text,
+      fullRange: fullRange,
+      skippedRanges: skippedRanges
+    ) {
+      [MarkdownStyleSpan(kind: .italic, range: $0.range(at: 1))]
+    }
     spans += matches(pattern: "\\[([^\\]\\n]+)\\]\\(([^)\\n]+)\\)", in: text, fullRange: fullRange, skippedRanges: skippedRanges) {
-      [MarkdownStyleSpan(kind: .link, range: $0.range(at: 1))]
+      let nsString = text as NSString
+      return [MarkdownStyleSpan(
+        kind: .link,
+        range: $0.range(at: 1),
+        linkDestination: nsString.substring(with: $0.range(at: 2))
+      )]
     }
-    spans += matches(pattern: "\\[\\[([^\\]\\n]+)\\]\\]", in: text, fullRange: fullRange, skippedRanges: skippedRanges) {
-      let fullRange = $0.range(at: 0)
-      return [
-        MarkdownStyleSpan(
-          kind: .noteLinkDelimiter,
-          range: NSRange(location: fullRange.location, length: 2),
-          containerRange: fullRange
-        ),
-        MarkdownStyleSpan(
-          kind: .noteLink,
-          range: $0.range(at: 1),
-          containerRange: fullRange
-        ),
-        MarkdownStyleSpan(
-          kind: .noteLinkDelimiter,
-          range: NSRange(location: NSMaxRange(fullRange) - 2, length: 2),
-          containerRange: fullRange
-        )
-      ]
-    }
+    let markdownLinkRanges = checkingMatches(
+      pattern: "!?\\[[^\\]\\n]+\\]\\([^)\\n]+\\)",
+      in: text,
+      fullRange: fullRange,
+      skippedRanges: skippedRanges
+    ).map(\.range)
+    spans += autolinkSpans(
+      in: text,
+      fullRange: fullRange,
+      skippedRanges: skippedRanges + inlineCodeRanges + markdownLinkRanges
+    )
     return spans
+  }
+
+  private static func autolinkSpans(
+    in text: String,
+    fullRange: NSRange,
+    skippedRanges: [NSRange]
+  ) -> [MarkdownStyleSpan] {
+    guard let detector = try? NSDataDetector(types: NSTextCheckingResult.CheckingType.link.rawValue) else {
+      return []
+    }
+
+    return detector.matches(in: text, range: fullRange)
+      .filter { $0.resultType == .link && !intersectsAny($0.range, skippedRanges) }
+      .map {
+        MarkdownStyleSpan(
+          kind: .link,
+          range: $0.range,
+          linkDestination: $0.url?.absoluteString ?? (text as NSString).substring(with: $0.range)
+        )
+      }
   }
 
   private static func codeBlockRanges(in nsString: NSString) -> [NSRange] {
@@ -169,7 +199,7 @@ public enum MarkdownStyler {
     while location < nsString.length {
       let lineRange = nsString.lineRange(for: NSRange(location: location, length: 0))
       let line = nsString.substring(with: lineRange)
-      if firstMatch("^\\s*```", in: line) != nil {
+      if MarkdownTextRange.firstRegexMatch("^\\s*```", in: line) != nil {
         if let existingStart = start {
           ranges.append(NSRange(
             location: existingStart,
@@ -203,14 +233,17 @@ public enum MarkdownStyler {
       .flatMap(makeSpans)
   }
 
-  private static func firstMatch(_ pattern: String, in string: String) -> NSTextCheckingResult? {
+  private static func checkingMatches(
+    pattern: String,
+    in text: String,
+    fullRange: NSRange,
+    skippedRanges: [NSRange]
+  ) -> [NSTextCheckingResult] {
     guard let regex = try? NSRegularExpression(pattern: pattern) else {
-      return nil
+      return []
     }
-    return regex.firstMatch(
-      in: string,
-      range: NSRange(location: 0, length: (string as NSString).length)
-    )
+    return regex.matches(in: text, range: fullRange)
+      .filter { !intersectsAny($0.range, skippedRanges) }
   }
 
   private static func shifted(_ range: NSRange, by offset: Int) -> NSRange {

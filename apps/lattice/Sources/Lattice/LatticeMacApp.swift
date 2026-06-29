@@ -5,14 +5,25 @@ import SwiftUI
 
 @main
 struct LatticeMacApp: App {
+  private static let minimumWindowWidth: CGFloat = 420
+  private static let minimumWindowHeight: CGFloat = 280
+
   @NSApplicationDelegateAdaptor(MacAppDelegate.self) private var appDelegate
   @Environment(\.openWindow) private var openWindow
   @State private var model = LatticeAppModel()
 
   var body: some Scene {
     WindowGroup(id: "main") {
-      LatticeRootView(model: model)
-        .frame(minWidth: 760, minHeight: 520)
+      LatticeRootView(
+        model: model,
+        commandPalettePlatformCommands: { commandPalettePlatformCommands }
+      )
+        .frame(minWidth: Self.minimumWindowWidth, minHeight: Self.minimumWindowHeight)
+        .background(WindowConfiguration(
+          width: Self.minimumWindowWidth,
+          height: Self.minimumWindowHeight,
+          identifier: Self.mainWindowIdentifier
+        ))
         .task {
           model.start()
         }
@@ -25,7 +36,44 @@ struct LatticeMacApp: App {
         }
         .keyboardShortcut("n", modifiers: [.command])
       }
+      CommandGroup(replacing: .pasteboard) {
+        Button("Cut") {
+          NSApp.sendAction(#selector(NSText.cut(_:)), to: nil, from: nil)
+        }
+        .keyboardShortcut("x", modifiers: [.command])
+
+        Button("Copy") {
+          NSApp.sendAction(#selector(NSText.copy(_:)), to: nil, from: nil)
+        }
+        .keyboardShortcut("c", modifiers: [.command])
+
+        Button("Paste") {
+          NSApp.sendAction(#selector(NSText.paste(_:)), to: nil, from: nil)
+        }
+        .keyboardShortcut("v", modifiers: [.command])
+
+        Button("Select All") {
+          NSApp.sendAction(#selector(NSText.selectAll(_:)), to: nil, from: nil)
+        }
+        .keyboardShortcut("a", modifiers: [.command])
+      }
       CommandMenu("Lattice") {
+        Button("Settings...") {
+          showMainWindow()
+          model.showSettings()
+        }
+        .keyboardShortcut(",", modifiers: [.command])
+
+        Divider()
+
+        Button("Command Palette...") {
+          showMainWindow()
+          model.showCommandPalette()
+        }
+        .keyboardShortcut("p", modifiers: [.command, .shift])
+
+        Divider()
+
         Button("Choose Notes Folder...") {
           showMainWindow()
           model.showFolderImporter()
@@ -35,6 +83,37 @@ struct LatticeMacApp: App {
             appDelegate.checkForUpdates()
           }
         }
+      }
+      CommandMenu("Navigate") {
+        Button("Back") {
+          model.navigateBack()
+        }
+        .keyboardShortcut("[", modifiers: [.command])
+        .disabled(!model.canNavigateBack)
+
+        Button("Forward") {
+          model.navigateForward()
+        }
+        .keyboardShortcut("]", modifiers: [.command])
+        .disabled(!model.canNavigateForward)
+      }
+      CommandMenu("Editor") {
+        Button("Increase Font Size") {
+          model.increaseEditorFontSize()
+        }
+        .keyboardShortcut("+", modifiers: [.command])
+        .disabled(!model.canIncreaseEditorFontSize)
+
+        Button("Decrease Font Size") {
+          model.decreaseEditorFontSize()
+        }
+        .keyboardShortcut("-", modifiers: [.command])
+        .disabled(!model.canDecreaseEditorFontSize)
+
+        Button("Reset Font Size") {
+          model.resetEditorFontSize()
+        }
+        .keyboardShortcut("0", modifiers: [.command])
       }
     }
 
@@ -51,6 +130,10 @@ struct LatticeMacApp: App {
       Button("Choose Notes Folder...") {
         showMainWindow()
         model.showFolderImporter()
+      }
+      Button("Settings...") {
+        showMainWindow()
+        model.showSettings()
       }
       if let folderURL = model.folderURL {
         Button("Open Notes Folder") {
@@ -78,8 +161,61 @@ struct LatticeMacApp: App {
   }
 
   private func showMainWindow() {
-    openWindow(id: "main")
+    if let window = NSApp.windows.first(where: { $0.identifier?.rawValue == Self.mainWindowIdentifier }) {
+      window.makeKeyAndOrderFront(nil)
+    } else {
+      openWindow(id: "main")
+    }
     NSApp.activate(ignoringOtherApps: true)
+  }
+
+  private var commandPalettePlatformCommands: [CommandPaletteCommand] {
+    [
+      CommandPaletteCommand(
+        id: "mac.checkForUpdates",
+        title: "Check for Updates",
+        subtitle: appDelegate.canCheckForUpdates
+          ? "Look for a newer Lattice release"
+          : "Available in release builds",
+        systemImage: "arrow.triangle.2.circlepath",
+        isSetupSafe: true
+      ) {
+        if appDelegate.canCheckForUpdates {
+          appDelegate.checkForUpdates()
+        } else {
+          model.errorMessage = "Update checking is available in release builds."
+        }
+      }
+    ]
+  }
+}
+
+private extension LatticeMacApp {
+  static let mainWindowIdentifier = "main"
+}
+
+private struct WindowConfiguration: NSViewRepresentable {
+  let width: CGFloat
+  let height: CGFloat
+  let identifier: String
+
+  func makeNSView(context: Context) -> NSView {
+    let view = NSView()
+    updateWindow(for: view)
+    return view
+  }
+
+  func updateNSView(_ nsView: NSView, context: Context) {
+    updateWindow(for: nsView)
+  }
+
+  private func updateWindow(for view: NSView) {
+    DispatchQueue.main.async {
+      let size = NSSize(width: width, height: height)
+      view.window?.identifier = NSUserInterfaceItemIdentifier(identifier)
+      view.window?.minSize = size
+      view.window?.contentMinSize = size
+    }
   }
 }
 
