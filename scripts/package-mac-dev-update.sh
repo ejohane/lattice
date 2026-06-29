@@ -11,10 +11,24 @@ download_url_prefix="${LATTICE_SPARKLE_DOWNLOAD_URL_PREFIX:-}"
 update_dir="${LATTICE_SPARKLE_UPDATE_DIR:-$repo_root/dist/sparkle-dev}"
 artifact="${LATTICE_MAC_APP_ARTIFACT:-lattice-macos-app-dev}"
 appcast_name="${LATTICE_SPARKLE_APPCAST_NAME:-appcast.xml}"
+codesign_identity="${LATTICE_CODESIGN_IDENTITY:-}"
+allow_adhoc_update_signature="${LATTICE_ALLOW_ADHOC_UPDATE_SIGNATURE:-0}"
 
 if [[ -z "$sparkle_feed_url" ]]; then
   printf 'error: set LATTICE_SPARKLE_FEED_URL to the development appcast URL.\n' >&2
   printf 'example: LATTICE_SPARKLE_FEED_URL=http://localhost:8000/appcast.xml %s\n' "$0" >&2
+  exit 1
+fi
+
+if [[ "$allow_adhoc_update_signature" != "1" && ( -z "$codesign_identity" || "$codesign_identity" == "-" ) ]]; then
+  cat >&2 <<'EOF'
+error: local updater archives need a stable LATTICE_CODESIGN_IDENTITY.
+
+Ad-hoc signed updates are useful for Sparkle plumbing tests, but macOS will treat
+each updated app as a different Reminders requester. Set
+LATTICE_CODESIGN_IDENTITY, or set LATTICE_ALLOW_ADHOC_UPDATE_SIGNATURE=1 for a
+disposable test that may reset Reminders permission.
+EOF
   exit 1
 fi
 
@@ -43,6 +57,8 @@ LATTICE_ARTIFACT_DIR="$update_dir" \
 LATTICE_MAC_APP_ARTIFACT="$artifact" \
 LATTICE_SPARKLE_FEED_URL="$sparkle_feed_url" \
 LATTICE_SPARKLE_PUBLIC_ED_KEY="$sparkle_public_ed_key" \
+LATTICE_CODESIGN_IDENTITY="${codesign_identity:--}" \
+LATTICE_ALLOW_ADHOC_UPDATE_SIGNATURE="$allow_adhoc_update_signature" \
 bash "$repo_root/scripts/package-mac-app.sh" >/dev/null
 
 appcast_args=()

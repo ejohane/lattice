@@ -113,18 +113,26 @@ apps/lattice/.build/artifacts/sparkle/Sparkle/bin/generate_keys --account lattic
 
 LATTICE_SPARKLE_FEED_URL=http://localhost:8000/appcast.xml \
 LATTICE_SPARKLE_PUBLIC_ED_KEY="$(apps/lattice/.build/artifacts/sparkle/Sparkle/bin/generate_keys --account lattice-dev -p)" \
+LATTICE_CODESIGN_IDENTITY="Developer ID Application: Your Name (TEAMID)" \
 bash scripts/build-mac-app.sh
 ```
 
 Sparkle is configured only when `LATTICE_SPARKLE_FEED_URL` is present at build
-time. Release builds also require `LATTICE_SPARKLE_PUBLIC_ED_KEY`.
+time. Updater-enabled builds also require stable code signing. Do not ship
+ad-hoc signed updater archives: macOS ties Reminders permission to the app's
+code requirement, and ad-hoc signatures change on every update.
 
 Generate a local development update archive and appcast:
 
 ```bash
 LATTICE_SPARKLE_FEED_URL=http://localhost:8000/appcast.xml \
+LATTICE_CODESIGN_IDENTITY="Developer ID Application: Your Name (TEAMID)" \
 bun run package:mac-dev-update
 ```
+
+For disposable local Sparkle plumbing tests only, you can opt into ad-hoc
+signing with `LATTICE_ALLOW_ADHOC_UPDATE_SIGNATURE=1`. That mode can reset
+Reminders permission after the update installs.
 
 ## Release
 
@@ -144,3 +152,7 @@ Mac app update publishing requires Sparkle EdDSA keys in GitHub Actions:
 
 - `LATTICE_SPARKLE_PUBLIC_ED_KEY`: embedded in release app bundles.
 - `LATTICE_SPARKLE_PRIVATE_ED_KEY`: used to sign appcasts.
+- `LATTICE_CODESIGN_IDENTITY`: Developer ID Application identity name.
+- `LATTICE_MACOS_CODESIGN_CERTIFICATE_BASE64`: base64-encoded `.p12` signing certificate.
+- `LATTICE_MACOS_CODESIGN_CERTIFICATE_PASSWORD`: password for the `.p12` file.
+- `LATTICE_MACOS_KEYCHAIN_PASSWORD`: temporary CI keychain password.
