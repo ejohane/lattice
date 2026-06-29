@@ -52,7 +52,7 @@ enum MarkdownAttributedRenderer {
     let codeBlocks = codeBlockRanges(in: nsString)
     applyBlockStyles(to: attributed, fontSize: fontSize, codeBlocks: codeBlocks, activeRanges: activeRanges)
     applyInlineStyles(to: attributed, fontSize: fontSize, skippedRanges: codeBlocks, activeRanges: activeRanges)
-    applyWikiLinkStyles(to: attributed, fontSize: fontSize, states: wikiLinkStates)
+    applyWikiLinkStyles(to: attributed, fontSize: fontSize, states: wikiLinkStates, activeRanges: activeRanges)
     hideLatticeMetadataComments(in: attributed, fontSize: fontSize, activeRanges: activeRanges)
   }
 
@@ -468,10 +468,22 @@ enum MarkdownAttributedRenderer {
   private static func applyWikiLinkStyles(
     to attributed: NSMutableAttributedString,
     fontSize: CGFloat,
-    states: [WikiLinkRenderState]
+    states: [WikiLinkRenderState],
+    activeRanges: [NSRange]
   ) {
-    for state in states where NSMaxRange(state.range) <= attributed.length {
-      attributed.addAttributes(wikiLinkAttributes(fontSize: fontSize, status: state.status), range: state.range)
+    for link in WikiLinkParser.links(in: attributed.string) where NSMaxRange(link.range) <= attributed.length {
+      let status = states.first { $0.range == link.range }?.status ?? .resolved
+      attributed.addAttributes(
+        wikiLinkAttributes(fontSize: fontSize, status: status),
+        range: linkContentRange(for: link.range)
+      )
+
+      let delimiterAttributes = range(link.range, containsAnyActive: activeRanges)
+        ? tokenAttributes(fontSize: fontSize)
+        : hiddenTokenAttributes(fontSize: fontSize)
+      for delimiterRange in linkDelimiterRanges(for: link.range) {
+        attributed.addAttributes(delimiterAttributes, range: delimiterRange)
+      }
     }
   }
 
@@ -584,6 +596,23 @@ enum MarkdownAttributedRenderer {
     NSRange(location: range.location + offset, length: range.length)
   }
 
+  private static func linkContentRange(for range: NSRange) -> NSRange {
+    guard range.length >= 4 else {
+      return range
+    }
+    return NSRange(location: range.location + 2, length: range.length - 4)
+  }
+
+  private static func linkDelimiterRanges(for range: NSRange) -> [NSRange] {
+    guard range.length >= 4 else {
+      return []
+    }
+    return [
+      NSRange(location: range.location, length: 2),
+      NSRange(location: NSMaxRange(range) - 2, length: 2)
+    ]
+  }
+
   private static func range(_ range: NSRange, intersectsAny ranges: [NSRange]) -> Bool {
     ranges.contains { NSIntersectionRange(range, $0).length > 0 }
   }
@@ -632,9 +661,13 @@ enum MarkdownAttributedRenderer {
 import UIKit
 
 enum MarkdownAttributedRenderer {
-  static func render(_ text: String, wikiLinkStates: [WikiLinkRenderState] = []) -> NSAttributedString {
+  static func render(
+    _ text: String,
+    activeRanges: [NSRange] = [],
+    wikiLinkStates: [WikiLinkRenderState] = []
+  ) -> NSAttributedString {
     let attributed = NSMutableAttributedString(string: text, attributes: baseTypingAttributes())
-    applyStyles(to: attributed, wikiLinkStates: wikiLinkStates)
+    applyStyles(to: attributed, activeRanges: activeRanges, wikiLinkStates: wikiLinkStates)
     return attributed
   }
 
@@ -649,16 +682,18 @@ enum MarkdownAttributedRenderer {
     ]
   }
 
-  private static func applyStyles(to attributed: NSMutableAttributedString, wikiLinkStates: [WikiLinkRenderState]) {
+  private static func applyStyles(
+    to attributed: NSMutableAttributedString,
+    activeRanges: [NSRange],
+    wikiLinkStates: [WikiLinkRenderState]
+  ) {
     for span in MarkdownStyler.spans(in: attributed.string) {
       guard NSMaxRange(span.range) <= attributed.length else {
         continue
       }
       attributed.addAttributes(attributes(for: span), range: span.range)
     }
-    for state in wikiLinkStates where NSMaxRange(state.range) <= attributed.length {
-      attributed.addAttributes(wikiLinkAttributes(for: state.status), range: state.range)
-    }
+    applyWikiLinkStyles(to: attributed, activeRanges: activeRanges, states: wikiLinkStates)
     hideLatticeMetadataComments(in: attributed)
   }
 
@@ -739,6 +774,65 @@ enum MarkdownAttributedRenderer {
         .underlineStyle: NSUnderlineStyle.patternDash.rawValue | NSUnderlineStyle.single.rawValue
       ]
     }
+  }
+
+  private static func applyWikiLinkStyles(
+    to attributed: NSMutableAttributedString,
+    activeRanges: [NSRange],
+    states: [WikiLinkRenderState]
+  ) {
+    for link in WikiLinkParser.links(in: attributed.string) where NSMaxRange(link.range) <= attributed.length {
+      let status = states.first { $0.range == link.range }?.status ?? .resolved
+      attributed.addAttributes(wikiLinkAttributes(for: status), range: linkContentRange(for: link.range))
+
+      let delimiterAttributes = range(link.range, containsAnyActive: activeRanges)
+        ? wikiLinkDelimiterAttributes()
+        : hiddenWikiLinkDelimiterAttributes()
+      for delimiterRange in linkDelimiterRanges(for: link.range) {
+        attributed.addAttributes(delimiterAttributes, range: delimiterRange)
+      }
+    }
+  }
+
+  private static func wikiLinkDelimiterAttributes() -> [NSAttributedString.Key: Any] {
+    [
+      .foregroundColor: UIColor.tertiaryLabel,
+      .font: UIFont.monospacedSystemFont(ofSize: 16, weight: .regular)
+    ]
+  }
+
+  private static func hiddenWikiLinkDelimiterAttributes() -> [NSAttributedString.Key: Any] {
+    [
+      .foregroundColor: UIColor.clear,
+      .font: UIFont.systemFont(ofSize: 0.1)
+    ]
+  }
+
+  private static func range(_ range: NSRange, containsAnyActive activeRanges: [NSRange]) -> Bool {
+    activeRanges.contains { activeRange in
+      if activeRange.length > 0 {
+        return NSIntersectionRange(range, activeRange).length > 0
+      }
+
+      return activeRange.location > range.location && activeRange.location < NSMaxRange(range)
+    }
+  }
+
+  private static func linkContentRange(for range: NSRange) -> NSRange {
+    guard range.length >= 4 else {
+      return range
+    }
+    return NSRange(location: range.location + 2, length: range.length - 4)
+  }
+
+  private static func linkDelimiterRanges(for range: NSRange) -> [NSRange] {
+    guard range.length >= 4 else {
+      return []
+    }
+    return [
+      NSRange(location: range.location, length: 2),
+      NSRange(location: NSMaxRange(range) - 2, length: 2)
+    ]
   }
 
   private static func hideLatticeMetadataComments(in attributed: NSMutableAttributedString) {

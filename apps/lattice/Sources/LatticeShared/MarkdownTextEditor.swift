@@ -804,6 +804,7 @@ public struct MarkdownTextEditor: UIViewRepresentable {
     var lastFocusToken = 0
     var lastRenderedWikiLinkStates: [WikiLinkRenderState] = []
     private var isRendering = false
+    private var activeWikiLinkRange: NSRange?
 
     init(parent: MarkdownTextEditor) {
       self.parent = parent
@@ -820,8 +821,16 @@ public struct MarkdownTextEditor: UIViewRepresentable {
     }
 
     public func textViewDidChangeSelection(_ textView: UITextView) {
+      guard !isRendering else {
+        return
+      }
       parent.selectedRange = textView.selectedRange
       parent.onSelectionChange()
+      let clampedSelection = clamped(textView.selectedRange, length: (textView.text as NSString).length)
+      let nextActiveWikiLinkRange = WikiLinkParser.link(at: clampedSelection.location, in: textView.text)?.range
+      if nextActiveWikiLinkRange != activeWikiLinkRange {
+        render(textView.text, in: textView, preserving: clampedSelection)
+      }
     }
 
     public func gestureRecognizer(_ gestureRecognizer: UIGestureRecognizer, shouldReceive touch: UITouch) -> Bool {
@@ -873,8 +882,14 @@ public struct MarkdownTextEditor: UIViewRepresentable {
         return
       }
       isRendering = true
-      textView.attributedText = MarkdownAttributedRenderer.render(text, wikiLinkStates: parent.wikiLinkStates)
-      textView.selectedRange = clamped(selection, length: (text as NSString).length)
+      let clampedSelection = clamped(selection, length: (text as NSString).length)
+      activeWikiLinkRange = WikiLinkParser.link(at: clampedSelection.location, in: text)?.range
+      textView.attributedText = MarkdownAttributedRenderer.render(
+        text,
+        activeRanges: [clampedSelection],
+        wikiLinkStates: parent.wikiLinkStates
+      )
+      textView.selectedRange = clampedSelection
       textView.typingAttributes = MarkdownAttributedRenderer.baseTypingAttributes()
       lastRenderedWikiLinkStates = parent.wikiLinkStates
       isRendering = false

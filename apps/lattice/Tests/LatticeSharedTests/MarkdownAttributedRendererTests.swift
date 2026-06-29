@@ -1,4 +1,5 @@
 import Foundation
+import LatticeCore
 @testable import LatticeShared
 import Testing
 
@@ -150,6 +151,52 @@ struct MarkdownAttributedRendererTests {
     #expect(linkColor == NSColor.systemBlue)
     #expect(linkUnderline == NSUnderlineStyle.single.rawValue)
     #expect(linkURL == URL(string: "https://example.com"))
+  }
+
+  @Test("hides inactive wiki link delimiters while styling content")
+  func hidesInactiveWikiLinkDelimiters() throws {
+    let text = "Linked [[Project Plan]]"
+    let string = text as NSString
+    let linkRange = string.range(of: "[[Project Plan]]")
+    let contentRange = string.range(of: "Project Plan")
+    let attributed = MarkdownAttributedRenderer.render(
+      text,
+      activeRanges: [NSRange(location: string.length, length: 0)],
+      wikiLinkStates: [WikiLinkRenderState(range: linkRange, status: .resolved)]
+    )
+
+    let openingColor = attributed.attribute(.foregroundColor, at: linkRange.location, effectiveRange: nil) as? NSColor
+    let openingFont = try #require(attributed.attribute(.font, at: linkRange.location, effectiveRange: nil) as? NSFont)
+    let closingColor = attributed.attribute(.foregroundColor, at: NSMaxRange(linkRange) - 1, effectiveRange: nil) as? NSColor
+    let linkColor = attributed.attribute(.foregroundColor, at: contentRange.location, effectiveRange: nil) as? NSColor
+    let linkUnderline = attributed.attribute(.underlineStyle, at: contentRange.location, effectiveRange: nil) as? Int
+
+    #expect(openingColor == NSColor.clear)
+    #expect(openingFont.pointSize <= 0.2)
+    #expect(closingColor == NSColor.clear)
+    #expect(linkColor == NSColor.systemBlue)
+    #expect(linkUnderline == NSUnderlineStyle.single.rawValue)
+  }
+
+  @Test("shows active wiki link delimiters as editable source")
+  func showsActiveWikiLinkDelimiters() throws {
+    let text = "Linked [[Project Plan]]"
+    let string = text as NSString
+    let linkRange = string.range(of: "[[Project Plan]]")
+    let contentRange = string.range(of: "Project Plan")
+    let attributed = MarkdownAttributedRenderer.render(
+      text,
+      activeRanges: [NSRange(location: contentRange.location + 2, length: 0)],
+      wikiLinkStates: [WikiLinkRenderState(range: linkRange, status: .resolved)]
+    )
+
+    let openingColor = attributed.attribute(.foregroundColor, at: linkRange.location, effectiveRange: nil) as? NSColor
+    let openingFont = try #require(attributed.attribute(.font, at: linkRange.location, effectiveRange: nil) as? NSFont)
+    let closingColor = attributed.attribute(.foregroundColor, at: NSMaxRange(linkRange) - 1, effectiveRange: nil) as? NSColor
+
+    #expect(openingColor == NSColor.tertiaryLabelColor)
+    #expect(openingFont.pointSize == 14)
+    #expect(closingColor == NSColor.tertiaryLabelColor)
   }
 
   @Test("renders bare URLs as links")
