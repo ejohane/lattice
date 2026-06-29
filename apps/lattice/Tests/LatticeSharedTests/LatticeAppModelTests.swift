@@ -1,6 +1,7 @@
 import Foundation
 import LatticeCore
 import LatticeShared
+import LatticeTestSupport
 import Testing
 
 @MainActor
@@ -510,7 +511,7 @@ struct LatticeAppModelTests {
     let fixture = try Fixture()
     defer { fixture.cleanup() }
     let store = TaskSyncStore(appSupportURL: fixture.appSupportURL, fileManager: fixture.fileManager)
-    let provider = AppModelFakeTaskSyncProvider()
+    let provider = FakeTaskSyncProvider()
     let engine = TaskSyncEngine(store: store, provider: provider, fileManager: fixture.fileManager)
 
     try fixture.library.selectNotesFolder(fixture.root)
@@ -550,7 +551,7 @@ struct LatticeAppModelTests {
     let fixture = try Fixture()
     defer { fixture.cleanup() }
     let store = TaskSyncStore(appSupportURL: fixture.appSupportURL, fileManager: fixture.fileManager)
-    let provider = AppModelFakeTaskSyncProvider()
+    let provider = FakeTaskSyncProvider()
     let engine = TaskSyncEngine(store: store, provider: provider, fileManager: fixture.fileManager)
 
     try fixture.library.selectNotesFolder(fixture.root)
@@ -587,68 +588,6 @@ struct LatticeAppModelTests {
     #expect(MarkdownDocumentMetadata.noteID(in: rawBody) == noteID)
     #expect(model.text == "- [x] Buy milk\nMore context")
     #expect(try fixture.library.body(for: note) == "- [x] Buy milk\nMore context\n")
-  }
-}
-
-@MainActor
-private final class AppModelFakeTaskSyncProvider: TaskSyncProvider {
-  let id = "apple-reminders"
-  let displayName = "Apple Reminders"
-  var tasks: [String: TaskProviderTask] = [:]
-  private var nextID = 1
-
-  func authorizationStatus() -> TaskProviderAuthorizationStatus {
-    .authorized
-  }
-
-  func requestAuthorization() async throws -> TaskProviderAuthorizationStatus {
-    .authorized
-  }
-
-  func destinations() async throws -> [TaskDestination] {
-    [TaskDestination(id: "reminders", title: "Reminders")]
-  }
-
-  func defaultDestination() async throws -> TaskDestination? {
-    TaskDestination(id: "reminders", title: "Reminders")
-  }
-
-  func task(externalID: String) async throws -> TaskProviderTask? {
-    tasks[externalID]
-  }
-
-  func upsertTask(
-    externalID: String?,
-    title: String,
-    isCompleted: Bool,
-    destinationID: String
-  ) async throws -> TaskProviderTask {
-    let id = externalID ?? "external-\(nextID)"
-    if externalID == nil {
-      nextID += 1
-    }
-    let task = TaskProviderTask(
-      externalID: id,
-      title: title,
-      isCompleted: isCompleted,
-      destinationID: destinationID
-    )
-    tasks[id] = task
-    return task
-  }
-
-  func updateCompletion(externalID: String, isCompleted: Bool) async throws -> TaskProviderTask? {
-    guard let task = tasks[externalID] else {
-      return nil
-    }
-    let updated = TaskProviderTask(
-      externalID: task.externalID,
-      title: task.title,
-      isCompleted: isCompleted,
-      destinationID: task.destinationID
-    )
-    tasks[externalID] = updated
-    return updated
   }
 }
 

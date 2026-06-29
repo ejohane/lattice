@@ -1,5 +1,6 @@
 import Foundation
 import LatticeCore
+import LatticeTestSupport
 import Testing
 
 @Suite("MarkdownTaskScanner")
@@ -183,69 +184,6 @@ struct TaskSyncEngineTests {
     #expect(summary.unlinkedTasks == 1)
     #expect(fixture.provider.tasks[externalID]?.isCompleted == true)
     #expect(try #require(records.first).deletedAt != nil)
-  }
-}
-
-@MainActor
-private final class FakeTaskSyncProvider: TaskSyncProvider {
-  let id = "apple-reminders"
-  let displayName = "Apple Reminders"
-  var authorization = TaskProviderAuthorizationStatus.authorized
-  var tasks: [String: TaskProviderTask] = [:]
-  private var nextID = 1
-
-  func authorizationStatus() -> TaskProviderAuthorizationStatus {
-    authorization
-  }
-
-  func requestAuthorization() async throws -> TaskProviderAuthorizationStatus {
-    authorization
-  }
-
-  func destinations() async throws -> [TaskDestination] {
-    [TaskDestination(id: "reminders", title: "Reminders")]
-  }
-
-  func defaultDestination() async throws -> TaskDestination? {
-    TaskDestination(id: "reminders", title: "Reminders")
-  }
-
-  func task(externalID: String) async throws -> TaskProviderTask? {
-    tasks[externalID]
-  }
-
-  func upsertTask(
-    externalID: String?,
-    title: String,
-    isCompleted: Bool,
-    destinationID: String
-  ) async throws -> TaskProviderTask {
-    let id = externalID ?? "external-\(nextID)"
-    if externalID == nil {
-      nextID += 1
-    }
-    let task = TaskProviderTask(
-      externalID: id,
-      title: title,
-      isCompleted: isCompleted,
-      destinationID: destinationID
-    )
-    tasks[id] = task
-    return task
-  }
-
-  func updateCompletion(externalID: String, isCompleted: Bool) async throws -> TaskProviderTask? {
-    guard let task = tasks[externalID] else {
-      return nil
-    }
-    let updated = TaskProviderTask(
-      externalID: task.externalID,
-      title: task.title,
-      isCompleted: isCompleted,
-      destinationID: task.destinationID
-    )
-    tasks[externalID] = updated
-    return updated
   }
 }
 
