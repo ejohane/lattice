@@ -114,15 +114,59 @@ jobs:
       - name: Install dependencies
         run: bun install --frozen-lockfile
 
+      - name: Import Developer ID certificate
+        env:
+          LATTICE_MACOS_CODESIGN_CERTIFICATE_BASE64: ${{ secrets.LATTICE_MACOS_CODESIGN_CERTIFICATE_BASE64 }}
+          LATTICE_MACOS_CODESIGN_CERTIFICATE_PASSWORD: ${{ secrets.LATTICE_MACOS_CODESIGN_CERTIFICATE_PASSWORD }}
+          LATTICE_MACOS_KEYCHAIN_PASSWORD: ${{ secrets.LATTICE_MACOS_KEYCHAIN_PASSWORD }}
+        run: |
+          if [[ -z "$LATTICE_MACOS_CODESIGN_CERTIFICATE_BASE64" ]]; then
+            printf 'error: missing LATTICE_MACOS_CODESIGN_CERTIFICATE_BASE64 secret.\n' >&2
+            exit 1
+          fi
+          if [[ -z "$LATTICE_MACOS_CODESIGN_CERTIFICATE_PASSWORD" ]]; then
+            printf 'error: missing LATTICE_MACOS_CODESIGN_CERTIFICATE_PASSWORD secret.\n' >&2
+            exit 1
+          fi
+          if [[ -z "$LATTICE_MACOS_KEYCHAIN_PASSWORD" ]]; then
+            printf 'error: missing LATTICE_MACOS_KEYCHAIN_PASSWORD secret.\n' >&2
+            exit 1
+          fi
+
+          certificate_path="$RUNNER_TEMP/lattice-codesign-certificate.p12"
+          keychain_path="$RUNNER_TEMP/lattice-codesign.keychain-db"
+
+          printf '%s' "$LATTICE_MACOS_CODESIGN_CERTIFICATE_BASE64" | base64 --decode > "$certificate_path"
+          security create-keychain -p "$LATTICE_MACOS_KEYCHAIN_PASSWORD" "$keychain_path"
+          security set-keychain-settings -lut 21600 "$keychain_path"
+          security unlock-keychain -p "$LATTICE_MACOS_KEYCHAIN_PASSWORD" "$keychain_path"
+          security import "$certificate_path" \
+            -P "$LATTICE_MACOS_CODESIGN_CERTIFICATE_PASSWORD" \
+            -k "$keychain_path" \
+            -T /usr/bin/codesign
+          security list-keychains -d user -s "$keychain_path"
+          security default-keychain -s "$keychain_path"
+          security set-key-partition-list \
+            -S apple-tool:,apple:,codesign: \
+            -s \
+            -k "$LATTICE_MACOS_KEYCHAIN_PASSWORD" \
+            "$keychain_path"
+          security find-identity -v -p codesigning "$keychain_path"
+
       - name: Package macOS app
         env:
           LATTICE_APP_VERSION: ${{ needs.plan-release.outputs.version }}
           LATTICE_APP_BUILD: ${{ needs.plan-release.outputs.app_build }}
           LATTICE_SPARKLE_FEED_URL: https://github.com/${{ github.repository }}/releases/latest/download/${{ matrix.mac-appcast }}
           LATTICE_SPARKLE_PUBLIC_ED_KEY: ${{ secrets.LATTICE_SPARKLE_PUBLIC_ED_KEY }}
+          LATTICE_CODESIGN_IDENTITY: ${{ secrets.LATTICE_CODESIGN_IDENTITY }}
         run: |
           if [[ -z "$LATTICE_SPARKLE_PUBLIC_ED_KEY" ]]; then
             printf 'error: missing LATTICE_SPARKLE_PUBLIC_ED_KEY secret for updater-enabled macOS releases.\n' >&2
+            exit 1
+          fi
+          if [[ -z "$LATTICE_CODESIGN_IDENTITY" ]]; then
+            printf 'error: missing LATTICE_CODESIGN_IDENTITY secret for updater-enabled macOS releases.\n' >&2
             exit 1
           fi
           LATTICE_MAC_APP_ARTIFACT="${{ matrix.mac-app-artifact }}" \

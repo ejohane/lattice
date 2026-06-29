@@ -18,12 +18,32 @@ app_build="${LATTICE_APP_BUILD:-1}"
 sparkle_feed_url="${LATTICE_SPARKLE_FEED_URL:-}"
 sparkle_public_ed_key="${LATTICE_SPARKLE_PUBLIC_ED_KEY:-}"
 codesign_identity="${LATTICE_CODESIGN_IDENTITY:--}"
+allow_adhoc_update_signature="${LATTICE_ALLOW_ADHOC_UPDATE_SIGNATURE:-0}"
+require_stable_codesign="${LATTICE_REQUIRE_STABLE_CODESIGN:-0}"
 dist_dir="$repo_root/dist"
 app_dir="$dist_dir/$app_name.app"
 contents_dir="$app_dir/Contents"
 macos_dir="$contents_dir/MacOS"
 resources_dir="$contents_dir/Resources"
 frameworks_dir="$contents_dir/Frameworks"
+
+if [[ -n "$sparkle_feed_url" && "$allow_adhoc_update_signature" != "1" ]]; then
+  require_stable_codesign=1
+fi
+
+if [[ "$require_stable_codesign" == "1" && ( -z "$codesign_identity" || "$codesign_identity" == "-" ) ]]; then
+  cat >&2 <<'EOF'
+error: updater-enabled Lattice.app builds must use a stable code signing identity.
+
+macOS ties Reminders and other TCC permissions to the app's code requirement.
+Ad-hoc signatures change with every update, so Reminders permission is lost after
+Sparkle installs a new archive.
+
+Set LATTICE_CODESIGN_IDENTITY to a Developer ID Application identity, or set
+LATTICE_ALLOW_ADHOC_UPDATE_SIGNATURE=1 only for disposable local updater tests.
+EOF
+  exit 1
+fi
 
 swift build --package-path "$package_path" -c "$configuration"
 build_dir="$(swift build --package-path "$package_path" -c "$configuration" --show-bin-path)"
@@ -84,6 +104,8 @@ cat <<PLIST
   <string>14.0</string>
   <key>NSHighResolutionCapable</key>
   <true/>
+  <key>NSRemindersUsageDescription</key>
+  <string>Lattice syncs Markdown checkbox tasks to your selected Reminders list.</string>
   <key>NSRemindersFullAccessUsageDescription</key>
   <string>Lattice syncs Markdown checkbox tasks to your selected Reminders list.</string>
 PLIST
@@ -117,7 +139,15 @@ PLIST
 } > "$contents_dir/Info.plist"
 
 if [[ -n "$codesign_identity" ]]; then
-  codesign --force --deep --sign "$codesign_identity" "$app_dir"
+  codesign_args=(--force --sign "$codesign_identity")
+  if [[ "$codesign_identity" != "-" ]]; then
+    codesign_args+=(--timestamp --options runtime)
+  fi
+
+  codesign "${codesign_args[@]}" "$frameworks_dir/Sparkle.framework"
+  codesign "${codesign_args[@]}" "$macos_dir/$executable_name"
+  codesign "${codesign_args[@]}" "$app_dir"
+  codesign --verify --strict --deep "$app_dir"
 fi
 
 printf '%s\n' "$app_dir"
