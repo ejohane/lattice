@@ -34,6 +34,11 @@ let package = Package(
         "LatticeEditor"
       ]
     ),
+    .target(
+      name: "LatticeTestSupport",
+      dependencies: ["LatticeCore"],
+      path: "Tests/LatticeTestSupport"
+    ),
     .executableTarget(
       name: "Lattice",
       dependencies: [
@@ -49,12 +54,16 @@ let package = Package(
       name: "LatticeCoreTests",
       dependencies: [
         "LatticeCore",
-        "LatticeEditor"
+        "LatticeEditor",
+        "LatticeTestSupport"
       ]
     ),
     .testTarget(
       name: "LatticeSharedTests",
-      dependencies: ["LatticeShared"]
+      dependencies: [
+        "LatticeShared",
+        "LatticeTestSupport"
+      ]
     )
   ]
 )

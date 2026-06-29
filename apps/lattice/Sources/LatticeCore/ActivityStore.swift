@@ -85,9 +85,14 @@ public final class ActivityStore: ActivityStoring {
     let line = data + Data([0x0a])
     if fileManager.fileExists(atPath: fileURL.path) {
       let handle = try FileHandle(forWritingTo: fileURL)
-      defer { try? handle.close() }
-      try handle.seekToEnd()
-      try handle.write(contentsOf: line)
+      do {
+        try handle.seekToEnd()
+        try handle.write(contentsOf: line)
+        try handle.close()
+      } catch {
+        try? handle.close()
+        throw error
+      }
     } else {
       try line.write(to: fileURL, options: .atomic)
     }

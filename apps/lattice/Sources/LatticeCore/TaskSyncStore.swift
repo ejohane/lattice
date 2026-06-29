@@ -1,5 +1,4 @@
 import Foundation
-import SQLite3
 
 public final class TaskSyncStore {
   private let fileManager: FileManager
@@ -123,18 +122,18 @@ public final class TaskSyncStore {
     )
   }
 
-  private func connection(for notesFolderURL: URL) throws -> TaskSQLiteConnection {
+  private func connection(for notesFolderURL: URL) throws -> SQLiteConnection {
     let databaseURL = databaseURL(for: notesFolderURL)
     try fileManager.createDirectory(
       at: databaseURL.deletingLastPathComponent(),
       withIntermediateDirectories: true
     )
-    let connection = try TaskSQLiteConnection(url: databaseURL)
+    let connection = try SQLiteConnection(url: databaseURL, makeError: TaskSyncError.database)
     try configure(connection)
     return connection
   }
 
-  private func configure(_ connection: TaskSQLiteConnection) throws {
+  private func configure(_ connection: SQLiteConnection) throws {
     try connection.execute("PRAGMA journal_mode = WAL")
     try connection.execute("PRAGMA foreign_keys = ON")
     try connection.execute(
@@ -186,7 +185,7 @@ public final class TaskSyncStore {
     try connection.execute("PRAGMA user_version = 1")
   }
 
-  private func set(_ key: String, value: String, connection: TaskSQLiteConnection) throws {
+  private func set(_ key: String, value: String, connection: SQLiteConnection) throws {
     try connection.execute(
       """
       INSERT INTO settings (key, value)
@@ -197,7 +196,7 @@ public final class TaskSyncStore {
     )
   }
 
-  private func upsert(_ record: StoredTaskRecord, connection: TaskSQLiteConnection) throws {
+  private func upsert(_ record: StoredTaskRecord, connection: SQLiteConnection) throws {
     try connection.execute(
       """
       INSERT INTO task_records (
@@ -229,7 +228,7 @@ public final class TaskSyncStore {
     )
   }
 
-  private func upsert(_ link: StoredProviderLink, connection: TaskSQLiteConnection) throws {
+  private func upsert(_ link: StoredProviderLink, connection: SQLiteConnection) throws {
     try connection.execute(
       """
       INSERT INTO provider_links (
@@ -339,101 +338,3 @@ public final class TaskSyncStore {
     return ISO8601DateFormatter().date(from: value)
   }
 }
-
-private final class TaskSQLiteConnection {
-  private let database: OpaquePointer?
-
-  init(url: URL) throws {
-    var database: OpaquePointer?
-    guard sqlite3_open(url.path, &database) == SQLITE_OK else {
-      let message = database.map { String(cString: sqlite3_errmsg($0)) } ?? "Could not open SQLite database."
-      sqlite3_close(database)
-      throw TaskSyncError.database(message)
-    }
-    self.database = database
-  }
-
-  deinit {
-    sqlite3_close(database)
-  }
-
-  func execute(_ sql: String, bindings: [SQLiteBinding] = []) throws {
-    let statement = try prepare(sql, bindings: bindings)
-    defer { sqlite3_finalize(statement) }
-    let result = sqlite3_step(statement)
-    guard result == SQLITE_DONE || result == SQLITE_ROW else {
-      throw error()
-    }
-  }
-
-  func query(_ sql: String, bindings: [SQLiteBinding] = []) throws -> [[String: SQLiteValue]] {
-    let statement = try prepare(sql, bindings: bindings)
-    defer { sqlite3_finalize(statement) }
-
-    var rows: [[String: SQLiteValue]] = []
-    var result = sqlite3_step(statement)
-    while result == SQLITE_ROW {
-      let count = sqlite3_column_count(statement)
-      var row: [String: SQLiteValue] = [:]
-      for index in 0..<count {
-        let name = String(cString: sqlite3_column_name(statement, index))
-        row[name] = value(for: statement, index: index)
-      }
-      rows.append(row)
-      result = sqlite3_step(statement)
-    }
-
-    guard result == SQLITE_DONE else {
-      throw error()
-    }
-
-    return rows
-  }
-
-  private func prepare(_ sql: String, bindings: [SQLiteBinding]) throws -> OpaquePointer? {
-    var statement: OpaquePointer?
-    guard sqlite3_prepare_v2(database, sql, -1, &statement, nil) == SQLITE_OK else {
-      throw error()
-    }
-    for (offset, binding) in bindings.enumerated() {
-      try bind(binding, at: Int32(offset + 1), statement: statement)
-    }
-    return statement
-  }
-
-  private func bind(_ binding: SQLiteBinding, at index: Int32, statement: OpaquePointer?) throws {
-    let result: Int32
-    switch binding {
-    case .integer(let value):
-      result = sqlite3_bind_int64(statement, index, value)
-    case .text(let value):
-      result = sqlite3_bind_text(statement, index, value, -1, TASK_SQLITE_TRANSIENT)
-    case .nullableText(let value):
-      if let value {
-        result = sqlite3_bind_text(statement, index, value, -1, TASK_SQLITE_TRANSIENT)
-      } else {
-        result = sqlite3_bind_null(statement, index)
-      }
-    }
-    guard result == SQLITE_OK else {
-      throw error()
-    }
-  }
-
-  private func value(for statement: OpaquePointer?, index: Int32) -> SQLiteValue {
-    switch sqlite3_column_type(statement, index) {
-    case SQLITE_INTEGER:
-      return .integer(sqlite3_column_int64(statement, index))
-    case SQLITE_TEXT:
-      return .text(String(cString: sqlite3_column_text(statement, index)))
-    default:
-      return .null
-    }
-  }
-
-  private func error() -> TaskSyncError {
-    TaskSyncError.database(String(cString: sqlite3_errmsg(database)))
-  }
-}
-
-private let TASK_SQLITE_TRANSIENT = unsafeBitCast(-1, to: sqlite3_destructor_type.self)
