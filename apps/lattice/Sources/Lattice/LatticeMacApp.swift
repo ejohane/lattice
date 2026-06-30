@@ -97,6 +97,12 @@ struct LatticeMacApp: App {
         .keyboardShortcut("]", modifiers: [.command])
         .disabled(!model.canNavigateForward)
       }
+      CommandGroup(replacing: .sidebar) {
+        Button("Toggle Sidebar") {
+          appDelegate.toggleSidebar()
+        }
+        .keyboardShortcut("s", modifiers: [.command, .option])
+      }
       CommandMenu("Editor") {
         Button("Increase Font Size") {
           model.increaseEditorFontSize()
@@ -194,6 +200,79 @@ private extension LatticeMacApp {
   static let mainWindowIdentifier = "main"
 }
 
+private extension NSWindow {
+  var splitViewController: NSSplitViewController? {
+    contentViewController?.firstDescendant(of: NSSplitViewController.self)
+      ?? contentView?.firstDescendant(of: NSSplitView.self)?.owningSplitViewController
+  }
+
+  var sidebarToggleButton: NSButton? {
+    contentView?.superview?.firstDescendant(of: NSButton.self) { button in
+      let label = button.accessibilityLabel() ?? button.toolTip ?? button.title
+      return label == "Show Sidebar" || label == "Hide Sidebar"
+    }
+  }
+}
+
+private extension NSApplication {
+  var activeWindow: NSWindow? {
+    keyWindow ?? mainWindow ?? windows.first(where: { $0.isVisible })
+  }
+}
+
+private extension NSViewController {
+  func firstDescendant<T: NSViewController>(of type: T.Type) -> T? {
+    if let match = self as? T {
+      return match
+    }
+    for child in children {
+      if let match = child.firstDescendant(of: type) {
+        return match
+      }
+    }
+    return nil
+  }
+}
+
+private extension NSView {
+  func firstDescendant<T: NSView>(of type: T.Type) -> T? {
+    if let match = self as? T {
+      return match
+    }
+    for subview in subviews {
+      if let match = subview.firstDescendant(of: type) {
+        return match
+      }
+    }
+    return nil
+  }
+
+  func firstDescendant<T: NSView>(of type: T.Type, where predicate: (T) -> Bool) -> T? {
+    if let match = self as? T, predicate(match) {
+      return match
+    }
+    for subview in subviews {
+      if let match = subview.firstDescendant(of: type, where: predicate) {
+        return match
+      }
+    }
+    return nil
+  }
+}
+
+private extension NSSplitView {
+  var owningSplitViewController: NSSplitViewController? {
+    var responder: NSResponder? = nextResponder
+    while let currentResponder = responder {
+      if let splitViewController = currentResponder as? NSSplitViewController {
+        return splitViewController
+      }
+      responder = currentResponder.nextResponder
+    }
+    return nil
+  }
+}
+
 private struct WindowConfiguration: NSViewRepresentable {
   let width: CGFloat
   let height: CGFloat
@@ -222,22 +301,53 @@ private struct WindowConfiguration: NSViewRepresentable {
 @MainActor
 final class MacAppDelegate: NSObject, NSApplicationDelegate {
   private var updaterController: SPUStandardUpdaterController?
+  private var sidebarShortcutMonitor: Any?
 
   var canCheckForUpdates: Bool {
     updaterController != nil
   }
 
   func applicationDidFinishLaunching(_ notification: Notification) {
+    resetStaleSidebarPersistenceIfNeeded()
+
+    sidebarShortcutMonitor = NSEvent.addLocalMonitorForEvents(matching: .keyDown) { [weak self] event in
+      guard Self.isToggleSidebarShortcut(event) else {
+        return event
+      }
+      self?.toggleSidebar()
+      return nil
+    }
+
     configureUpdater()
     NSApp.setActivationPolicy(.regular)
   }
 
   func applicationWillTerminate(_ notification: Notification) {
+    if let sidebarShortcutMonitor {
+      NSEvent.removeMonitor(sidebarShortcutMonitor)
+    }
     NSApp.sendAction(#selector(NSResponder.cancelOperation(_:)), to: nil, from: nil)
   }
 
   func checkForUpdates() {
     updaterController?.checkForUpdates(nil)
+  }
+
+  func toggleSidebar() {
+    if let toggleSidebarItem = NSApp.activeWindow?.toolbar?.items.first(where: { $0.itemIdentifier == .toggleSidebar }),
+       let button = toggleSidebarItem.view as? NSButton {
+      button.performClick(nil)
+      return
+    }
+    if let button = NSApp.activeWindow?.sidebarToggleButton {
+      button.performClick(nil)
+      return
+    }
+    if let splitViewController = NSApp.activeWindow?.splitViewController {
+      splitViewController.toggleSidebar(nil)
+      return
+    }
+    NSApp.sendAction(#selector(NSSplitViewController.toggleSidebar(_:)), to: nil, from: nil)
   }
 
   private func configureUpdater() {
@@ -253,5 +363,31 @@ final class MacAppDelegate: NSObject, NSApplicationDelegate {
       updaterDelegate: nil,
       userDriverDelegate: nil
     )
+  }
+
+  private func resetStaleSidebarPersistenceIfNeeded() {
+    let key = "didResetSidebarPersistenceForNativeToggle"
+    let defaults = UserDefaults.standard
+    guard !defaults.bool(forKey: key) else {
+      return
+    }
+
+    for defaultsKey in defaults.dictionaryRepresentation().keys
+      where defaultsKey.hasPrefix("NSSplitView Subview Frames")
+        && defaultsKey.contains("SidebarNavigationSplitView") {
+      defaults.removeObject(forKey: defaultsKey)
+    }
+    defaults.set(true, forKey: key)
+  }
+
+  private static func isToggleSidebarShortcut(_ event: NSEvent) -> Bool {
+    guard event.charactersIgnoringModifiers?.lowercased() == "s" else {
+      return false
+    }
+    let modifiers = event.modifierFlags.intersection(.deviceIndependentFlagsMask)
+    return modifiers.contains(.command)
+      && modifiers.contains(.option)
+      && !modifiers.contains(.shift)
+      && !modifiers.contains(.control)
   }
 }
