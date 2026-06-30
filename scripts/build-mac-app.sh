@@ -26,6 +26,7 @@ contents_dir="$app_dir/Contents"
 macos_dir="$contents_dir/MacOS"
 resources_dir="$contents_dir/Resources"
 frameworks_dir="$contents_dir/Frameworks"
+app_icon_source="$repo_root/assets/icon.icns"
 
 if [[ -n "$sparkle_feed_url" && "$allow_adhoc_update_signature" != "1" ]]; then
   require_stable_codesign=1
@@ -58,6 +59,11 @@ rm -rf "$app_dir"
 mkdir -p "$macos_dir" "$resources_dir" "$frameworks_dir"
 cp "$binary" "$macos_dir/$executable_name"
 chmod 0755 "$macos_dir/$executable_name"
+if [[ ! -f "$app_icon_source" ]]; then
+  printf 'Missing app icon: %s\n' "$app_icon_source" >&2
+  exit 1
+fi
+cp "$app_icon_source" "$resources_dir/Lattice.icns"
 
 sparkle_framework="$build_dir/Sparkle.framework"
 if [[ ! -d "$sparkle_framework" ]]; then
@@ -94,6 +100,8 @@ cat <<PLIST
   <string>$app_name</string>
   <key>CFBundleDisplayName</key>
   <string>$app_name</string>
+  <key>CFBundleIconFile</key>
+  <string>Lattice</string>
   <key>CFBundlePackageType</key>
   <string>APPL</string>
   <key>CFBundleShortVersionString</key>
