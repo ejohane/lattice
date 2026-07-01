@@ -10,12 +10,14 @@ public final class LatticeAppModel {
   public let noteLibrary: NoteLibrary
   private let noteIndex: any NoteIndexing
   private let activityStore: any ActivityStoring
+  private let timelineStore: TimelineStore
   private let taskSyncEngine: TaskSyncEngine
   private let editorPreferencesStore: EditorPreferencesStore
   private let taskSyncPollIntervalNanoseconds: UInt64
   private let dateProvider: () -> Date
   private let session: NoteEditingSession
   private var autosaveWorkItem: DispatchWorkItem?
+  private var timelineAutosaveWorkItem: DispatchWorkItem?
   private var taskSyncPollTask: Task<Void, Never>?
   private var scopedFolderURL: URL?
   private var backStack: [NavigationHistoryEntry] = []
@@ -26,6 +28,7 @@ public final class LatticeAppModel {
   public var text = ""
   public var selectedRange = NSRange(location: 0, length: 0)
   public var selectedNote: SavedNote?
+  public var selectedPage = LatticePage.noteEditor
   public var folderURL: URL?
   public var status = "Choose a notes folder"
   public var errorMessage: String?
@@ -54,12 +57,18 @@ public final class LatticeAppModel {
   public var taskSyncErrorMessage: String?
   public var pendingInitialSyncTaskCount: Int?
   public var todayActivityEvents: [ActivityEvent] = []
+  public var timelineEntries: [TimelineEntry] = []
+  public var activeTimelineEntryID: TimelineEntry.ID?
+  public var timelineText = ""
+  public var timelineSelectedRange = NSRange(location: 0, length: 0)
+  public var timelineFocusToken = 0
 
   public init(
     noteLibrary: NoteLibrary = NoteLibrary(),
     folderAccessStore: FolderAccessStore = FolderAccessStore(),
     noteIndex: any NoteIndexing = NoteIndex(),
     activityStore: any ActivityStoring = ActivityStore(),
+    timelineStore: TimelineStore = TimelineStore(),
     taskSyncEngine: TaskSyncEngine = TaskSyncEngine(),
     editorPreferencesStore: EditorPreferencesStore = EditorPreferencesStore(),
     taskSyncPollIntervalNanoseconds: UInt64 = 15_000_000_000,
@@ -69,6 +78,7 @@ public final class LatticeAppModel {
     self.folderAccessStore = folderAccessStore
     self.noteIndex = noteIndex
     self.activityStore = activityStore
+    self.timelineStore = timelineStore
     self.taskSyncEngine = taskSyncEngine
     self.editorPreferencesStore = editorPreferencesStore
     self.taskSyncPollIntervalNanoseconds = taskSyncPollIntervalNanoseconds
@@ -239,6 +249,7 @@ public final class LatticeAppModel {
 
   public func createNewNote() {
     flushAutosave()
+    selectedPage = .noteEditor
     forwardStack.removeAll()
     session.resetForNewNote()
     selectedNote = nil
@@ -298,6 +309,7 @@ public final class LatticeAppModel {
     recordHistory: Bool,
     flushBeforeOpen: Bool = true
   ) -> Bool {
+    flushTimelineAutosave()
     if flushBeforeOpen {
       flushAutosave()
     }
@@ -312,6 +324,7 @@ public final class LatticeAppModel {
         forwardStack.removeAll()
       }
       selectedNote = restored.note
+      selectedPage = .noteEditor
       let editorBody = Self.editorBody(from: restored.body)
       text = editorBody
       selectedRange = selection.map { clampedRange($0, in: editorBody) }
@@ -592,6 +605,52 @@ public final class LatticeAppModel {
     updateWikiAutocomplete()
   }
 
+  public func showTimeline() {
+    flushAutosave()
+    do {
+      try loadTimeline()
+      activeTimelineEntryID = nil
+      timelineText = ""
+      timelineSelectedRange = NSRange(location: 0, length: 0)
+      selectedPage = .timeline
+      status = "Timeline"
+      preferredCompactColumn = .detail
+      timelineFocusToken += 1
+    } catch {
+      errorMessage = error.localizedDescription
+    }
+  }
+
+  public func activateTimelineEntry(_ entry: TimelineEntry) {
+    flushTimelineAutosave()
+    guard timelineEntries.contains(where: { $0.id == entry.id }) else {
+      return
+    }
+    activeTimelineEntryID = entry.id
+    timelineText = entry.body
+    timelineSelectedRange = NSRange(location: (entry.body as NSString).length, length: 0)
+    selectedPage = .timeline
+    status = "Timeline"
+    timelineFocusToken += 1
+  }
+
+  public func composeNewTimelineEntry() {
+    flushTimelineAutosave()
+    activeTimelineEntryID = nil
+    timelineText = ""
+    timelineSelectedRange = NSRange(location: 0, length: 0)
+    selectedPage = .timeline
+    status = "Timeline"
+    timelineFocusToken += 1
+  }
+
+  public func timelineTextDidChange() {
+    vimStatusMessage = nil
+    scheduleTimelineAutosave()
+  }
+
+  public func timelineSelectionDidChange() {}
+
   public func setVimModeEnabled(_ isEnabled: Bool) {
     isVimModeEnabled = isEnabled
     vimState = VimEditorState(mode: isEnabled ? .normal : .insert)
@@ -637,8 +696,26 @@ public final class LatticeAppModel {
     DispatchQueue.main.asyncAfter(deadline: .now() + 0.8, execute: workItem)
   }
 
+  public func scheduleTimelineAutosave() {
+    timelineAutosaveWorkItem?.cancel()
+    let workItem = DispatchWorkItem { [weak self] in
+      Task { @MainActor in
+        self?.autosaveTimeline(showStatus: true)
+      }
+    }
+    timelineAutosaveWorkItem = workItem
+    DispatchQueue.main.asyncAfter(deadline: .now() + 0.8, execute: workItem)
+  }
+
   public func flushAutosave() {
     flushAutosave(syncSavedNote: true)
+    flushTimelineAutosave()
+  }
+
+  public func flushTimelineAutosave() {
+    timelineAutosaveWorkItem?.cancel()
+    timelineAutosaveWorkItem = nil
+    autosaveTimeline(showStatus: false)
   }
 
   private func flushAutosave(syncSavedNote: Bool) {
@@ -712,6 +789,10 @@ public final class LatticeAppModel {
     folderURL = url
     status = url.lastPathComponent
     reloadNotes()
+    timelineEntries = []
+    activeTimelineEntryID = nil
+    timelineText = ""
+    timelineSelectedRange = NSRange(location: 0, length: 0)
     rebuildNoteIndex()
     refreshTodayActivity()
     loadTaskSyncSettings()
@@ -726,6 +807,7 @@ public final class LatticeAppModel {
     do {
       if let restored = try session.restoreActiveNote() {
         selectedNote = restored.note
+        selectedPage = .noteEditor
         let editorBody = Self.editorBody(from: restored.body)
         text = editorBody
         selectedRange = NSRange(location: (editorBody as NSString).length, length: 0)
@@ -771,6 +853,81 @@ public final class LatticeAppModel {
         if showStatus {
           status = "Autosaved \(displayTitle(for: note))"
         }
+      }
+    } catch {
+      errorMessage = error.localizedDescription
+    }
+  }
+
+  private func loadTimeline() throws {
+    guard let folderURL else {
+      timelineEntries = []
+      throw NoteLibraryError.noActiveNotesFolder
+    }
+    timelineEntries = try timelineStore.load(notesFolderURL: folderURL).entries
+  }
+
+  private func autosaveTimeline(showStatus: Bool) {
+    timelineAutosaveWorkItem?.cancel()
+    timelineAutosaveWorkItem = nil
+    guard selectedPage == .timeline, let folderURL else {
+      return
+    }
+
+    let blocks = Self.timelineBlocks(from: timelineText)
+    let completesEntry = Self.endsWithTimelineSeparator(timelineText)
+    var nextEntries = timelineEntries
+
+    if let activeTimelineEntryID {
+      guard let index = nextEntries.firstIndex(where: { $0.id == activeTimelineEntryID }) else {
+        self.activeTimelineEntryID = nil
+        timelineText = ""
+        return
+      }
+
+      if blocks.isEmpty {
+        nextEntries.remove(at: index)
+        self.activeTimelineEntryID = nil
+        timelineText = ""
+        timelineSelectedRange = NSRange(location: 0, length: 0)
+      } else {
+        nextEntries[index].body = blocks[0]
+        if blocks.count > 1 {
+          let inserted = blocks.dropFirst().map {
+            TimelineEntry(createdAt: dateProvider(), body: $0)
+          }
+          nextEntries.insert(contentsOf: inserted, at: index + 1)
+        }
+        if completesEntry {
+          self.activeTimelineEntryID = nil
+          timelineText = ""
+          timelineSelectedRange = NSRange(location: 0, length: 0)
+        } else {
+          timelineSelectedRange = clampedRange(timelineSelectedRange, in: timelineText)
+        }
+      }
+    } else {
+      guard !blocks.isEmpty else {
+        return
+      }
+      let inserted = blocks.reversed().map {
+        TimelineEntry(createdAt: dateProvider(), body: $0)
+      }
+      nextEntries.insert(contentsOf: inserted, at: 0)
+      if completesEntry {
+        timelineText = ""
+        timelineSelectedRange = NSRange(location: 0, length: 0)
+      } else if let active = inserted.first {
+        activeTimelineEntryID = active.id
+        timelineSelectedRange = clampedRange(timelineSelectedRange, in: timelineText)
+      }
+    }
+
+    do {
+      timelineEntries = nextEntries
+      try timelineStore.save(TimelineDocument(entries: timelineEntries), notesFolderURL: folderURL)
+      if showStatus {
+        status = "Autosaved Timeline"
       }
     } catch {
       errorMessage = error.localizedDescription
@@ -909,13 +1066,18 @@ public final class LatticeAppModel {
       return
     }
 
+    var didChangeHeading = false
     for (previous, next) in zip(previousHeadings, nextHeadings)
       where previous.level == next.level && previous.title != next.title {
+      didChangeHeading = true
       try? noteLibrary.rewriteWikiHeadingLinks(
         targetNoteID: indexed.noteID,
         oldHeading: previous.title,
         newHeading: next.title
       )
+    }
+    guard didChangeHeading else {
+      return
     }
     try? noteIndex.rebuild(notesFolderURL: folderURL)
     if let updatedBody = try? noteLibrary.body(for: note) {
@@ -1291,6 +1453,14 @@ public final class LatticeAppModel {
         self?.navigateForward()
       },
       CommandPaletteCommand(
+        id: "lattice.timeline",
+        title: "Timeline",
+        subtitle: "Open the running timeline note",
+        systemImage: "clock"
+      ) { [weak self] in
+        self?.showTimeline()
+      },
+      CommandPaletteCommand(
         id: "lattice.newNote",
         title: "New Note",
         subtitle: "Start a fresh Markdown note",
@@ -1334,6 +1504,20 @@ public final class LatticeAppModel {
     return String(notePath.dropFirst(folderPath.count + 1))
   }
 
+  private static func timelineBlocks(from body: String) -> [String] {
+    body.replacingOccurrences(of: "\r\n", with: "\n")
+      .replacingOccurrences(of: "\r", with: "\n")
+      .components(separatedBy: "\n\n")
+      .map { $0.trimmingCharacters(in: .whitespacesAndNewlines) }
+      .filter { !$0.isEmpty }
+  }
+
+  private static func endsWithTimelineSeparator(_ body: String) -> Bool {
+    let normalized = body.replacingOccurrences(of: "\r\n", with: "\n")
+      .replacingOccurrences(of: "\r", with: "\n")
+    return normalized.hasSuffix("\n\n")
+  }
+
   private static func activityExcerpt(from body: String, limit: Int = 240) -> String? {
     let collapsed = body
       .split(whereSeparator: { $0.isNewline })
@@ -1354,6 +1538,11 @@ public final class LatticeAppModel {
 public enum NavigationColumn: Hashable {
   case sidebar
   case detail
+}
+
+public enum LatticePage: Hashable {
+  case noteEditor
+  case timeline
 }
 
 public struct CommandPaletteCommand: Identifiable {

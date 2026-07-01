@@ -1,3 +1,4 @@
+import Foundation
 import LatticeCore
 import LatticeEditor
 import SwiftUI
@@ -110,7 +111,12 @@ public struct LatticeRootView: View {
   @ViewBuilder
   private var editorPane: some View {
     if model.hasFolder {
-      NoteEditorPane(model: model)
+      switch model.selectedPage {
+      case .noteEditor:
+        NoteEditorPane(model: model)
+      case .timeline:
+        TimelinePane(model: model)
+      }
     } else {
       FolderSetupView(model: model)
     }
@@ -395,6 +401,262 @@ private struct NoteEditorPane: View {
       Label(title, systemImage: systemImage)
     }
     .disabled(!model.hasFolder)
+  }
+}
+
+private struct TimelinePane: View {
+  @Bindable var model: LatticeAppModel
+  private let maximumTimelineWidth: CGFloat = 980
+  private let timestampWidth: CGFloat = 96
+  private let railWidth: CGFloat = 38
+
+  var body: some View {
+    ScrollView {
+      LazyVStack(alignment: .leading, spacing: 0) {
+        if model.activeTimelineEntryID == nil {
+          TimelineEntryRow(
+            timestamp: "Now",
+            entry: nil,
+            isActive: true,
+            timestampWidth: timestampWidth,
+            railWidth: railWidth,
+            model: model
+          )
+        }
+
+        ForEach(model.timelineEntries) { entry in
+          TimelineEntryRow(
+            timestamp: timestampText(for: entry.createdAt),
+            entry: entry,
+            isActive: model.activeTimelineEntryID == entry.id,
+            timestampWidth: timestampWidth,
+            railWidth: railWidth,
+            model: model
+          )
+        }
+      }
+      .padding(.top, 42)
+      .padding(.bottom, 48)
+      .frame(maxWidth: maximumTimelineWidth, alignment: .leading)
+      .padding(.horizontal, 24)
+      .frame(maxWidth: .infinity, alignment: .center)
+    }
+    .navigationTitle("Timeline")
+    #if os(macOS)
+    .navigationSplitViewColumnWidth(min: 420, ideal: 760)
+    #endif
+    .toolbar {
+      ToolbarItem(placement: .primaryAction) {
+        Button {
+          model.composeNewTimelineEntry()
+        } label: {
+          Label("New Entry", systemImage: "plus")
+        }
+        .disabled(!model.hasFolder)
+      }
+    }
+  }
+
+  private func timestampText(for date: Date) -> String {
+    let calendar = Calendar.current
+    let day: String
+    if calendar.isDateInToday(date) {
+      day = "Today"
+    } else if calendar.isDateInYesterday(date) {
+      day = "Yesterday"
+    } else if calendar.component(.year, from: date) == calendar.component(.year, from: Date()) {
+      day = Self.monthDayFormatter.string(from: date)
+    } else {
+      day = Self.monthDayYearFormatter.string(from: date)
+    }
+    return "\(day)\n\(Self.timeFormatter.string(from: date))"
+  }
+
+  private static let monthDayFormatter: DateFormatter = {
+    let formatter = DateFormatter()
+    formatter.dateFormat = "MMM d"
+    return formatter
+  }()
+
+  private static let monthDayYearFormatter: DateFormatter = {
+    let formatter = DateFormatter()
+    formatter.dateFormat = "MMM d, yyyy"
+    return formatter
+  }()
+
+  private static let timeFormatter: DateFormatter = {
+    let formatter = DateFormatter()
+    formatter.dateStyle = .none
+    formatter.timeStyle = .short
+    return formatter
+  }()
+}
+
+private struct TimelineEntryRow: View {
+  let timestamp: String
+  let entry: TimelineEntry?
+  let isActive: Bool
+  let timestampWidth: CGFloat
+  let railWidth: CGFloat
+  @Bindable var model: LatticeAppModel
+
+  var body: some View {
+    HStack(alignment: .top, spacing: 0) {
+      Text(timestamp)
+        .font(.system(size: 14, weight: isActive ? .semibold : .regular))
+        .lineSpacing(7)
+        .multilineTextAlignment(.trailing)
+        .foregroundColor(isActive ? .primary : .secondary.opacity(0.72))
+        .frame(width: timestampWidth, alignment: .topTrailing)
+        .padding(.top, isActive ? 20 : 11)
+
+      TimelineRail(isActive: isActive)
+        .frame(width: railWidth, height: rowHeight)
+
+      Group {
+        if isActive {
+          TimelineActiveEditor(model: model)
+        } else if let entry {
+          TimelineInactiveEntry(entry: entry, model: model)
+        }
+      }
+      .frame(maxWidth: .infinity, alignment: .leading)
+      .padding(.leading, 20)
+      .padding(.top, isActive ? 0 : 8)
+    }
+    .contentShape(Rectangle())
+    .onTapGesture {
+      if !isActive, let entry {
+        model.activateTimelineEntry(entry)
+      }
+    }
+  }
+
+  private var rowHeight: CGFloat {
+    isActive ? 220 : 150
+  }
+}
+
+private struct TimelineRail: View {
+  let isActive: Bool
+
+  var body: some View {
+    ZStack(alignment: .top) {
+      Rectangle()
+        .fill(Color.secondary.opacity(0.18))
+        .frame(width: 1)
+        .frame(maxHeight: .infinity)
+
+      ZStack {
+        Circle()
+          .stroke(isActive ? Color.primary : Color.secondary.opacity(0.58), lineWidth: isActive ? 2 : 1.5)
+          .frame(width: isActive ? 18 : 13, height: isActive ? 18 : 13)
+        if isActive {
+          Circle()
+            .fill(Color.primary)
+            .frame(width: 7, height: 7)
+        }
+      }
+      .background(.background)
+      .padding(.top, isActive ? 18 : 12)
+    }
+  }
+}
+
+private struct TimelineActiveEditor: View {
+  @Bindable var model: LatticeAppModel
+
+  var body: some View {
+    VStack(spacing: 0) {
+      MarkdownTextEditor(
+        text: $model.timelineText,
+        selectedRange: $model.timelineSelectedRange,
+        vimState: $model.vimState,
+        fontSize: CGFloat(model.editorFontSize),
+        focusToken: model.timelineFocusToken,
+        isVimModeEnabled: model.isVimModeEnabled,
+        showsRelativeLineNumbers: false,
+        hasAutocompleteSuggestions: false,
+        wikiLinkStates: [],
+        onTextChange: {
+          model.timelineTextDidChange()
+        },
+        onSelectionChange: {
+          model.timelineSelectionDidChange()
+        },
+        onWikiLinkActivated: { _ in },
+        onMarkdownLinkActivated: { _ in },
+        onDismissAutocomplete: {},
+        onVimWrite: {
+          model.flushTimelineAutosave()
+          model.setVimStatusMessage("Saved")
+        },
+        onVimStatusChange: { message in
+          model.setVimStatusMessage(message)
+        }
+      )
+      .frame(minHeight: 190)
+
+      HStack(spacing: 8) {
+        if let modeText {
+          Text(modeText)
+            .font(.caption2.weight(.bold))
+            .foregroundStyle(modeText == "NORMAL" ? .white : .secondary)
+            .padding(.horizontal, 7)
+            .padding(.vertical, 3)
+            .background {
+              Capsule()
+                .fill(modeText == "NORMAL" ? Color.accentColor : Color.secondary.opacity(0.14))
+            }
+        }
+        Text(statusText)
+          .font(.footnote.weight(.medium))
+          .foregroundStyle(.secondary)
+      }
+      .frame(maxWidth: .infinity)
+      .padding(.vertical, 10)
+    }
+  }
+
+  private var statusText: String {
+    let count = model.timelineText.count
+    let unit = count == 1 ? "character" : "characters"
+    if let message = model.vimStatusMessage, !message.isEmpty {
+      return "\(message) - \(count) \(unit)"
+    }
+    return "\(count) \(unit)"
+  }
+
+  private var modeText: String? {
+    guard model.isVimModeEnabled else {
+      return nil
+    }
+
+    switch model.vimState.mode {
+    case .insert:
+      return "INSERT"
+    case .normal:
+      return "NORMAL"
+    case .visual:
+      return "VISUAL"
+    case .commandLine:
+      return ":\(model.vimState.commandText)"
+    }
+  }
+}
+
+private struct TimelineInactiveEntry: View {
+  let entry: TimelineEntry
+  @Bindable var model: LatticeAppModel
+
+  var body: some View {
+    Text(entry.body)
+      .font(.system(size: model.editorFontSize))
+      .lineSpacing(7)
+      .foregroundStyle(.secondary.opacity(0.72))
+      .textSelection(.enabled)
+      .frame(maxWidth: 720, alignment: .leading)
+      .padding(.vertical, 4)
   }
 }
 
