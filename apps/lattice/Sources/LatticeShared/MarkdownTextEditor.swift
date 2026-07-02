@@ -164,7 +164,6 @@ public struct MarkdownTextEditor: NSViewRepresentable {
     scrollView.backgroundColor = theme.nsColor(.editorBackground)
     scrollView.contentView.backgroundColor = theme.nsColor(.editorBackground)
     textView.backgroundColor = theme.nsColor(.editorBackground)
-    textView.textColor = theme.nsColor(.primaryText)
     textView.insertionPointColor = theme.nsColor(.accent)
     textView.configureRuler(
       showsRelativeLineNumbers: showsRelativeLineNumbers,
@@ -286,7 +285,7 @@ public struct MarkdownTextEditor: NSViewRepresentable {
       }
       isRendering = true
       let activeRanges = parent.dimsInactiveParagraphs
-        ? [Self.timelineEntryLineRange(containing: selection, in: text)]
+        ? [Self.lineRange(containing: selection, in: text)]
         : [selection]
       let attributed = MarkdownAttributedRenderer.render(
         text,
@@ -298,6 +297,7 @@ public struct MarkdownTextEditor: NSViewRepresentable {
         theme: parent.theme,
         imagePreviewStates: parent.imagePreviewStates
       )
+      textView.textColor = parent.theme.nsColor(.primaryText)
       textView.textStorage?.setAttributedString(attributed)
       textView.setSelectedRange(clamped(selection, length: (text as NSString).length))
       textView.typingAttributes = MarkdownAttributedRenderer.baseTypingAttributes(
@@ -466,16 +466,12 @@ public struct MarkdownTextEditor: NSViewRepresentable {
       return lineRect.offsetBy(dx: origin.x, dy: origin.y)
     }
 
-    private static func timelineEntryLineRange(containing selection: NSRange, in text: String) -> NSRange {
+    private static func lineRange(containing selection: NSRange, in text: String) -> NSRange {
       let nsString = text as NSString
       guard nsString.length > 0 else {
         return NSRange(location: 0, length: 0)
       }
       let location = min(max(selection.location, 0), nsString.length)
-      let blocks = TimelineTextRanges.blocks(in: nsString)
-      if let block = blocks.first(where: { location >= $0.location && location <= NSMaxRange($0) + 1 }) {
-        return block
-      }
       return nsString.lineRange(for: NSRange(location: location, length: 0))
     }
 
@@ -1776,6 +1772,7 @@ public struct MarkdownTextEditor: UIViewRepresentable {
     if textView.text != text
       || context.coordinator.lastRenderedFontFamily != fontFamily
       || context.coordinator.lastRenderedWikiLinkStates != wikiLinkStates
+      || context.coordinator.lastRenderedDimsInactiveParagraphs != dimsInactiveParagraphs
       || context.coordinator.lastRenderedTheme != theme {
       context.coordinator.render(text, in: textView, preserving: clampedSelectedRange)
     } else if textView.selectedRange != clampedSelectedRange {
@@ -1783,7 +1780,6 @@ public struct MarkdownTextEditor: UIViewRepresentable {
     }
     (textView as? MarkdownUIKitTextView)?.theme = theme
     textView.backgroundColor = theme.uiColor(.editorBackground)
-    textView.textColor = theme.uiColor(.primaryText)
     textView.tintColor = theme.uiColor(.accent)
     if context.coordinator.lastFocusToken != focusToken {
       context.coordinator.lastFocusToken = focusToken
@@ -1799,6 +1795,7 @@ public struct MarkdownTextEditor: UIViewRepresentable {
     var lastFocusToken = 0
     var lastRenderedFontFamily: EditorFontFamily?
     var lastRenderedWikiLinkStates: [WikiLinkRenderState] = []
+    var lastRenderedDimsInactiveParagraphs = false
     var lastRenderedTheme = LatticeTheme(id: .system)
     private var isRendering = false
     private var activeWikiLinkRange: NSRange?
@@ -1825,7 +1822,7 @@ public struct MarkdownTextEditor: UIViewRepresentable {
       parent.onSelectionChange()
       let clampedSelection = clamped(textView.selectedRange, length: (textView.text as NSString).length)
       let nextActiveWikiLinkRange = WikiLinkParser.link(at: clampedSelection.location, in: textView.text)?.range
-      if nextActiveWikiLinkRange != activeWikiLinkRange {
+      if parent.dimsInactiveParagraphs || nextActiveWikiLinkRange != activeWikiLinkRange {
         render(textView.text, in: textView, preserving: clampedSelection)
       }
     }
@@ -1881,11 +1878,16 @@ public struct MarkdownTextEditor: UIViewRepresentable {
       isRendering = true
       let clampedSelection = clamped(selection, length: (text as NSString).length)
       activeWikiLinkRange = WikiLinkParser.link(at: clampedSelection.location, in: text)?.range
+      let activeRanges = parent.dimsInactiveParagraphs
+        ? [Self.lineRange(containing: clampedSelection, in: text)]
+        : [clampedSelection]
+      textView.textColor = parent.theme.uiColor(.primaryText)
       textView.attributedText = MarkdownAttributedRenderer.render(
         text,
         fontFamily: parent.fontFamily,
-        activeRanges: [clampedSelection],
+        activeRanges: activeRanges,
         wikiLinkStates: parent.wikiLinkStates,
+        dimsInactiveText: parent.dimsInactiveParagraphs,
         theme: parent.theme,
         imagePreviewStates: parent.imagePreviewStates
       )
@@ -1896,8 +1898,18 @@ public struct MarkdownTextEditor: UIViewRepresentable {
       )
       lastRenderedFontFamily = parent.fontFamily
       lastRenderedWikiLinkStates = parent.wikiLinkStates
+      lastRenderedDimsInactiveParagraphs = parent.dimsInactiveParagraphs
       lastRenderedTheme = parent.theme
       isRendering = false
+    }
+
+    private static func lineRange(containing selection: NSRange, in text: String) -> NSRange {
+      let nsString = text as NSString
+      guard nsString.length > 0 else {
+        return NSRange(location: 0, length: 0)
+      }
+      let location = min(max(selection.location, 0), nsString.length)
+      return nsString.lineRange(for: NSRange(location: location, length: 0))
     }
   }
 }
