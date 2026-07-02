@@ -4,6 +4,7 @@ import SwiftUI
 
 #if os(macOS)
 import AppKit
+import QuartzCore
 
 public struct MarkdownTextEditor: NSViewRepresentable {
   @Binding var text: String
@@ -16,6 +17,7 @@ public struct MarkdownTextEditor: NSViewRepresentable {
   let showsTimelineRuler: Bool
   let timelineEntries: [TimelineEntry]
   let dimsInactiveParagraphs: Bool
+  let caretAnchorFraction: CGFloat?
   let hasAutocompleteSuggestions: Bool
   let wikiLinkStates: [WikiLinkRenderState]
   let onTextChange: () -> Void
@@ -37,6 +39,7 @@ public struct MarkdownTextEditor: NSViewRepresentable {
     showsTimelineRuler: Bool = false,
     timelineEntries: [TimelineEntry] = [],
     dimsInactiveParagraphs: Bool = false,
+    caretAnchorFraction: CGFloat? = nil,
     hasAutocompleteSuggestions: Bool,
     wikiLinkStates: [WikiLinkRenderState],
     onTextChange: @escaping () -> Void,
@@ -57,6 +60,7 @@ public struct MarkdownTextEditor: NSViewRepresentable {
     self.showsTimelineRuler = showsTimelineRuler
     self.timelineEntries = timelineEntries
     self.dimsInactiveParagraphs = dimsInactiveParagraphs
+    self.caretAnchorFraction = caretAnchorFraction
     self.hasAutocompleteSuggestions = hasAutocompleteSuggestions
     self.wikiLinkStates = wikiLinkStates
     self.onTextChange = onTextChange
@@ -77,6 +81,7 @@ public struct MarkdownTextEditor: NSViewRepresentable {
     scrollView.drawsBackground = false
     scrollView.hasVerticalScroller = true
     scrollView.autohidesScrollers = true
+    scrollView.contentView = MarkdownClipView()
     scrollView.contentView.postsBoundsChangedNotifications = true
 
     let textView = MarkdownTextView()
@@ -106,6 +111,7 @@ public struct MarkdownTextEditor: NSViewRepresentable {
     textView.setAccessibilityIdentifier("noteEditor")
 
     scrollView.documentView = textView
+    context.coordinator.attachScrollView(scrollView)
     textView.configureRuler(
       showsRelativeLineNumbers: showsRelativeLineNumbers,
       showsTimelineRuler: showsTimelineRuler
@@ -120,6 +126,7 @@ public struct MarkdownTextEditor: NSViewRepresentable {
       return
     }
     let clampedSelectedRange = clamped(selectedRange, length: (text as NSString).length)
+    context.coordinator.configureCaretAnchorLayout(in: textView, scrollView: scrollView)
     if textView.string != text
       || context.coordinator.lastRenderedFontSize != fontSize
       || context.coordinator.lastRenderedWikiLinkStates != wikiLinkStates
@@ -138,6 +145,7 @@ public struct MarkdownTextEditor: NSViewRepresentable {
       context.coordinator.lastFocusToken = focusToken
       DispatchQueue.main.async {
         textView.window?.makeFirstResponder(textView)
+        context.coordinator.scheduleCaretAnchor(selection: clampedSelectedRange, animated: false)
       }
     }
   }
@@ -146,15 +154,40 @@ public struct MarkdownTextEditor: NSViewRepresentable {
   public final class Coordinator: NSObject, NSTextViewDelegate {
     var parent: MarkdownTextEditor
     fileprivate weak var textView: MarkdownTextView?
+    private weak var scrollView: NSScrollView?
     var lastFocusToken = 0
     var lastRenderedFontSize: CGFloat?
     var lastRenderedWikiLinkStates: [WikiLinkRenderState] = []
     var lastRenderedTimelineEntries: [TimelineEntry] = []
     var lastRenderedDimsInactiveParagraphs = false
     private var isRendering = false
+    private let defaultTextContainerInset = NSSize(width: 36, height: 34)
+    private var pendingAnchorTask: Task<Void, Never>?
 
     init(parent: MarkdownTextEditor) {
       self.parent = parent
+    }
+
+    func attachScrollView(_ scrollView: NSScrollView) {
+      guard self.scrollView !== scrollView else {
+        return
+      }
+      if let existing = self.scrollView {
+        NotificationCenter.default.removeObserver(
+          self,
+          name: NSView.boundsDidChangeNotification,
+          object: existing.contentView
+        )
+      }
+      self.scrollView = scrollView
+      scrollView.contentView.postsBoundsChangedNotifications = true
+      NotificationCenter.default.addObserver(
+        self,
+        selector: #selector(scrollViewBoundsDidChange(_:)),
+        name: NSView.boundsDidChangeNotification,
+        object: scrollView.contentView
+      )
+      scheduleCaretAnchor(animated: false)
     }
 
     public func textDidChange(_ notification: Notification) {
@@ -165,6 +198,7 @@ public struct MarkdownTextEditor: NSViewRepresentable {
       parent.selectedRange = textView.selectedRange()
       parent.onTextChange()
       render(textView.string, in: textView, preserving: textView.selectedRange())
+      scheduleCaretAnchor(animated: true)
     }
 
     public func textViewDidChangeSelection(_ notification: Notification) {
@@ -175,6 +209,42 @@ public struct MarkdownTextEditor: NSViewRepresentable {
       parent.selectedRange = selection
       parent.onSelectionChange()
       render(textView.string, in: textView, preserving: selection)
+      scheduleCaretAnchor(animated: true)
+    }
+
+    @objc private func scrollViewBoundsDidChange(_ notification: Notification) {
+      scheduleCaretAnchor(animated: false)
+    }
+
+    func configureCaretAnchorLayout(in textView: NSTextView, scrollView: NSScrollView) {
+      guard let anchor = parent.normalizedCaretAnchorFraction else {
+        if textView.textContainerInset != defaultTextContainerInset {
+          textView.textContainerInset = defaultTextContainerInset
+        }
+        if let clipView = scrollView.contentView as? MarkdownClipView {
+          clipView.verticalBoundsLimits = nil
+        }
+        if textView.minSize.height != 0 {
+          textView.minSize = NSSize(width: 0, height: 0)
+        }
+        return
+      }
+
+      let visibleHeight = scrollView.contentView.bounds.height
+      guard visibleHeight > 0 else {
+        return
+      }
+
+      if textView.textContainerInset != defaultTextContainerInset {
+        textView.textContainerInset = defaultTextContainerInset
+      }
+      ensureBottomAnchorSlack(in: textView, visibleHeight: visibleHeight, anchor: anchor)
+      configureAnchorScrollLimits(
+        in: scrollView,
+        textView: textView,
+        visibleHeight: visibleHeight,
+        anchor: anchor
+      )
     }
 
     func render(_ text: String, in textView: NSTextView, preserving selection: NSRange) {
@@ -183,7 +253,7 @@ public struct MarkdownTextEditor: NSViewRepresentable {
       }
       isRendering = true
       let activeRanges = parent.dimsInactiveParagraphs
-        ? [Self.timelineParagraphRange(containing: selection, in: text)]
+        ? [Self.timelineEntryLineRange(containing: selection, in: text)]
         : [selection]
       let attributed = MarkdownAttributedRenderer.render(
         text,
@@ -201,9 +271,159 @@ public struct MarkdownTextEditor: NSViewRepresentable {
       lastRenderedTimelineEntries = parent.timelineEntries
       lastRenderedDimsInactiveParagraphs = parent.dimsInactiveParagraphs
       isRendering = false
+      scheduleCaretAnchor(selection: selection, animated: true)
     }
 
-    private static func timelineParagraphRange(containing selection: NSRange, in text: String) -> NSRange {
+    func scheduleCaretAnchor(selection: NSRange? = nil, animated: Bool) {
+      pendingAnchorTask?.cancel()
+      pendingAnchorTask = Task { @MainActor [weak self] in
+        await Task.yield()
+        guard !Task.isCancelled, let self, let textView = self.textView else {
+          return
+        }
+        let targetSelection = selection ?? textView.selectedRange()
+        self.scrollCaretToAnchor(in: textView, selection: targetSelection, animated: animated)
+      }
+    }
+
+    func scrollCaretToAnchor(in textView: NSTextView, selection: NSRange, animated: Bool) {
+      guard let anchor = parent.normalizedCaretAnchorFraction,
+            let scrollView = scrollView ?? textView.enclosingScrollView
+      else {
+        return
+      }
+
+      let clipView = scrollView.contentView
+      let visibleRect = clipView.bounds
+      guard visibleRect.height > 0 else {
+        return
+      }
+
+      guard let caretRect = caretRect(for: selection, in: textView) else {
+        return
+      }
+
+      ensureBottomAnchorSlack(in: textView, visibleHeight: visibleRect.height, anchor: anchor)
+      configureAnchorScrollLimits(
+        in: scrollView,
+        textView: textView,
+        visibleHeight: visibleRect.height,
+        anchor: anchor
+      )
+      let targetOriginY = constrainedAnchorOrigin(
+        caretRect.midY - visibleRect.height * anchor,
+        in: scrollView
+      )
+      guard abs(visibleRect.origin.y - targetOriginY) > 0.5 else {
+        return
+      }
+
+      let targetOrigin = NSPoint(x: visibleRect.origin.x, y: targetOriginY)
+      if animated, textView.window != nil {
+        NSAnimationContext.runAnimationGroup { context in
+          context.duration = 0.12
+          context.timingFunction = CAMediaTimingFunction(name: .easeInEaseOut)
+          clipView.animator().setBoundsOrigin(targetOrigin)
+        } completionHandler: {
+          Task { @MainActor in
+            scrollView.reflectScrolledClipView(clipView)
+          }
+        }
+      } else {
+        clipView.setBoundsOrigin(targetOrigin)
+        scrollView.reflectScrolledClipView(clipView)
+      }
+    }
+
+    private func configureAnchorScrollLimits(
+      in scrollView: NSScrollView,
+      textView: NSTextView,
+      visibleHeight: CGFloat,
+      anchor: CGFloat
+    ) {
+      guard let clipView = scrollView.contentView as? MarkdownClipView else {
+        return
+      }
+
+      let topSlack = visibleHeight * anchor
+      let bottomSlack = visibleHeight * (1 - anchor)
+      let maximumNaturalOrigin = max(0, textView.frame.height - visibleHeight)
+      clipView.verticalBoundsLimits = -topSlack...maximumNaturalOrigin + bottomSlack
+    }
+
+    private func constrainedAnchorOrigin(_ originY: CGFloat, in scrollView: NSScrollView) -> CGFloat {
+      guard let clipView = scrollView.contentView as? MarkdownClipView,
+            let limits = clipView.verticalBoundsLimits
+      else {
+        return max(0, originY)
+      }
+
+      return min(max(originY, limits.lowerBound), limits.upperBound)
+    }
+
+    private func ensureBottomAnchorSlack(in textView: NSTextView, visibleHeight: CGFloat, anchor: CGFloat) {
+      guard let layoutManager = textView.layoutManager,
+            let textContainer = textView.textContainer
+      else {
+        return
+      }
+
+      layoutManager.ensureLayout(for: textContainer)
+      let usedRect = layoutManager.usedRect(for: textContainer)
+      let bottomSlack = visibleHeight * (1 - anchor) + defaultTextContainerInset.height
+      let currentWidth = max(textView.frame.width, textView.enclosingScrollView?.contentView.bounds.width ?? 0)
+      let targetHeight = max(
+        visibleHeight,
+        usedRect.maxY + textView.textContainerOrigin.y + bottomSlack
+      )
+      textView.minSize = NSSize(width: 0, height: targetHeight)
+      guard abs(textView.frame.height - targetHeight) > 1 || abs(textView.frame.width - currentWidth) > 1 else {
+        return
+      }
+      textView.setFrameSize(NSSize(width: currentWidth, height: targetHeight))
+    }
+
+    private func caretRect(for selection: NSRange, in textView: NSTextView) -> NSRect? {
+      let nsString = textView.string as NSString
+      let location = min(max(selection.location, 0), nsString.length)
+      guard let layoutManager = textView.layoutManager,
+            let textContainer = textView.textContainer
+      else {
+        return nil
+      }
+
+      layoutManager.ensureLayout(for: textContainer)
+      let origin = textView.textContainerOrigin
+      if nsString.length == 0 {
+        let font = MarkdownAttributedRenderer.bodyFont(size: parent.fontSize)
+        return NSRect(
+          x: origin.x,
+          y: origin.y,
+          width: 1,
+          height: font.ascender - font.descender + font.leading
+        )
+      }
+
+      if location == nsString.length,
+         location > 0,
+         let scalar = Unicode.Scalar(nsString.character(at: location - 1)),
+         CharacterSet.newlines.contains(scalar) {
+        return layoutManager.extraLineFragmentRect.offsetBy(dx: origin.x, dy: origin.y)
+      }
+
+      let characterLocation = min(location, nsString.length - 1)
+      let glyphRange = layoutManager.glyphRange(
+        forCharacterRange: NSRange(location: characterLocation, length: 1),
+        actualCharacterRange: nil
+      )
+      guard glyphRange.length > 0 else {
+        return nil
+      }
+      let lineRect = layoutManager.lineFragmentRect(forGlyphAt: glyphRange.location, effectiveRange: nil)
+      return lineRect.offsetBy(dx: origin.x, dy: origin.y)
+    }
+
+    private static func timelineEntryLineRange(containing selection: NSRange, in text: String) -> NSRange {
       let nsString = text as NSString
       guard nsString.length > 0 else {
         return NSRange(location: 0, length: 0)
@@ -213,8 +433,30 @@ public struct MarkdownTextEditor: NSViewRepresentable {
       if let block = blocks.first(where: { location >= $0.location && location <= NSMaxRange($0) + 1 }) {
         return block
       }
-      return NSRange(location: location, length: 0)
+      return nsString.lineRange(for: NSRange(location: location, length: 0))
     }
+
+  }
+
+  private var normalizedCaretAnchorFraction: CGFloat? {
+    guard let caretAnchorFraction else {
+      return nil
+    }
+    return min(max(caretAnchorFraction, 0.05), 0.95)
+  }
+}
+
+private final class MarkdownClipView: NSClipView {
+  var verticalBoundsLimits: ClosedRange<CGFloat>?
+
+  override func constrainBoundsRect(_ proposedBounds: NSRect) -> NSRect {
+    var bounds = super.constrainBoundsRect(proposedBounds)
+    guard let verticalBoundsLimits else {
+      return bounds
+    }
+
+    bounds.origin.y = min(max(proposedBounds.origin.y, verticalBoundsLimits.lowerBound), verticalBoundsLimits.upperBound)
+    return bounds
   }
 }
 
@@ -259,6 +501,15 @@ private final class MarkdownTextView: NSTextView {
   override func draw(_ dirtyRect: NSRect) {
     super.draw(dirtyRect)
     drawThematicBreaks()
+  }
+
+  override func scrollRangeToVisible(_ range: NSRange) {
+    if coordinator?.parent.caretAnchorFraction != nil {
+      coordinator?.scheduleCaretAnchor(selection: selectedRange(), animated: false)
+      return
+    }
+
+    super.scrollRangeToVisible(range)
   }
 
   override func performKeyEquivalent(with event: NSEvent) -> Bool {
@@ -808,7 +1059,6 @@ private final class TimelineRulerView: NSRulerView {
     let targetRange = NSRange(location: marker.range.location, length: 0)
     textView.window?.makeFirstResponder(textView)
     textView.setSelectedRange(targetRange)
-    textView.scrollRangeToVisible(marker.range)
     textView.coordinator?.parent.selectedRange = targetRange
     textView.coordinator?.parent.onSelectionChange()
     textView.coordinator?.render(textView.string, in: textView, preserving: targetRange)
@@ -1038,6 +1288,7 @@ public struct MarkdownTextEditor: UIViewRepresentable {
   let showsTimelineRuler: Bool
   let timelineEntries: [TimelineEntry]
   let dimsInactiveParagraphs: Bool
+  let caretAnchorFraction: CGFloat?
   let hasAutocompleteSuggestions: Bool
   let wikiLinkStates: [WikiLinkRenderState]
   let onTextChange: () -> Void
@@ -1059,6 +1310,7 @@ public struct MarkdownTextEditor: UIViewRepresentable {
     showsTimelineRuler: Bool = false,
     timelineEntries: [TimelineEntry] = [],
     dimsInactiveParagraphs: Bool = false,
+    caretAnchorFraction: CGFloat? = nil,
     hasAutocompleteSuggestions: Bool,
     wikiLinkStates: [WikiLinkRenderState],
     onTextChange: @escaping () -> Void,
@@ -1079,6 +1331,7 @@ public struct MarkdownTextEditor: UIViewRepresentable {
     self.showsTimelineRuler = showsTimelineRuler
     self.timelineEntries = timelineEntries
     self.dimsInactiveParagraphs = dimsInactiveParagraphs
+    self.caretAnchorFraction = caretAnchorFraction
     self.hasAutocompleteSuggestions = hasAutocompleteSuggestions
     self.wikiLinkStates = wikiLinkStates
     self.onTextChange = onTextChange

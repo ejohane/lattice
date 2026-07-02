@@ -442,6 +442,7 @@ private struct TimelinePane: View {
         showsTimelineRuler: model.showsTimelineRuler,
         timelineEntries: model.timelineEntries,
         dimsInactiveParagraphs: true,
+        caretAnchorFraction: 1.0 / 3.0,
         hasAutocompleteSuggestions: false,
         wikiLinkStates: [],
         onTextChange: {

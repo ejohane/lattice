@@ -668,7 +668,7 @@ enum MarkdownAttributedRenderer {
       return
     }
 
-    let inactiveColor = NSColor.secondaryLabelColor.withAlphaComponent(0.68)
+    let inactiveColor = NSColor.tertiaryLabelColor
     let fullRange = NSRange(location: 0, length: attributed.length)
     var cursor = 0
     for activeRange in activeRanges.sorted(by: { $0.location < $1.location }) {
