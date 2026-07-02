@@ -10,12 +10,14 @@ public final class LatticeAppModel {
   public let noteLibrary: NoteLibrary
   private let noteIndex: any NoteIndexing
   private let activityStore: any ActivityStoring
+  private let timelineStore: TimelineStore
   private let taskSyncEngine: TaskSyncEngine
   private let editorPreferencesStore: EditorPreferencesStore
   private let taskSyncPollIntervalNanoseconds: UInt64
   private let dateProvider: () -> Date
   private let session: NoteEditingSession
   private var autosaveWorkItem: DispatchWorkItem?
+  private var timelineAutosaveWorkItem: DispatchWorkItem?
   private var taskSyncPollTask: Task<Void, Never>?
   private var scopedFolderURL: URL?
   private var backStack: [NavigationHistoryEntry] = []
@@ -26,6 +28,7 @@ public final class LatticeAppModel {
   public var text = ""
   public var selectedRange = NSRange(location: 0, length: 0)
   public var selectedNote: SavedNote?
+  public var selectedPage = LatticePage.noteEditor
   public var folderURL: URL?
   public var status = "Choose a notes folder"
   public var errorMessage: String?
@@ -40,6 +43,7 @@ public final class LatticeAppModel {
   public var showsStatusBar = true
   public var isVimModeEnabled = false
   public var showsRelativeLineNumbers = false
+  public var showsTimelineRuler = true
   public var selectedThemeID = LatticeThemeID.system
   public var vimState = VimEditorState(mode: .insert)
   public var vimStatusMessage: String?
@@ -57,12 +61,18 @@ public final class LatticeAppModel {
   public var taskSyncErrorMessage: String?
   public var pendingInitialSyncTaskCount: Int?
   public var todayActivityEvents: [ActivityEvent] = []
+  public var timelineEntries: [TimelineEntry] = []
+  public var activeTimelineEntryID: TimelineEntry.ID?
+  public var timelineText = ""
+  public var timelineSelectedRange = NSRange(location: 0, length: 0)
+  public var timelineFocusToken = 0
 
   public init(
     noteLibrary: NoteLibrary = NoteLibrary(),
     folderAccessStore: FolderAccessStore = FolderAccessStore(),
     noteIndex: any NoteIndexing = NoteIndex(),
     activityStore: any ActivityStoring = ActivityStore(),
+    timelineStore: TimelineStore = TimelineStore(),
     taskSyncEngine: TaskSyncEngine = TaskSyncEngine(),
     editorPreferencesStore: EditorPreferencesStore = EditorPreferencesStore(),
     taskSyncPollIntervalNanoseconds: UInt64 = 15_000_000_000,
@@ -72,6 +82,7 @@ public final class LatticeAppModel {
     self.folderAccessStore = folderAccessStore
     self.noteIndex = noteIndex
     self.activityStore = activityStore
+    self.timelineStore = timelineStore
     self.taskSyncEngine = taskSyncEngine
     self.editorPreferencesStore = editorPreferencesStore
     self.taskSyncPollIntervalNanoseconds = taskSyncPollIntervalNanoseconds
@@ -80,6 +91,7 @@ public final class LatticeAppModel {
     let editorPreferences = editorPreferencesStore.load()
     self.isVimModeEnabled = editorPreferences.isVimModeEnabled
     self.showsRelativeLineNumbers = editorPreferences.showsRelativeLineNumbers
+    self.showsTimelineRuler = editorPreferences.showsTimelineRuler
     self.selectedThemeID = editorPreferences.themeID
     self.editorFontFamily = editorPreferences.fontFamily
     self.showsStatusBar = editorPreferences.showsStatusBar
@@ -267,6 +279,7 @@ public final class LatticeAppModel {
 
   public func createNewNote() {
     flushAutosave()
+    selectedPage = .noteEditor
     forwardStack.removeAll()
     session.resetForNewNote()
     selectedNote = nil
@@ -326,6 +339,7 @@ public final class LatticeAppModel {
     recordHistory: Bool,
     flushBeforeOpen: Bool = true
   ) -> Bool {
+    flushTimelineAutosave()
     if flushBeforeOpen {
       flushAutosave()
     }
@@ -340,6 +354,7 @@ public final class LatticeAppModel {
         forwardStack.removeAll()
       }
       selectedNote = restored.note
+      selectedPage = .noteEditor
       let editorBody = Self.editorBody(from: restored.body)
       text = editorBody
       selectedRange = selection.map { clampedRange($0, in: editorBody) }
@@ -620,6 +635,54 @@ public final class LatticeAppModel {
     updateWikiAutocomplete()
   }
 
+  public func showTimeline() {
+    flushAutosave()
+    do {
+      try loadTimeline()
+      timelineText = Self.timelineText(from: timelineEntries)
+      timelineSelectedRange = NSRange(location: 0, length: 0)
+      updateActiveTimelineEntry()
+      selectedPage = .timeline
+      status = "Timeline"
+      preferredCompactColumn = .detail
+      timelineFocusToken += 1
+    } catch {
+      errorMessage = error.localizedDescription
+    }
+  }
+
+  public func activateTimelineEntry(_ entry: TimelineEntry) {
+    flushTimelineAutosave()
+    guard let index = timelineEntries.firstIndex(where: { $0.id == entry.id }),
+          let block = Self.timelineBlocks(in: timelineText).safeElement(at: index)
+    else {
+      return
+    }
+    activeTimelineEntryID = entry.id
+    timelineSelectedRange = NSRange(location: block.range.location, length: 0)
+    selectedPage = .timeline
+    status = "Timeline"
+    timelineFocusToken += 1
+  }
+
+  public func composeNewTimelineEntry() {
+    flushTimelineAutosave()
+    timelineSelectedRange = NSRange(location: 0, length: 0)
+    updateActiveTimelineEntry()
+    selectedPage = .timeline
+    status = "Timeline"
+    timelineFocusToken += 1
+  }
+
+  public func timelineTextDidChange() {
+    vimStatusMessage = nil
+    scheduleTimelineAutosave()
+  }
+
+  public func timelineSelectionDidChange() {
+    updateActiveTimelineEntry()
+  }
+
   public func setVimModeEnabled(_ isEnabled: Bool) {
     isVimModeEnabled = isEnabled
     vimState = VimEditorState(mode: isEnabled ? .normal : .insert)
@@ -630,6 +693,11 @@ public final class LatticeAppModel {
 
   public func setRelativeLineNumbersEnabled(_ isEnabled: Bool) {
     showsRelativeLineNumbers = isEnabled
+    saveEditorPreferences()
+  }
+
+  public func setTimelineRulerEnabled(_ isEnabled: Bool) {
+    showsTimelineRuler = isEnabled
     saveEditorPreferences()
   }
 
@@ -680,8 +748,26 @@ public final class LatticeAppModel {
     DispatchQueue.main.asyncAfter(deadline: .now() + 0.8, execute: workItem)
   }
 
+  public func scheduleTimelineAutosave() {
+    timelineAutosaveWorkItem?.cancel()
+    let workItem = DispatchWorkItem { [weak self] in
+      Task { @MainActor in
+        self?.autosaveTimeline(showStatus: true)
+      }
+    }
+    timelineAutosaveWorkItem = workItem
+    DispatchQueue.main.asyncAfter(deadline: .now() + 0.8, execute: workItem)
+  }
+
   public func flushAutosave() {
     flushAutosave(syncSavedNote: true)
+    flushTimelineAutosave()
+  }
+
+  public func flushTimelineAutosave() {
+    timelineAutosaveWorkItem?.cancel()
+    timelineAutosaveWorkItem = nil
+    autosaveTimeline(showStatus: false)
   }
 
   private func flushAutosave(syncSavedNote: Bool) {
@@ -755,6 +841,10 @@ public final class LatticeAppModel {
     folderURL = url
     status = url.lastPathComponent
     reloadNotes()
+    timelineEntries = []
+    activeTimelineEntryID = nil
+    timelineText = ""
+    timelineSelectedRange = NSRange(location: 0, length: 0)
     rebuildNoteIndex()
     refreshTodayActivity()
     loadTaskSyncSettings()
@@ -769,6 +859,7 @@ public final class LatticeAppModel {
     do {
       if let restored = try session.restoreActiveNote() {
         selectedNote = restored.note
+        selectedPage = .noteEditor
         let editorBody = Self.editorBody(from: restored.body)
         text = editorBody
         selectedRange = NSRange(location: (editorBody as NSString).length, length: 0)
@@ -814,6 +905,41 @@ public final class LatticeAppModel {
         if showStatus {
           status = "Autosaved \(displayTitle(for: note))"
         }
+      }
+    } catch {
+      errorMessage = error.localizedDescription
+    }
+  }
+
+  private func loadTimeline() throws {
+    guard let folderURL else {
+      timelineEntries = []
+      throw NoteLibraryError.noActiveNotesFolder
+    }
+    timelineEntries = try timelineStore.load(notesFolderURL: folderURL).entries
+  }
+
+  private func autosaveTimeline(showStatus: Bool) {
+    timelineAutosaveWorkItem?.cancel()
+    timelineAutosaveWorkItem = nil
+    guard selectedPage == .timeline, let folderURL else {
+      return
+    }
+
+    let blocks = Self.timelineBlocks(in: timelineText)
+    let selectedLocation = clampedRange(timelineSelectedRange, in: timelineText).location
+    let activeBlockIndex = blocks.firstIndex { block in
+      selectedLocation >= block.range.location && selectedLocation <= NSMaxRange(block.range) + 1
+    }
+    let nextEntries = timelineEntries(matching: blocks, activeBlockIndex: activeBlockIndex)
+
+    do {
+      timelineEntries = nextEntries
+      timelineSelectedRange = clampedRange(timelineSelectedRange, in: timelineText)
+      updateActiveTimelineEntry()
+      try timelineStore.save(TimelineDocument(entries: timelineEntries), notesFolderURL: folderURL)
+      if showStatus {
+        status = "Autosaved Timeline"
       }
     } catch {
       errorMessage = error.localizedDescription
@@ -952,13 +1078,18 @@ public final class LatticeAppModel {
       return
     }
 
+    var didChangeHeading = false
     for (previous, next) in zip(previousHeadings, nextHeadings)
       where previous.level == next.level && previous.title != next.title {
+      didChangeHeading = true
       try? noteLibrary.rewriteWikiHeadingLinks(
         targetNoteID: indexed.noteID,
         oldHeading: previous.title,
         newHeading: next.title
       )
+    }
+    guard didChangeHeading else {
+      return
     }
     try? noteIndex.rebuild(notesFolderURL: folderURL)
     if let updatedBody = try? noteLibrary.body(for: note) {
@@ -1306,6 +1437,7 @@ public final class LatticeAppModel {
     editorPreferencesStore.save(EditorPreferences(
       isVimModeEnabled: isVimModeEnabled,
       showsRelativeLineNumbers: showsRelativeLineNumbers,
+      showsTimelineRuler: showsTimelineRuler,
       themeID: selectedThemeID,
       fontFamily: editorFontFamily,
       showsStatusBar: showsStatusBar
@@ -1335,6 +1467,14 @@ public final class LatticeAppModel {
         isEnabled: canNavigateForward
       ) { [weak self] in
         self?.navigateForward()
+      },
+      CommandPaletteCommand(
+        id: "lattice.timeline",
+        title: "Timeline",
+        subtitle: "Open the running timeline note",
+        systemImage: "clock"
+      ) { [weak self] in
+        self?.showTimeline()
       },
       CommandPaletteCommand(
         id: "lattice.newNote",
@@ -1380,6 +1520,107 @@ public final class LatticeAppModel {
     return String(notePath.dropFirst(folderPath.count + 1))
   }
 
+  private func updateActiveTimelineEntry() {
+    let blocks = Self.timelineBlocks(in: timelineText)
+    let selectionLocation = clampedRange(timelineSelectedRange, in: timelineText).location
+    guard let index = blocks.firstIndex(where: { block in
+      selectionLocation >= block.range.location && selectionLocation <= NSMaxRange(block.range) + 1
+    }) else {
+      activeTimelineEntryID = nil
+      return
+    }
+    activeTimelineEntryID = timelineEntries.safeElement(at: index)?.id
+  }
+
+  private static func timelineText(from entries: [TimelineEntry]) -> String {
+    entries.map(\.body).joined(separator: "\n\n")
+  }
+
+  private static func timelineBlocks(in body: String) -> [TimelineTextBlock] {
+    let normalized = body.replacingOccurrences(of: "\r\n", with: "\n")
+      .replacingOccurrences(of: "\r", with: "\n")
+    let nsString = normalized as NSString
+    var blocks: [TimelineTextBlock] = []
+    var searchLocation = 0
+
+    while searchLocation <= nsString.length {
+      let separatorRange = nsString.range(
+        of: "\n\n",
+        options: [],
+        range: NSRange(location: searchLocation, length: nsString.length - searchLocation)
+      )
+      let rawRange: NSRange
+      if separatorRange.location == NSNotFound {
+        rawRange = NSRange(location: searchLocation, length: nsString.length - searchLocation)
+      } else {
+        rawRange = NSRange(location: searchLocation, length: separatorRange.location - searchLocation)
+      }
+
+      if let block = timelineBlock(from: rawRange, in: nsString) {
+        blocks.append(block)
+      }
+
+      guard separatorRange.location != NSNotFound else {
+        break
+      }
+      searchLocation = NSMaxRange(separatorRange)
+    }
+
+    return blocks
+  }
+
+  private static func timelineBlock(from rawRange: NSRange, in nsString: NSString) -> TimelineTextBlock? {
+    var start = rawRange.location
+    var end = NSMaxRange(rawRange)
+    while start < end {
+      let character = nsString.character(at: start)
+      if character == 10 || character == 13 || character == 9 || character == 32 {
+        start += 1
+      } else {
+        break
+      }
+    }
+    while end > start {
+      let character = nsString.character(at: end - 1)
+      if character == 10 || character == 13 || character == 9 || character == 32 {
+        end -= 1
+      } else {
+        break
+      }
+    }
+    guard end > start else {
+      return nil
+    }
+    let range = NSRange(location: start, length: end - start)
+    return TimelineTextBlock(range: range, body: nsString.substring(with: range))
+  }
+
+  private func timelineEntries(
+    matching blocks: [TimelineTextBlock],
+    activeBlockIndex: Int?
+  ) -> [TimelineEntry] {
+    var usedEntryIDs: Set<String> = []
+    return blocks.enumerated().map { index, block in
+      if
+        index == activeBlockIndex,
+        let activeTimelineEntryID,
+        let existing = timelineEntries.first(where: { $0.id == activeTimelineEntryID })
+      {
+        usedEntryIDs.insert(existing.id)
+        return TimelineEntry(id: existing.id, createdAt: existing.createdAt, body: block.body)
+      }
+
+      if let matchingEntry = timelineEntries.first(where: { entry in
+        !usedEntryIDs.contains(entry.id) && entry.body == block.body
+      }) {
+        usedEntryIDs.insert(matchingEntry.id)
+        return matchingEntry
+      }
+
+      return TimelineEntry(createdAt: dateProvider(), body: block.body)
+    }
+  }
+
   private static func activityExcerpt(from body: String, limit: Int = 240) -> String? {
     let collapsed = body
       .split(whereSeparator: { $0.isNewline })
@@ -1400,6 +1641,22 @@ public final class LatticeAppModel {
 public enum NavigationColumn: Hashable {
   case sidebar
   case detail
+}
+
+public enum LatticePage: Hashable {
+  case noteEditor
+  case timeline
+}
+
+private struct TimelineTextBlock: Equatable {
+  let range: NSRange
+  let body: String
+}
+
+private extension Array {
+  func safeElement(at index: Int) -> Element? {
+    indices.contains(index) ? self[index] : nil
+  }
 }
 
 public struct CommandPaletteCommand: Identifiable {

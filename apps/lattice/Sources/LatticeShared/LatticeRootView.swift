@@ -1,3 +1,4 @@
+import Foundation
 import LatticeCore
 import LatticeEditor
 import SwiftUI
@@ -114,7 +115,12 @@ public struct LatticeRootView: View {
   @ViewBuilder
   private var editorPane: some View {
     if model.hasFolder {
-      NoteEditorPane(model: model)
+      switch model.selectedPage {
+      case .noteEditor:
+        NoteEditorPane(model: model)
+      case .timeline:
+        TimelinePane(model: model)
+      }
     } else {
       FolderSetupView(model: model)
     }
@@ -410,6 +416,119 @@ private struct NoteEditorPane: View {
       Label(title, systemImage: systemImage)
     }
     .disabled(!model.hasFolder)
+  }
+}
+
+private struct TimelinePane: View {
+  @Bindable var model: LatticeAppModel
+  @Environment(\.latticeTheme) private var theme
+  private let maximumTimelineWidth: CGFloat = 980
+
+  var body: some View {
+    editorContent
+      .frame(maxWidth: maximumTimelineWidth, maxHeight: .infinity)
+      .padding(.horizontal, 18)
+      .frame(maxWidth: .infinity, maxHeight: .infinity)
+    .navigationTitle("Timeline")
+    #if os(macOS)
+    .navigationSplitViewColumnWidth(min: 420, ideal: 760)
+    #endif
+    .toolbar {
+      ToolbarItem(placement: .primaryAction) {
+        Button {
+          model.composeNewTimelineEntry()
+        } label: {
+          Label("New Entry", systemImage: "plus")
+        }
+        .disabled(!model.hasFolder)
+      }
+    }
+  }
+
+  private var editorContent: some View {
+    VStack(spacing: 0) {
+      MarkdownTextEditor(
+        text: $model.timelineText,
+        selectedRange: $model.timelineSelectedRange,
+        vimState: $model.vimState,
+        fontSize: CGFloat(model.editorFontSize),
+        fontFamily: model.editorFontFamily,
+        focusToken: model.timelineFocusToken,
+        isVimModeEnabled: model.isVimModeEnabled,
+        showsRelativeLineNumbers: false,
+        showsTimelineRuler: model.showsTimelineRuler,
+        timelineEntries: model.timelineEntries,
+        dimsInactiveParagraphs: true,
+        caretAnchorFraction: 1.0 / 3.0,
+        hasAutocompleteSuggestions: false,
+        wikiLinkStates: [],
+        theme: theme,
+        onTextChange: {
+          model.timelineTextDidChange()
+        },
+        onSelectionChange: {
+          model.timelineSelectionDidChange()
+        },
+        onWikiLinkActivated: { _ in },
+        onMarkdownLinkActivated: { _ in },
+        onDismissAutocomplete: {},
+        onVimWrite: {
+          model.flushTimelineAutosave()
+          model.setVimStatusMessage("Saved")
+        },
+        onVimStatusChange: { message in
+          model.setVimStatusMessage(message)
+        }
+      )
+      .ignoresSafeArea(.keyboard, edges: .bottom)
+      .frame(maxWidth: .infinity, maxHeight: .infinity)
+
+      HStack(spacing: 8) {
+        if let modeText {
+          Text(modeText)
+            .font(.caption2.weight(.bold))
+            .foregroundStyle(modeText == "NORMAL" ? theme.color(.highlightedText) : theme.color(.secondaryText))
+            .padding(.horizontal, 7)
+            .padding(.vertical, 3)
+            .background {
+              Capsule()
+                .fill(modeText == "NORMAL" ? theme.color(.accent) : theme.color(.secondaryText).opacity(0.14))
+            }
+        }
+        Text(statusText)
+          .font(.footnote.weight(.medium))
+          .foregroundStyle(theme.color(.secondaryText))
+      }
+      .frame(maxWidth: .infinity)
+      .padding(.vertical, 10)
+      .background(theme.color(.barBackground))
+    }
+  }
+
+  private var statusText: String {
+    let count = model.timelineText.count
+    let unit = count == 1 ? "character" : "characters"
+    if let message = model.vimStatusMessage, !message.isEmpty {
+      return "\(message) - \(count) \(unit)"
+    }
+    return "\(count) \(unit)"
+  }
+
+  private var modeText: String? {
+    guard model.isVimModeEnabled else {
+      return nil
+    }
+
+    switch model.vimState.mode {
+    case .insert:
+      return "INSERT"
+    case .normal:
+      return "NORMAL"
+    case .visual:
+      return "VISUAL"
+    case .commandLine:
+      return ":\(model.vimState.commandText)"
+    }
   }
 }
 

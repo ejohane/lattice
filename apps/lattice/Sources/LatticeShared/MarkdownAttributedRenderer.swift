@@ -18,6 +18,7 @@ enum MarkdownAttributedRenderer {
     fontFamily: EditorFontFamily = .system,
     activeRanges: [NSRange] = [],
     wikiLinkStates: [WikiLinkRenderState] = [],
+    dimsInactiveText: Bool = false,
     theme: LatticeTheme = LatticeTheme(id: .system)
   ) -> NSAttributedString {
     let attributed = NSMutableAttributedString(
@@ -32,6 +33,9 @@ enum MarkdownAttributedRenderer {
       wikiLinkStates: wikiLinkStates,
       theme: theme
     )
+    if dimsInactiveText {
+      applyInactiveTextDimming(to: attributed, activeRanges: activeRanges, theme: theme)
+    }
     return attributed
   }
 
@@ -731,6 +735,41 @@ enum MarkdownAttributedRenderer {
 
     return NSRange(location: lineRange.location, length: end - lineRange.location)
   }
+
+  private static func applyInactiveTextDimming(
+    to attributed: NSMutableAttributedString,
+    activeRanges: [NSRange],
+    theme: LatticeTheme
+  ) {
+    guard attributed.length > 0, !activeRanges.isEmpty else {
+      return
+    }
+
+    let inactiveColor = theme.nsColor(.tertiaryText)
+    let fullRange = NSRange(location: 0, length: attributed.length)
+    var cursor = 0
+    for activeRange in activeRanges.sorted(by: { $0.location < $1.location }) {
+      let clampedActiveRange = NSIntersectionRange(activeRange, fullRange)
+      guard clampedActiveRange.location != NSNotFound else {
+        continue
+      }
+      if cursor < clampedActiveRange.location {
+        attributed.addAttribute(
+          .foregroundColor,
+          value: inactiveColor,
+          range: NSRange(location: cursor, length: clampedActiveRange.location - cursor)
+        )
+      }
+      cursor = max(cursor, NSMaxRange(clampedActiveRange))
+    }
+    if cursor < attributed.length {
+      attributed.addAttribute(
+        .foregroundColor,
+        value: inactiveColor,
+        range: NSRange(location: cursor, length: attributed.length - cursor)
+      )
+    }
+  }
 }
 
 #elseif os(iOS)
@@ -742,6 +781,7 @@ enum MarkdownAttributedRenderer {
     fontFamily: EditorFontFamily = .system,
     activeRanges: [NSRange] = [],
     wikiLinkStates: [WikiLinkRenderState] = [],
+    dimsInactiveText: Bool = false,
     theme: LatticeTheme = LatticeTheme(id: .system)
   ) -> NSAttributedString {
     let attributed = NSMutableAttributedString(string: text, attributes: baseTypingAttributes(fontFamily: fontFamily, theme: theme))
