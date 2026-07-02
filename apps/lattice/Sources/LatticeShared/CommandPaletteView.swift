@@ -218,11 +218,13 @@ private struct CommandPaletteRow: View {
           .font(.body.weight(.medium))
           .foregroundStyle(isHighlighted ? .white : .primary)
           .lineLimit(1)
+          .truncationMode(.tail)
         if let subtitle = item.subtitle, !subtitle.isEmpty {
           Text(subtitle)
             .font(.caption)
             .foregroundStyle(isHighlighted ? .white.opacity(0.82) : .secondary)
             .lineLimit(1)
+            .truncationMode(.tail)
         }
       }
       Spacer(minLength: 12)

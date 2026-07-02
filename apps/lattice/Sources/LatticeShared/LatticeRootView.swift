@@ -132,6 +132,7 @@ private struct NoteSidebar: View {
                 HStack(spacing: 8) {
                   Text(model.displayTitle(for: note))
                     .lineLimit(1)
+                    .truncationMode(.tail)
                   Spacer()
                   if model.selectedNote == note {
                     Image(systemName: "checkmark")

@@ -205,15 +205,27 @@ struct NoteLibraryTests {
     #expect(sections[1].notes.map(\.filenameTitle) == ["2026-06-16T10-00-00"])
   }
 
-  @Test("uses first markdown heading as display title")
-  func displayTitleUsesFirstHeading() throws {
+  @Test("uses first rendered line as display title")
+  func displayTitleUsesFirstRenderedLine() throws {
     let fixture = try Fixture()
     defer { fixture.cleanup() }
 
     try fixture.library.selectNotesFolder(fixture.root)
-    let note = try fixture.library.createNote(body: "\n## Project Brief\n\nBody", now: fixture.date)
+    let note = try fixture.library.createNote(
+      body: "\n**Project Brief** [draft](https://example.com)\n\n## Ignored Heading",
+      now: fixture.date
+    )
 
-    #expect(fixture.library.displayTitle(for: note) == "Project Brief")
+    #expect(note.url.path.hasSuffix("/notes/2026-06-17/2026-06-17T14-32-10.md"))
+    #expect(fixture.library.displayTitle(for: note) == "Project Brief draft")
+  }
+
+  @Test("strips block markdown from rendered display titles")
+  func displayTitleStripsBlockMarkdown() throws {
+    #expect(NoteLibrary.firstRenderedLine(in: "# Heading <!-- lattice:heading=abc -->") == "Heading")
+    #expect(NoteLibrary.firstRenderedLine(in: "- [ ] Buy **milk**") == "Buy milk")
+    #expect(NoteLibrary.firstRenderedLine(in: "> [[Daily Note#Tasks|Tasks]]") == "Tasks")
+    #expect(NoteLibrary.firstRenderedLine(in: "\n---\n\n2026-06-17T14-32-10") == "2026-06-17T14-32-10")
   }
 
   @Test("rejects empty first notes")

@@ -21,7 +21,7 @@ struct LatticeAppModelTests {
     #expect(model.hasFolder)
     #expect(model.sections.isEmpty)
 
-    model.text = "# Universal Note\n\nBody"
+    model.text = "**Universal Note**\n\n# Later Heading\n\nBody"
     model.flushAutosave()
 
     let sections = model.sections
@@ -31,13 +31,13 @@ struct LatticeAppModelTests {
     let note = try #require(section.notes.first)
     #expect(note.url.path.contains("/notes/"))
     #expect(note.url.lastPathComponent.hasSuffix(".md"))
-    #expect(try fixture.library.body(for: note) == "# Universal Note\n\nBody\n")
+    #expect(try fixture.library.body(for: note) == "**Universal Note**\n\n# Later Heading\n\nBody\n")
     #expect(model.displayTitle(for: note) == "Universal Note")
 
     model.createNewNote()
     #expect(model.text == "")
     model.open(note)
-    #expect(model.text == "# Universal Note\n\nBody")
+    #expect(model.text == "**Universal Note**\n\n# Later Heading\n\nBody")
   }
 
   @Test("autosave records note created and edited activity")
@@ -54,17 +54,17 @@ struct LatticeAppModelTests {
 
     try fixture.fileManager.createDirectory(at: fixture.root, withIntermediateDirectories: true)
     model.chooseFolder(fixture.root)
-    model.text = "# Product\n\nFirst"
+    model.text = "Product\n\n# Later Heading\n\nFirst"
     model.flushAutosave()
     now = fixture.date(hour: 10)
-    model.text = "# Product\n\nFirst\n\nSecond"
+    model.text = "Product\n\n# Later Heading\n\nFirst\n\nSecond"
     model.flushAutosave()
 
     #expect(model.todayActivityEvents.map(\.kind) == [.noteCreated, .noteEdited])
     #expect(model.todayActivityEvents[0].noteTitle == "Product")
     #expect(model.todayActivityEvents[0].noteRelativePath?.hasPrefix("notes/") == true)
-    #expect(model.todayActivityEvents[1].beforeExcerpt == "# Product First")
-    #expect(model.todayActivityEvents[1].afterExcerpt == "# Product First Second")
+    #expect(model.todayActivityEvents[1].beforeExcerpt == "Product # Later Heading First")
+    #expect(model.todayActivityEvents[1].afterExcerpt == "Product # Later Heading First Second")
   }
 
   @Test("records note navigation history and restores cursor positions")
@@ -278,10 +278,10 @@ struct LatticeAppModelTests {
 
     try fixture.fileManager.createDirectory(at: fixture.root, withIntermediateDirectories: true)
     model.chooseFolder(fixture.root)
-    model.text = "# Palette Target\n\nBody"
+    model.text = "**Palette Target**\n\n# Later Heading\n\nBody"
     model.flushAutosave()
     model.createNewNote()
-    model.text = "# Another Note\n\nBody"
+    model.text = "Another Note\n\n# Later Heading\n\nBody"
     model.flushAutosave()
 
     let recentNotes = model.commandPaletteNotes()
@@ -319,7 +319,7 @@ struct LatticeAppModelTests {
 
     try fixture.fileManager.createDirectory(at: fixture.root, withIntermediateDirectories: true)
     model.chooseFolder(fixture.root)
-    model.text = "# Indexed Title\n\nBody has nebula phrase"
+    model.text = "[Indexed Title](https://example.com)\n\n# Later Heading\n\nBody has nebula phrase"
     model.flushAutosave()
 
     model.commandPaletteQuery = "nebula"
