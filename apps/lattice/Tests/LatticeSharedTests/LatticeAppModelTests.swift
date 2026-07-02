@@ -359,14 +359,15 @@ struct LatticeAppModelTests {
     #expect(!fixture.fileManager.fileExists(atPath: fixture.root.appendingPathComponent("notes/Timeline.md").path))
   }
 
-  @Test("timeline blank line completes current entry and opens a new composer")
-  func timelineBlankLineCompletesEntry() throws {
+  @Test("timeline blank line separates entries in one continuous document")
+  func timelineBlankLineSeparatesEntries() throws {
     let fixture = try Fixture()
     defer { fixture.cleanup() }
+    var now = fixture.date(hour: 14)
     let model = LatticeAppModel(
       noteLibrary: fixture.library,
       folderAccessStore: fixture.folderAccessStore,
-      dateProvider: { fixture.date(hour: 14) }
+      dateProvider: { now }
     )
 
     try fixture.fileManager.createDirectory(at: fixture.root, withIntermediateDirectories: true)
@@ -376,14 +377,19 @@ struct LatticeAppModelTests {
     model.flushTimelineAutosave()
 
     #expect(model.timelineEntries.map(\.body) == ["First entry."])
-    #expect(model.activeTimelineEntryID == nil)
-    #expect(model.timelineText == "")
+    #expect(model.timelineText == "First entry.\n\n")
+    let firstEntry = try #require(model.timelineEntries.first)
 
-    model.timelineText = "Second entry.\n\n"
+    now = fixture.date(hour: 15)
+    model.timelineText = "Second entry.\n\nFirst entry."
+    model.timelineSelectedRange = NSRange(location: 15, length: 0)
     model.flushTimelineAutosave()
 
     #expect(model.timelineEntries.map(\.body) == ["Second entry.", "First entry."])
-    #expect(model.activeTimelineEntryID == nil)
+    #expect(model.timelineText == "Second entry.\n\nFirst entry.")
+    #expect(model.timelineEntries[0].createdAt == fixture.date(hour: 15))
+    #expect(model.timelineEntries[1].id == firstEntry.id)
+    #expect(model.timelineEntries[1].createdAt == firstEntry.createdAt)
   }
 
   @Test("timeline autosave preserves trailing editor newline")

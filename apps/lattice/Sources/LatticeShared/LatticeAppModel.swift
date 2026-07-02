@@ -627,9 +627,9 @@ public final class LatticeAppModel {
     flushAutosave()
     do {
       try loadTimeline()
-      activeTimelineEntryID = nil
-      timelineText = ""
+      timelineText = Self.timelineText(from: timelineEntries)
       timelineSelectedRange = NSRange(location: 0, length: 0)
+      updateActiveTimelineEntry()
       selectedPage = .timeline
       status = "Timeline"
       preferredCompactColumn = .detail
@@ -641,12 +641,13 @@ public final class LatticeAppModel {
 
   public func activateTimelineEntry(_ entry: TimelineEntry) {
     flushTimelineAutosave()
-    guard timelineEntries.contains(where: { $0.id == entry.id }) else {
+    guard let index = timelineEntries.firstIndex(where: { $0.id == entry.id }),
+          let block = Self.timelineBlocks(in: timelineText).safeElement(at: index)
+    else {
       return
     }
     activeTimelineEntryID = entry.id
-    timelineText = entry.body
-    timelineSelectedRange = NSRange(location: (entry.body as NSString).length, length: 0)
+    timelineSelectedRange = NSRange(location: block.range.location, length: 0)
     selectedPage = .timeline
     status = "Timeline"
     timelineFocusToken += 1
@@ -654,9 +655,8 @@ public final class LatticeAppModel {
 
   public func composeNewTimelineEntry() {
     flushTimelineAutosave()
-    activeTimelineEntryID = nil
-    timelineText = ""
     timelineSelectedRange = NSRange(location: 0, length: 0)
+    updateActiveTimelineEntry()
     selectedPage = .timeline
     status = "Timeline"
     timelineFocusToken += 1
@@ -667,7 +667,9 @@ public final class LatticeAppModel {
     scheduleTimelineAutosave()
   }
 
-  public func timelineSelectionDidChange() {}
+  public func timelineSelectionDidChange() {
+    updateActiveTimelineEntry()
+  }
 
   public func setVimModeEnabled(_ isEnabled: Bool) {
     isVimModeEnabled = isEnabled
@@ -892,57 +894,17 @@ public final class LatticeAppModel {
       return
     }
 
-    let blocks = Self.timelineBlocks(from: timelineText)
-    let completesEntry = Self.endsWithTimelineSeparator(timelineText)
-    var nextEntries = timelineEntries
-
-    if let activeTimelineEntryID {
-      guard let index = nextEntries.firstIndex(where: { $0.id == activeTimelineEntryID }) else {
-        self.activeTimelineEntryID = nil
-        timelineText = ""
-        return
-      }
-
-      if blocks.isEmpty {
-        nextEntries.remove(at: index)
-        self.activeTimelineEntryID = nil
-        timelineText = ""
-        timelineSelectedRange = NSRange(location: 0, length: 0)
-      } else {
-        nextEntries[index].body = blocks[0]
-        if blocks.count > 1 {
-          let inserted = blocks.dropFirst().map {
-            TimelineEntry(createdAt: dateProvider(), body: $0)
-          }
-          nextEntries.insert(contentsOf: inserted, at: index + 1)
-        }
-        if completesEntry {
-          self.activeTimelineEntryID = nil
-          timelineText = ""
-          timelineSelectedRange = NSRange(location: 0, length: 0)
-        } else {
-          timelineSelectedRange = clampedRange(timelineSelectedRange, in: timelineText)
-        }
-      }
-    } else {
-      guard !blocks.isEmpty else {
-        return
-      }
-      let inserted = blocks.reversed().map {
-        TimelineEntry(createdAt: dateProvider(), body: $0)
-      }
-      nextEntries.insert(contentsOf: inserted, at: 0)
-      if completesEntry {
-        timelineText = ""
-        timelineSelectedRange = NSRange(location: 0, length: 0)
-      } else if let active = inserted.first {
-        activeTimelineEntryID = active.id
-        timelineSelectedRange = clampedRange(timelineSelectedRange, in: timelineText)
-      }
+    let blocks = Self.timelineBlocks(in: timelineText)
+    let selectedLocation = clampedRange(timelineSelectedRange, in: timelineText).location
+    let activeBlockIndex = blocks.firstIndex { block in
+      selectedLocation >= block.range.location && selectedLocation <= NSMaxRange(block.range) + 1
     }
+    let nextEntries = timelineEntries(matching: blocks, activeBlockIndex: activeBlockIndex)
 
     do {
       timelineEntries = nextEntries
+      timelineSelectedRange = clampedRange(timelineSelectedRange, in: timelineText)
+      updateActiveTimelineEntry()
       try timelineStore.save(TimelineDocument(entries: timelineEntries), notesFolderURL: folderURL)
       if showStatus {
         status = "Autosaved Timeline"
@@ -1522,18 +1484,105 @@ public final class LatticeAppModel {
     return String(notePath.dropFirst(folderPath.count + 1))
   }
 
-  private static func timelineBlocks(from body: String) -> [String] {
-    body.replacingOccurrences(of: "\r\n", with: "\n")
-      .replacingOccurrences(of: "\r", with: "\n")
-      .components(separatedBy: "\n\n")
-      .map { $0.trimmingCharacters(in: .whitespacesAndNewlines) }
-      .filter { !$0.isEmpty }
+  private func updateActiveTimelineEntry() {
+    let blocks = Self.timelineBlocks(in: timelineText)
+    let selectionLocation = clampedRange(timelineSelectedRange, in: timelineText).location
+    guard let index = blocks.firstIndex(where: { block in
+      selectionLocation >= block.range.location && selectionLocation <= NSMaxRange(block.range) + 1
+    }) else {
+      activeTimelineEntryID = nil
+      return
+    }
+    activeTimelineEntryID = timelineEntries.safeElement(at: index)?.id
   }
 
-  private static func endsWithTimelineSeparator(_ body: String) -> Bool {
+  private static func timelineText(from entries: [TimelineEntry]) -> String {
+    entries.map(\.body).joined(separator: "\n\n")
+  }
+
+  private static func timelineBlocks(in body: String) -> [TimelineTextBlock] {
     let normalized = body.replacingOccurrences(of: "\r\n", with: "\n")
       .replacingOccurrences(of: "\r", with: "\n")
-    return normalized.hasSuffix("\n\n")
+    let nsString = normalized as NSString
+    var blocks: [TimelineTextBlock] = []
+    var searchLocation = 0
+
+    while searchLocation <= nsString.length {
+      let separatorRange = nsString.range(
+        of: "\n\n",
+        options: [],
+        range: NSRange(location: searchLocation, length: nsString.length - searchLocation)
+      )
+      let rawRange: NSRange
+      if separatorRange.location == NSNotFound {
+        rawRange = NSRange(location: searchLocation, length: nsString.length - searchLocation)
+      } else {
+        rawRange = NSRange(location: searchLocation, length: separatorRange.location - searchLocation)
+      }
+
+      if let block = timelineBlock(from: rawRange, in: nsString) {
+        blocks.append(block)
+      }
+
+      guard separatorRange.location != NSNotFound else {
+        break
+      }
+      searchLocation = NSMaxRange(separatorRange)
+    }
+
+    return blocks
+  }
+
+  private static func timelineBlock(from rawRange: NSRange, in nsString: NSString) -> TimelineTextBlock? {
+    var start = rawRange.location
+    var end = NSMaxRange(rawRange)
+    while start < end {
+      let character = nsString.character(at: start)
+      if character == 10 || character == 13 || character == 9 || character == 32 {
+        start += 1
+      } else {
+        break
+      }
+    }
+    while end > start {
+      let character = nsString.character(at: end - 1)
+      if character == 10 || character == 13 || character == 9 || character == 32 {
+        end -= 1
+      } else {
+        break
+      }
+    }
+    guard end > start else {
+      return nil
+    }
+    let range = NSRange(location: start, length: end - start)
+    return TimelineTextBlock(range: range, body: nsString.substring(with: range))
+  }
+
+  private func timelineEntries(
+    matching blocks: [TimelineTextBlock],
+    activeBlockIndex: Int?
+  ) -> [TimelineEntry] {
+    var usedEntryIDs: Set<String> = []
+    return blocks.enumerated().map { index, block in
+      if
+        index == activeBlockIndex,
+        let activeTimelineEntryID,
+        let existing = timelineEntries.first(where: { $0.id == activeTimelineEntryID })
+      {
+        usedEntryIDs.insert(existing.id)
+        return TimelineEntry(id: existing.id, createdAt: existing.createdAt, body: block.body)
+      }
+
+      if let matchingEntry = timelineEntries.first(where: { entry in
+        !usedEntryIDs.contains(entry.id) && entry.body == block.body
+      }) {
+        usedEntryIDs.insert(matchingEntry.id)
+        return matchingEntry
+      }
+
+      return TimelineEntry(createdAt: dateProvider(), body: block.body)
+    }
   }
 
   private static func activityExcerpt(from body: String, limit: Int = 240) -> String? {
@@ -1561,6 +1610,17 @@ public enum NavigationColumn: Hashable {
 public enum LatticePage: Hashable {
   case noteEditor
   case timeline
+}
+
+private struct TimelineTextBlock: Equatable {
+  let range: NSRange
+  let body: String
+}
+
+private extension Array {
+  func safeElement(at index: Int) -> Element? {
+    indices.contains(index) ? self[index] : nil
+  }
 }
 
 public struct CommandPaletteCommand: Identifiable {

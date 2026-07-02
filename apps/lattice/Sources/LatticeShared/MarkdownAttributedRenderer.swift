@@ -16,10 +16,14 @@ enum MarkdownAttributedRenderer {
     _ text: String,
     fontSize: CGFloat = bodyFontSize,
     activeRanges: [NSRange] = [],
-    wikiLinkStates: [WikiLinkRenderState] = []
+    wikiLinkStates: [WikiLinkRenderState] = [],
+    dimsInactiveText: Bool = false
   ) -> NSAttributedString {
     let attributed = NSMutableAttributedString(string: text, attributes: baseTypingAttributes(fontSize: fontSize))
     applyStyles(to: attributed, fontSize: fontSize, activeRanges: activeRanges, wikiLinkStates: wikiLinkStates)
+    if dimsInactiveText {
+      applyInactiveTextDimming(to: attributed, activeRanges: activeRanges)
+    }
     return attributed
   }
 
@@ -655,6 +659,40 @@ enum MarkdownAttributedRenderer {
 
     return NSRange(location: lineRange.location, length: end - lineRange.location)
   }
+
+  private static func applyInactiveTextDimming(
+    to attributed: NSMutableAttributedString,
+    activeRanges: [NSRange]
+  ) {
+    guard attributed.length > 0, !activeRanges.isEmpty else {
+      return
+    }
+
+    let inactiveColor = NSColor.secondaryLabelColor.withAlphaComponent(0.68)
+    let fullRange = NSRange(location: 0, length: attributed.length)
+    var cursor = 0
+    for activeRange in activeRanges.sorted(by: { $0.location < $1.location }) {
+      let clampedActiveRange = NSIntersectionRange(activeRange, fullRange)
+      guard clampedActiveRange.location != NSNotFound else {
+        continue
+      }
+      if cursor < clampedActiveRange.location {
+        attributed.addAttribute(
+          .foregroundColor,
+          value: inactiveColor,
+          range: NSRange(location: cursor, length: clampedActiveRange.location - cursor)
+        )
+      }
+      cursor = max(cursor, NSMaxRange(clampedActiveRange))
+    }
+    if cursor < attributed.length {
+      attributed.addAttribute(
+        .foregroundColor,
+        value: inactiveColor,
+        range: NSRange(location: cursor, length: attributed.length - cursor)
+      )
+    }
+  }
 }
 
 #elseif os(iOS)
@@ -664,7 +702,8 @@ enum MarkdownAttributedRenderer {
   static func render(
     _ text: String,
     activeRanges: [NSRange] = [],
-    wikiLinkStates: [WikiLinkRenderState] = []
+    wikiLinkStates: [WikiLinkRenderState] = [],
+    dimsInactiveText: Bool = false
   ) -> NSAttributedString {
     let attributed = NSMutableAttributedString(string: text, attributes: baseTypingAttributes())
     applyStyles(to: attributed, activeRanges: activeRanges, wikiLinkStates: wikiLinkStates)

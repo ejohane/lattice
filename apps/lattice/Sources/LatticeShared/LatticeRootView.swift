@@ -407,40 +407,12 @@ private struct NoteEditorPane: View {
 private struct TimelinePane: View {
   @Bindable var model: LatticeAppModel
   private let maximumTimelineWidth: CGFloat = 980
-  private let timestampWidth: CGFloat = 96
-  private let railWidth: CGFloat = 38
 
   var body: some View {
-    ScrollView {
-      LazyVStack(alignment: .leading, spacing: 0) {
-        if model.activeTimelineEntryID == nil {
-          TimelineEntryRow(
-            timestamp: "Now",
-            entry: nil,
-            isActive: true,
-            timestampWidth: timestampWidth,
-            railWidth: railWidth,
-            model: model
-          )
-        }
-
-        ForEach(model.timelineEntries) { entry in
-          TimelineEntryRow(
-            timestamp: timestampText(for: entry.createdAt),
-            entry: entry,
-            isActive: model.activeTimelineEntryID == entry.id,
-            timestampWidth: timestampWidth,
-            railWidth: railWidth,
-            model: model
-          )
-        }
-      }
-      .padding(.top, 42)
-      .padding(.bottom, 48)
-      .frame(maxWidth: maximumTimelineWidth, alignment: .leading)
-      .padding(.horizontal, 24)
-      .frame(maxWidth: .infinity, alignment: .center)
-    }
+    editorContent
+      .frame(maxWidth: maximumTimelineWidth, maxHeight: .infinity)
+      .padding(.horizontal, 18)
+      .frame(maxWidth: .infinity, maxHeight: .infinity)
     .navigationTitle("Timeline")
     #if os(macOS)
     .navigationSplitViewColumnWidth(min: 420, ideal: 760)
@@ -457,116 +429,7 @@ private struct TimelinePane: View {
     }
   }
 
-  private func timestampText(for date: Date) -> String {
-    let calendar = Calendar.current
-    let day: String
-    if calendar.isDateInToday(date) {
-      day = "Today"
-    } else if calendar.isDateInYesterday(date) {
-      day = "Yesterday"
-    } else if calendar.component(.year, from: date) == calendar.component(.year, from: Date()) {
-      day = Self.monthDayFormatter.string(from: date)
-    } else {
-      day = Self.monthDayYearFormatter.string(from: date)
-    }
-    return "\(day)\n\(Self.timeFormatter.string(from: date))"
-  }
-
-  private static let monthDayFormatter: DateFormatter = {
-    let formatter = DateFormatter()
-    formatter.dateFormat = "MMM d"
-    return formatter
-  }()
-
-  private static let monthDayYearFormatter: DateFormatter = {
-    let formatter = DateFormatter()
-    formatter.dateFormat = "MMM d, yyyy"
-    return formatter
-  }()
-
-  private static let timeFormatter: DateFormatter = {
-    let formatter = DateFormatter()
-    formatter.dateStyle = .none
-    formatter.timeStyle = .short
-    return formatter
-  }()
-}
-
-private struct TimelineEntryRow: View {
-  let timestamp: String
-  let entry: TimelineEntry?
-  let isActive: Bool
-  let timestampWidth: CGFloat
-  let railWidth: CGFloat
-  @Bindable var model: LatticeAppModel
-
-  var body: some View {
-    HStack(alignment: .top, spacing: 0) {
-      Text(timestamp)
-        .font(.system(size: 14, weight: isActive ? .semibold : .regular))
-        .lineSpacing(7)
-        .multilineTextAlignment(.trailing)
-        .foregroundColor(isActive ? .primary : .secondary.opacity(0.72))
-        .frame(width: timestampWidth, alignment: .topTrailing)
-        .padding(.top, isActive ? 20 : 11)
-
-      TimelineRail(isActive: isActive)
-        .frame(width: railWidth, height: rowHeight)
-
-      Group {
-        if isActive {
-          TimelineActiveEditor(model: model)
-        } else if let entry {
-          TimelineInactiveEntry(entry: entry, model: model)
-        }
-      }
-      .frame(maxWidth: .infinity, alignment: .leading)
-      .padding(.leading, 20)
-      .padding(.top, isActive ? 0 : 8)
-    }
-    .contentShape(Rectangle())
-    .onTapGesture {
-      if !isActive, let entry {
-        model.activateTimelineEntry(entry)
-      }
-    }
-  }
-
-  private var rowHeight: CGFloat {
-    isActive ? 220 : 150
-  }
-}
-
-private struct TimelineRail: View {
-  let isActive: Bool
-
-  var body: some View {
-    ZStack(alignment: .top) {
-      Rectangle()
-        .fill(Color.secondary.opacity(0.18))
-        .frame(width: 1)
-        .frame(maxHeight: .infinity)
-
-      ZStack {
-        Circle()
-          .stroke(isActive ? Color.primary : Color.secondary.opacity(0.58), lineWidth: isActive ? 2 : 1.5)
-          .frame(width: isActive ? 18 : 13, height: isActive ? 18 : 13)
-        if isActive {
-          Circle()
-            .fill(Color.primary)
-            .frame(width: 7, height: 7)
-        }
-      }
-      .background(.background)
-      .padding(.top, isActive ? 18 : 12)
-    }
-  }
-}
-
-private struct TimelineActiveEditor: View {
-  @Bindable var model: LatticeAppModel
-
-  var body: some View {
+  private var editorContent: some View {
     VStack(spacing: 0) {
       MarkdownTextEditor(
         text: $model.timelineText,
@@ -576,6 +439,9 @@ private struct TimelineActiveEditor: View {
         focusToken: model.timelineFocusToken,
         isVimModeEnabled: model.isVimModeEnabled,
         showsRelativeLineNumbers: false,
+        showsTimelineRuler: true,
+        timelineEntries: model.timelineEntries,
+        dimsInactiveParagraphs: true,
         hasAutocompleteSuggestions: false,
         wikiLinkStates: [],
         onTextChange: {
@@ -595,7 +461,8 @@ private struct TimelineActiveEditor: View {
           model.setVimStatusMessage(message)
         }
       )
-      .frame(minHeight: 190)
+      .ignoresSafeArea(.keyboard, edges: .bottom)
+      .frame(maxWidth: .infinity, maxHeight: .infinity)
 
       HStack(spacing: 8) {
         if let modeText {
@@ -615,6 +482,7 @@ private struct TimelineActiveEditor: View {
       }
       .frame(maxWidth: .infinity)
       .padding(.vertical, 10)
+      .background(.bar)
     }
   }
 
@@ -642,21 +510,6 @@ private struct TimelineActiveEditor: View {
     case .commandLine:
       return ":\(model.vimState.commandText)"
     }
-  }
-}
-
-private struct TimelineInactiveEntry: View {
-  let entry: TimelineEntry
-  @Bindable var model: LatticeAppModel
-
-  var body: some View {
-    Text(entry.body)
-      .font(.system(size: model.editorFontSize))
-      .lineSpacing(7)
-      .foregroundStyle(.secondary.opacity(0.72))
-      .textSelection(.enabled)
-      .frame(maxWidth: 720, alignment: .leading)
-      .padding(.vertical, 4)
   }
 }
 
