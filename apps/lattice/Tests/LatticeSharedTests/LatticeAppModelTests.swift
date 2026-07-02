@@ -40,6 +40,100 @@ struct LatticeAppModelTests {
     #expect(model.text == "**Universal Note**\n\n# Later Heading\n\nBody")
   }
 
+  @Test("inserts image attachments into a new note and autosaves matching paths")
+  func insertsImageAttachmentIntoNewNote() throws {
+    let fixture = try Fixture()
+    defer { fixture.cleanup() }
+    let now = fixture.date(day: 27, hour: 23)
+    let model = LatticeAppModel(
+      noteLibrary: fixture.library,
+      folderAccessStore: fixture.folderAccessStore,
+      dateProvider: { now }
+    )
+
+    try fixture.fileManager.createDirectory(at: fixture.root, withIntermediateDirectories: true)
+    model.chooseFolder(fixture.root)
+    model.insertImageAttachments([
+      ImageAttachmentImport(
+        data: Data("png-bytes".utf8),
+        suggestedFilename: "Screen Shot.png",
+        preferredExtension: "png"
+      )
+    ])
+
+    let note = try #require(model.selectedNote)
+    let expectedMarkdown = "![Screen Shot](../../attachments/2026-06-27/Screen Shot-\(note.filenameTitle).png)\n"
+    #expect(note.url.path.hasSuffix("/notes/2026-06-27/\(note.filenameTitle).md"))
+    #expect(model.text == expectedMarkdown)
+    #expect(model.selectedRange.location == (model.text as NSString).range(of: ")").location + 1)
+    #expect(try fixture.library.body(for: note) == model.text)
+    #expect(try Data(contentsOf: fixture.root.appendingPathComponent("attachments/2026-06-27/Screen Shot-\(note.filenameTitle).png")) == Data("png-bytes".utf8))
+    #expect(model.imagePreviewStates.count == 1)
+  }
+
+  @Test("image attachments replace selected text in existing notes")
+  func imageAttachmentsReplaceSelectedText() throws {
+    let fixture = try Fixture()
+    defer { fixture.cleanup() }
+    let now = fixture.date()
+    let model = LatticeAppModel(
+      noteLibrary: fixture.library,
+      folderAccessStore: fixture.folderAccessStore,
+      dateProvider: { now }
+    )
+
+    try fixture.fileManager.createDirectory(at: fixture.root, withIntermediateDirectories: true)
+    try fixture.library.selectNotesFolder(fixture.root)
+    let note = try fixture.library.createNote(body: "Before old after", now: now)
+    let existingID = try #require(MarkdownDocumentMetadata.noteID(in: fixture.library.rawBody(for: note)))
+    model.chooseFolder(fixture.root)
+    model.open(note)
+    model.selectedRange = (model.text as NSString).range(of: "old")
+
+    model.insertImageAttachments([
+      ImageAttachmentImport(
+        data: Data("image".utf8),
+        suggestedFilename: "diagram.jpg",
+        preferredExtension: "jpg"
+      )
+    ])
+
+    #expect(model.text == "Before \n\n![diagram](../../attachments/2026-06-26/diagram-\(note.filenameTitle).jpg)\n\n after")
+    #expect(try fixture.library.body(for: note) == "\(model.text)\n")
+    #expect(MarkdownDocumentMetadata.noteID(in: try fixture.library.rawBody(for: note)) == existingID)
+    #expect(model.imagePreviewStates.count == 1)
+  }
+
+  @Test("resizing image attachments persists obsidian width syntax")
+  func resizingImageAttachmentsPersistsWidthSyntax() throws {
+    let fixture = try Fixture()
+    defer { fixture.cleanup() }
+    let model = LatticeAppModel(
+      noteLibrary: fixture.library,
+      folderAccessStore: fixture.folderAccessStore
+    )
+
+    try fixture.fileManager.createDirectory(at: fixture.root, withIntermediateDirectories: true)
+    try fixture.library.selectNotesFolder(fixture.root)
+    let attachmentURL = fixture.root.appendingPathComponent("attachments/2026-06-26/image.png")
+    try fixture.fileManager.createDirectory(at: attachmentURL.deletingLastPathComponent(), withIntermediateDirectories: true)
+    try Data("image".utf8).write(to: attachmentURL)
+    let note = try fixture.library.createNote(
+      body: "Before\n\n![Screenshot](../../attachments/2026-06-26/image.png)\n\nAfter",
+      now: fixture.date()
+    )
+
+    model.chooseFolder(fixture.root)
+    model.open(note)
+    let image = try #require(MarkdownImageParser.links(in: model.text).first)
+    model.resizeImageAttachment(lineLocation: image.lineRange.location, width: 720)
+    model.flushAutosave()
+
+    #expect(model.text.contains("![Screenshot|720](../../attachments/2026-06-26/image.png)"))
+    #expect(model.imagePreviewStates.first?.link.width == 720)
+    #expect(try fixture.library.body(for: note).contains("![Screenshot|720](../../attachments/2026-06-26/image.png)"))
+  }
+
   @Test("autosave records note created and edited activity")
   func autosaveRecordsNoteActivity() throws {
     let fixture = try Fixture()

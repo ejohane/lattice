@@ -228,6 +228,37 @@ struct NoteLibraryTests {
     #expect(NoteLibrary.firstRenderedLine(in: "\n---\n\n2026-06-17T14-32-10") == "2026-06-17T14-32-10")
   }
 
+  @Test("saves image attachments outside notes with relative markdown paths")
+  func savesImageAttachments() throws {
+    let fixture = try Fixture()
+    defer { fixture.cleanup() }
+
+    try fixture.library.selectNotesFolder(fixture.root)
+    let noteDirectory = fixture.library.noteDateDirectory(in: fixture.root, now: fixture.date)
+    let data = Data("image-bytes".utf8)
+    let first = try fixture.library.saveImageAttachment(
+      data: data,
+      suggestedFilename: "Screen Shot: A.png",
+      preferredExtension: "png",
+      now: fixture.date,
+      relativeTo: noteDirectory
+    )
+    let second = try fixture.library.saveImageAttachment(
+      data: Data("other".utf8),
+      suggestedFilename: "Screen Shot: A.png",
+      preferredExtension: "png",
+      now: fixture.date,
+      relativeTo: noteDirectory
+    )
+
+    #expect(first.url.path.hasSuffix("/attachments/2026-06-17/Screen Shot- A-2026-06-17T14-32-10.png"))
+    #expect(first.markdownPath == "../../attachments/2026-06-17/Screen Shot- A-2026-06-17T14-32-10.png")
+    #expect(first.altText == "Screen Shot A")
+    #expect(try Data(contentsOf: first.url) == data)
+    #expect(second.url.path.hasSuffix("/attachments/2026-06-17/Screen Shot- A-2026-06-17T14-32-10-2.png"))
+    #expect(try fixture.library.listNotes().isEmpty)
+  }
+
   @Test("rejects empty first notes")
   func rejectsEmptyNotes() throws {
     let fixture = try Fixture()

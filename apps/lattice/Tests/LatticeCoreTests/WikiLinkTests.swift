@@ -110,6 +110,29 @@ struct WikiLinkTests {
     #expect(link.destination == "../2026-06-17/Target.md#Part")
   }
 
+  @Test("parses image links separately from local note links")
+  func parsesImageLinksSeparately() throws {
+    let text = "Before\n![Screenshot](../../attachments/2026-06-17/screenshot.png)\n[Target](../2026-06-17/Target.md)"
+
+    let image = try #require(MarkdownImageParser.links(in: text).first)
+    let noteLinks = MarkdownLocalLinkParser.links(in: text)
+
+    #expect(image.altText == "Screenshot")
+    #expect(image.destination == "../../attachments/2026-06-17/screenshot.png")
+    #expect((text as NSString).substring(with: image.lineRange).hasPrefix("![Screenshot]"))
+    #expect(noteLinks.count == 1)
+    #expect(noteLinks[0].label == "Target")
+  }
+
+  @Test("parses obsidian style image widths")
+  func parsesObsidianStyleImageWidths() throws {
+    let image = try #require(MarkdownImageParser.links(in: "![Screenshot|720](image.png)").first)
+
+    #expect(image.altText == "Screenshot")
+    #expect(image.destination == "image.png")
+    #expect(image.width == 720)
+  }
+
   @Test("rewrites heading links by target identity")
   func rewritesHeadingLinks() throws {
     let fixture = try Fixture()

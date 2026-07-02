@@ -4,6 +4,9 @@ import LatticeEditor
 
 extension NSAttributedString.Key {
   static let latticeThematicBreak = NSAttributedString.Key("lattice.thematicBreak")
+  static let latticeImagePreviewURL = NSAttributedString.Key("lattice.imagePreviewURL")
+  static let latticeImagePreviewAltText = NSAttributedString.Key("lattice.imagePreviewAltText")
+  static let latticeImagePreviewWidth = NSAttributedString.Key("lattice.imagePreviewWidth")
 }
 
 #if os(macOS)
@@ -11,6 +14,7 @@ import AppKit
 
 enum MarkdownAttributedRenderer {
   static let bodyFontSize: CGFloat = 14
+  static let imagePreviewHeight: CGFloat = 420
 
   static func render(
     _ text: String,
@@ -19,7 +23,8 @@ enum MarkdownAttributedRenderer {
     activeRanges: [NSRange] = [],
     wikiLinkStates: [WikiLinkRenderState] = [],
     dimsInactiveText: Bool = false,
-    theme: LatticeTheme = LatticeTheme(id: .system)
+    theme: LatticeTheme = LatticeTheme(id: .system),
+    imagePreviewStates: [MarkdownImageRenderState] = []
   ) -> NSAttributedString {
     let attributed = NSMutableAttributedString(
       string: text,
@@ -31,7 +36,8 @@ enum MarkdownAttributedRenderer {
       fontFamily: fontFamily,
       activeRanges: activeRanges,
       wikiLinkStates: wikiLinkStates,
-      theme: theme
+      theme: theme,
+      imagePreviewStates: imagePreviewStates
     )
     if dimsInactiveText {
       applyInactiveTextDimming(to: attributed, activeRanges: activeRanges, theme: theme)
@@ -77,7 +83,8 @@ enum MarkdownAttributedRenderer {
     fontFamily: EditorFontFamily,
     activeRanges: [NSRange],
     wikiLinkStates: [WikiLinkRenderState],
-    theme: LatticeTheme
+    theme: LatticeTheme,
+    imagePreviewStates: [MarkdownImageRenderState]
   ) {
     let nsString = attributed.string as NSString
     let codeBlocks = codeBlockRanges(in: nsString)
@@ -85,6 +92,7 @@ enum MarkdownAttributedRenderer {
     applyInlineStyles(to: attributed, fontSize: fontSize, fontFamily: fontFamily, skippedRanges: codeBlocks, activeRanges: activeRanges, theme: theme)
     applyWikiLinkStyles(to: attributed, fontSize: fontSize, fontFamily: fontFamily, states: wikiLinkStates, activeRanges: activeRanges, theme: theme)
     hideLatticeMetadataComments(in: attributed, fontSize: fontSize, fontFamily: fontFamily, activeRanges: activeRanges, theme: theme)
+    applyImagePreviewStyles(to: attributed, fontSize: fontSize, fontFamily: fontFamily, states: imagePreviewStates, activeRanges: activeRanges)
   }
 
   private static func applyBlockStyles(
@@ -611,11 +619,82 @@ enum MarkdownAttributedRenderer {
     }
   }
 
+  private static func applyImagePreviewStyles(
+    to attributed: NSMutableAttributedString,
+    fontSize: CGFloat,
+    fontFamily: EditorFontFamily,
+    states: [MarkdownImageRenderState],
+    activeRanges: [NSRange]
+  ) {
+    let nsString = attributed.string as NSString
+    for state in states {
+      let lineRange = state.link.lineRange
+      guard
+        NSMaxRange(lineRange) <= attributed.length,
+        !lineRangeContainsActiveRange(lineRange, activeRanges: activeRanges, in: nsString)
+      else {
+        continue
+      }
+
+      let contentRange = contentRangeWithoutLineEnding(lineRange, in: nsString)
+      guard contentRange.length > 0 else {
+        continue
+      }
+      attributed.addAttributes(
+        imagePreviewAttributes(fontSize: fontSize, fontFamily: fontFamily, url: state.url, altText: state.link.altText, width: state.link.width),
+        range: contentRange
+      )
+      if let width = state.link.width {
+        attributed.addAttributes([.latticeImagePreviewWidth: width], range: contentRange)
+      }
+    }
+  }
+
   private static func completedTaskAttributes(theme: LatticeTheme) -> [NSAttributedString.Key: Any] {
     [
       .foregroundColor: theme.nsColor(.secondaryText),
       .strikethroughStyle: NSUnderlineStyle.single.rawValue
     ]
+  }
+
+  private static func imagePreviewAttributes(
+    fontSize: CGFloat,
+    fontFamily: EditorFontFamily,
+    url: URL,
+    altText: String,
+    width: Double?
+  ) -> [NSAttributedString.Key: Any] {
+    let paragraphStyle = NSMutableParagraphStyle()
+    let previewHeight = imagePreviewLineHeight(url: url, width: width, fontSize: fontSize)
+    paragraphStyle.minimumLineHeight = previewHeight
+    paragraphStyle.maximumLineHeight = previewHeight
+    paragraphStyle.paragraphSpacing = 12 * fontSize / bodyFontSize
+    paragraphStyle.lineSpacing = 0
+    return [
+      .foregroundColor: NSColor.clear,
+      .font: bodyFont(size: max(0.1, 0.1 * fontSize / bodyFontSize), family: fontFamily),
+      .paragraphStyle: paragraphStyle,
+      .latticeImagePreviewURL: url,
+      .latticeImagePreviewAltText: altText
+    ]
+  }
+
+  private static func imagePreviewLineHeight(url: URL, width: Double?, fontSize: CGFloat) -> CGFloat {
+    let defaultHeight = imagePreviewHeight * fontSize / bodyFontSize
+    guard
+      let width,
+      width.isFinite,
+      width > 0,
+      let image = NSImage(contentsOf: url),
+      image.size.width > 0,
+      image.size.height > 0
+    else {
+      return defaultHeight
+    }
+
+    let verticalPadding = 18 * fontSize / bodyFontSize
+    let scaledHeight = image.size.height * CGFloat(width) / image.size.width
+    return max(96 * fontSize / bodyFontSize, scaledHeight + verticalPadding)
   }
 
   private static func italicBodyFont(size: CGFloat, fontFamily: EditorFontFamily) -> NSFont {
@@ -782,8 +861,11 @@ enum MarkdownAttributedRenderer {
     activeRanges: [NSRange] = [],
     wikiLinkStates: [WikiLinkRenderState] = [],
     dimsInactiveText: Bool = false,
-    theme: LatticeTheme = LatticeTheme(id: .system)
+    theme: LatticeTheme = LatticeTheme(id: .system),
+    imagePreviewStates: [MarkdownImageRenderState] = []
   ) -> NSAttributedString {
+    _ = imagePreviewStates
+    _ = dimsInactiveText
     let attributed = NSMutableAttributedString(string: text, attributes: baseTypingAttributes(fontFamily: fontFamily, theme: theme))
     applyStyles(to: attributed, fontFamily: fontFamily, activeRanges: activeRanges, wikiLinkStates: wikiLinkStates, theme: theme)
     return attributed
