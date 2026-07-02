@@ -183,6 +183,77 @@ struct LatticeAppModelTests {
     #expect(try fixture.library.body(for: try #require(model.selectedNote)) == "test\n")
   }
 
+  @Test("external note creation refreshes the note list")
+  func externalNoteCreationRefreshesNoteList() throws {
+    let fixture = try Fixture()
+    defer { fixture.cleanup() }
+    let model = LatticeAppModel(
+      noteLibrary: fixture.library,
+      folderAccessStore: fixture.folderAccessStore,
+      noteIndex: NoteIndex(appSupportURL: fixture.appSupportURL)
+    )
+
+    try fixture.fileManager.createDirectory(at: fixture.root, withIntermediateDirectories: true)
+    model.chooseFolder(fixture.root)
+    #expect(model.sections.isEmpty)
+
+    _ = try fixture.library.createNote(body: "Remote note", now: fixture.date())
+
+    model.refreshExternalChanges()
+
+    #expect(model.sections.flatMap(\.notes).count == 1)
+    #expect(model.status == "Notes updated")
+  }
+
+  @Test("external selected note changes reload a clean editor")
+  func externalSelectedNoteChangesReloadCleanEditor() throws {
+    let fixture = try Fixture()
+    defer { fixture.cleanup() }
+    let model = LatticeAppModel(
+      noteLibrary: fixture.library,
+      folderAccessStore: fixture.folderAccessStore,
+      noteIndex: NoteIndex(appSupportURL: fixture.appSupportURL)
+    )
+
+    try fixture.fileManager.createDirectory(at: fixture.root, withIntermediateDirectories: true)
+    model.chooseFolder(fixture.root)
+    model.text = "Original"
+    model.flushAutosave()
+    let note = try #require(model.selectedNote)
+
+    try fixture.library.updateNote(note, body: "Updated elsewhere")
+
+    model.refreshExternalChanges()
+
+    #expect(model.text == "Updated elsewhere")
+    #expect(model.selectedNote == note)
+  }
+
+  @Test("external selected note changes do not overwrite a dirty editor")
+  func externalSelectedNoteChangesDoNotOverwriteDirtyEditor() throws {
+    let fixture = try Fixture()
+    defer { fixture.cleanup() }
+    let model = LatticeAppModel(
+      noteLibrary: fixture.library,
+      folderAccessStore: fixture.folderAccessStore,
+      noteIndex: NoteIndex(appSupportURL: fixture.appSupportURL)
+    )
+
+    try fixture.fileManager.createDirectory(at: fixture.root, withIntermediateDirectories: true)
+    model.chooseFolder(fixture.root)
+    model.text = "Original"
+    model.flushAutosave()
+    let note = try #require(model.selectedNote)
+
+    model.text = "Local unsaved edit"
+    try fixture.library.updateNote(note, body: "Updated elsewhere")
+
+    model.refreshExternalChanges()
+
+    #expect(model.text == "Local unsaved edit")
+    #expect(model.status == "Changed on another device; local edits are still open")
+  }
+
   @Test("records note navigation history and restores cursor positions")
   func recordsNoteNavigationHistory() throws {
     let fixture = try Fixture()
