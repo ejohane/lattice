@@ -824,7 +824,7 @@ enum MarkdownAttributedRenderer {
       return
     }
 
-    let inactiveColor = theme.nsColor(.tertiaryText)
+    let inactiveColor = inactiveTextColor(theme: theme)
     let fullRange = NSRange(location: 0, length: attributed.length)
     var cursor = 0
     for activeRange in activeRanges.sorted(by: { $0.location < $1.location }) {
@@ -849,6 +849,12 @@ enum MarkdownAttributedRenderer {
       )
     }
   }
+
+  private static func inactiveTextColor(theme: LatticeTheme) -> NSColor {
+    let primary = theme.nsColor(.primaryText)
+    let background = theme.nsColor(.editorBackground)
+    return primary.blended(withFraction: 0.74, of: background) ?? primary.withAlphaComponent(0.28)
+  }
 }
 
 #elseif os(iOS)
@@ -865,9 +871,11 @@ enum MarkdownAttributedRenderer {
     imagePreviewStates: [MarkdownImageRenderState] = []
   ) -> NSAttributedString {
     _ = imagePreviewStates
-    _ = dimsInactiveText
     let attributed = NSMutableAttributedString(string: text, attributes: baseTypingAttributes(fontFamily: fontFamily, theme: theme))
     applyStyles(to: attributed, fontFamily: fontFamily, activeRanges: activeRanges, wikiLinkStates: wikiLinkStates, theme: theme)
+    if dimsInactiveText {
+      applyInactiveTextDimming(to: attributed, activeRanges: activeRanges, theme: theme)
+    }
     return attributed
   }
 
@@ -1079,6 +1087,45 @@ enum MarkdownAttributedRenderer {
         .font: bodyFont(size: 0.1, fontFamily: fontFamily)
       ], range: match.range)
     }
+  }
+
+  private static func applyInactiveTextDimming(
+    to attributed: NSMutableAttributedString,
+    activeRanges: [NSRange],
+    theme: LatticeTheme
+  ) {
+    guard attributed.length > 0, !activeRanges.isEmpty else {
+      return
+    }
+
+    let inactiveColor = inactiveTextColor(theme: theme)
+    let fullRange = NSRange(location: 0, length: attributed.length)
+    var cursor = 0
+    for activeRange in activeRanges.sorted(by: { $0.location < $1.location }) {
+      let clampedActiveRange = NSIntersectionRange(activeRange, fullRange)
+      guard clampedActiveRange.location != NSNotFound else {
+        continue
+      }
+      if cursor < clampedActiveRange.location {
+        attributed.addAttribute(
+          .foregroundColor,
+          value: inactiveColor,
+          range: NSRange(location: cursor, length: clampedActiveRange.location - cursor)
+        )
+      }
+      cursor = max(cursor, NSMaxRange(clampedActiveRange))
+    }
+    if cursor < attributed.length {
+      attributed.addAttribute(
+        .foregroundColor,
+        value: inactiveColor,
+        range: NSRange(location: cursor, length: attributed.length - cursor)
+      )
+    }
+  }
+
+  private static func inactiveTextColor(theme: LatticeTheme) -> UIColor {
+    theme.uiColor(.primaryText).withAlphaComponent(0.28)
   }
 }
 #endif
