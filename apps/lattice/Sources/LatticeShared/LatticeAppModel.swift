@@ -13,6 +13,7 @@ public final class LatticeAppModel {
   private let timelineStore: TimelineStore
   private let taskSyncEngine: TaskSyncEngine
   private let editorPreferencesStore: EditorPreferencesStore
+  private let notesFolderChangeMonitor: NotesFolderChangeMonitoring
   private let taskSyncPollIntervalNanoseconds: UInt64
   private let dateProvider: () -> Date
   private let session: NoteEditingSession
@@ -22,6 +23,13 @@ public final class LatticeAppModel {
   private var scopedFolderURL: URL?
   private var backStack: [NavigationHistoryEntry] = []
   private var forwardStack: [NavigationHistoryEntry] = []
+
+  private enum ExternalSelectedNoteChange {
+    case none
+    case reloaded
+    case conflict
+    case deleted
+  }
 
   public var sections: [NoteSection] = []
   public var noteTitles: [String: String] = [:]
@@ -76,6 +84,7 @@ public final class LatticeAppModel {
     timelineStore: TimelineStore = TimelineStore(),
     taskSyncEngine: TaskSyncEngine = TaskSyncEngine(),
     editorPreferencesStore: EditorPreferencesStore = EditorPreferencesStore(),
+    notesFolderChangeMonitor: NotesFolderChangeMonitoring = NotesFolderChangeMonitor(),
     taskSyncPollIntervalNanoseconds: UInt64 = 15_000_000_000,
     dateProvider: @escaping () -> Date = Date.init
   ) {
@@ -86,6 +95,7 @@ public final class LatticeAppModel {
     self.timelineStore = timelineStore
     self.taskSyncEngine = taskSyncEngine
     self.editorPreferencesStore = editorPreferencesStore
+    self.notesFolderChangeMonitor = notesFolderChangeMonitor
     self.taskSyncPollIntervalNanoseconds = taskSyncPollIntervalNanoseconds
     self.dateProvider = dateProvider
     self.session = NoteEditingSession(library: noteLibrary)
@@ -143,6 +153,7 @@ public final class LatticeAppModel {
 
   public func start() {
     guard folderURL == nil else {
+      refreshExternalChanges()
       return
     }
 
@@ -256,6 +267,29 @@ public final class LatticeAppModel {
     await syncAllTasks()
   }
 
+  public func appBecameActive() {
+    refreshExternalChanges()
+  }
+
+  public func refreshExternalChanges() {
+    guard folderURL != nil else {
+      return
+    }
+
+    let previousNoteListSignature = noteListSignature
+    let selectedChange = refreshSelectedNoteForExternalChanges()
+    reloadNotes(selecting: selectedNote)
+    rebuildNoteIndex()
+    refreshTodayActivity()
+    refreshWikiLinkStates()
+    updateWikiAutocomplete()
+    updateSelectedNoteChangeMonitor()
+
+    if selectedChange == .none, previousNoteListSignature != noteListSignature {
+      status = "Notes updated"
+    }
+  }
+
   public func useRecommendedFolder() {
     do {
       let recommendation = recommendedNotesFolder
@@ -284,6 +318,7 @@ public final class LatticeAppModel {
     forwardStack.removeAll()
     session.resetForNewNote()
     selectedNote = nil
+    updateSelectedNoteChangeMonitor()
     text = ""
     selectedRange = NSRange(location: 0, length: 0)
     wikiLinkStates = []
@@ -356,6 +391,7 @@ public final class LatticeAppModel {
         forwardStack.removeAll()
       }
       selectedNote = restored.note
+      updateSelectedNoteChangeMonitor()
       selectedPage = .noteEditor
       let editorBody = Self.editorBody(from: restored.body)
       text = editorBody
@@ -893,6 +929,7 @@ public final class LatticeAppModel {
     folderURL = url
     status = url.lastPathComponent
     reloadNotes()
+    startNotesFolderChangeMonitor()
     timelineEntries = []
     activeTimelineEntryID = nil
     timelineText = ""
@@ -911,6 +948,7 @@ public final class LatticeAppModel {
     do {
       if let restored = try session.restoreActiveNote() {
         selectedNote = restored.note
+        updateSelectedNoteChangeMonitor()
         selectedPage = .noteEditor
         let editorBody = Self.editorBody(from: restored.body)
         text = editorBody
@@ -940,6 +978,7 @@ public final class LatticeAppModel {
         return
       case .saved(let note):
         selectedNote = note
+        updateSelectedNoteChangeMonitor()
         refreshNoteIndex(for: note)
         rewriteHeadingLinksIfNeeded(for: note, previousBody: previousBody, nextBody: text)
         reloadNotes(selecting: note)
@@ -1473,6 +1512,92 @@ public final class LatticeAppModel {
     }
   }
 
+  private func refreshSelectedNoteForExternalChanges() -> ExternalSelectedNoteChange {
+    guard selectedPage == .noteEditor, let selectedNote else {
+      return .none
+    }
+
+    let isDirty = isCurrentEditorDirty
+    guard FileManager.default.fileExists(atPath: selectedNote.url.path) else {
+      if isDirty {
+        status = "Deleted on another device; local edits are still open"
+        return .conflict
+      }
+      clearEditorAfterExternalDelete()
+      return .deleted
+    }
+
+    do {
+      let storedBody = try noteLibrary.body(for: selectedNote)
+      let normalizedStoredBody = NoteEditingSession.normalizedBody(storedBody)
+      guard normalizedStoredBody != session.savedBody else {
+        return .none
+      }
+
+      if isDirty {
+        status = "Changed on another device; local edits are still open"
+        return .conflict
+      }
+
+      let editorBody = Self.editorBody(from: storedBody)
+      text = editorBody
+      selectedRange = NSRange(location: min(selectedRange.location, (editorBody as NSString).length), length: 0)
+      session.updateSavedBody(storedBody, for: selectedNote)
+      status = "Updated \(displayTitle(for: selectedNote))"
+      return .reloaded
+    } catch {
+      errorMessage = error.localizedDescription
+      return .none
+    }
+  }
+
+  private var isCurrentEditorDirty: Bool {
+    autosaveWorkItem != nil || NoteEditingSession.normalizedBody(text) != session.savedBody
+  }
+
+  private var noteListSignature: [String] {
+    sections.flatMap { section in
+      [section.dateString] + section.notes.map { note in
+        let modifiedAt = note.modifiedAt?.timeIntervalSinceReferenceDate.description ?? ""
+        return "\(note.id)|\(modifiedAt)"
+      }
+    }
+  }
+
+  private func clearEditorAfterExternalDelete() {
+    let title = selectedNote.map { displayTitle(for: $0) } ?? "note"
+    session.resetForNewNote()
+    selectedNote = nil
+    text = ""
+    selectedRange = NSRange(location: 0, length: 0)
+    wikiLinkStates = []
+    wikiAutocompleteSuggestions = []
+    ambiguousWikiLink = nil
+    vimStatusMessage = nil
+    status = "Removed \(title)"
+    preferredCompactColumn = .sidebar
+    updateSelectedNoteChangeMonitor()
+  }
+
+  private func startNotesFolderChangeMonitor() {
+    guard let folderURL else {
+      notesFolderChangeMonitor.stop()
+      return
+    }
+    notesFolderChangeMonitor.start(
+      notesFolderURL: folderURL,
+      selectedNoteURL: selectedNote?.url
+    ) { [weak self] in
+      Task { @MainActor in
+        self?.refreshExternalChanges()
+      }
+    }
+  }
+
+  private func updateSelectedNoteChangeMonitor() {
+    notesFolderChangeMonitor.updateSelectedNoteURL(selectedNote?.url)
+  }
+
   private static func editorBody(from storedBody: String) -> String {
     var body = storedBody
     while let scalar = body.unicodeScalars.last, CharacterSet.newlines.contains(scalar) {
@@ -1496,10 +1621,12 @@ public final class LatticeAppModel {
         .flatMap(\.notes)
         .map { ($0.id, noteLibrary.displayTitle(for: $0)) })
       selectedNote = note ?? session.currentNote
+      updateSelectedNoteChangeMonitor()
     } catch NoteLibraryError.noActiveNotesFolder {
       sections = []
       noteTitles = [:]
       selectedNote = nil
+      updateSelectedNoteChangeMonitor()
     } catch {
       errorMessage = error.localizedDescription
     }

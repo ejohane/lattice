@@ -10,6 +10,7 @@ struct LatticeMacApp: App {
 
   @NSApplicationDelegateAdaptor(MacAppDelegate.self) private var appDelegate
   @Environment(\.openWindow) private var openWindow
+  @Environment(\.scenePhase) private var scenePhase
   @State private var model = LatticeAppModel()
 
   var body: some Scene {
@@ -26,6 +27,11 @@ struct LatticeMacApp: App {
         ))
         .task {
           model.start()
+        }
+        .onChange(of: scenePhase) { _, newPhase in
+          if newPhase == .active {
+            model.appBecameActive()
+          }
         }
     }
     .commands {
