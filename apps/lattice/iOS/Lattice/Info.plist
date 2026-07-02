@@ -20,6 +20,18 @@
   <string>$(CURRENT_PROJECT_VERSION)</string>
   <key>NSRemindersFullAccessUsageDescription</key>
   <string>Lattice syncs Markdown checkbox tasks to your selected Reminders list.</string>
+  <key>NSUbiquitousContainers</key>
+  <dict>
+    <key>iCloud.com.ejohane.lattice.ios</key>
+    <dict>
+      <key>NSUbiquitousContainerIsDocumentScopePublic</key>
+      <true/>
+      <key>NSUbiquitousContainerName</key>
+      <string>Lattice</string>
+      <key>NSUbiquitousContainerSupportedFolderLevels</key>
+      <string>Any</string>
+    </dict>
+  </dict>
   <key>UIApplicationSceneManifest</key>
   <dict>
     <key>UIApplicationSupportsMultipleScenes</key>
