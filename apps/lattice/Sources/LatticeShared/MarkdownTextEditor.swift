@@ -10,6 +10,7 @@ public struct MarkdownTextEditor: NSViewRepresentable {
   @Binding var selectedRange: NSRange
   @Binding var vimState: VimEditorState
   let fontSize: CGFloat
+  let fontFamily: EditorFontFamily
   let focusToken: Int
   let isVimModeEnabled: Bool
   let showsRelativeLineNumbers: Bool
@@ -29,6 +30,7 @@ public struct MarkdownTextEditor: NSViewRepresentable {
     selectedRange: Binding<NSRange>,
     vimState: Binding<VimEditorState>,
     fontSize: CGFloat,
+    fontFamily: EditorFontFamily,
     focusToken: Int,
     isVimModeEnabled: Bool,
     showsRelativeLineNumbers: Bool,
@@ -47,6 +49,7 @@ public struct MarkdownTextEditor: NSViewRepresentable {
     self._selectedRange = selectedRange
     self._vimState = vimState
     self.fontSize = fontSize
+    self.fontFamily = fontFamily
     self.focusToken = focusToken
     self.isVimModeEnabled = isVimModeEnabled
     self.showsRelativeLineNumbers = showsRelativeLineNumbers
@@ -87,7 +90,7 @@ public struct MarkdownTextEditor: NSViewRepresentable {
     textView.backgroundColor = .clear
     textView.textColor = theme.nsColor(.primaryText)
     textView.insertionPointColor = theme.nsColor(.accent)
-    textView.font = MarkdownAttributedRenderer.bodyFont(size: fontSize)
+    textView.font = MarkdownAttributedRenderer.bodyFont(size: fontSize, family: fontFamily)
     textView.textContainerInset = NSSize(width: 36, height: 34)
     textView.minSize = NSSize(width: 0, height: 0)
     textView.maxSize = NSSize(width: CGFloat.greatestFiniteMagnitude, height: CGFloat.greatestFiniteMagnitude)
@@ -113,6 +116,7 @@ public struct MarkdownTextEditor: NSViewRepresentable {
     }
     if textView.string != text
       || context.coordinator.lastRenderedFontSize != fontSize
+      || context.coordinator.lastRenderedFontFamily != fontFamily
       || context.coordinator.lastRenderedWikiLinkStates != wikiLinkStates
       || context.coordinator.lastRenderedTheme != theme {
       context.coordinator.render(text, in: textView, preserving: selectedRange)
@@ -136,6 +140,7 @@ public struct MarkdownTextEditor: NSViewRepresentable {
     fileprivate weak var textView: MarkdownTextView?
     var lastFocusToken = 0
     var lastRenderedFontSize: CGFloat?
+    var lastRenderedFontFamily: EditorFontFamily?
     var lastRenderedWikiLinkStates: [WikiLinkRenderState] = []
     var lastRenderedTheme = LatticeTheme(id: .system)
     private var isRendering = false
@@ -172,15 +177,21 @@ public struct MarkdownTextEditor: NSViewRepresentable {
       let attributed = MarkdownAttributedRenderer.render(
         text,
         fontSize: parent.fontSize,
+        fontFamily: parent.fontFamily,
         activeRanges: [selection],
         wikiLinkStates: parent.wikiLinkStates,
         theme: parent.theme
       )
       textView.textStorage?.setAttributedString(attributed)
       textView.setSelectedRange(clamped(selection, length: (text as NSString).length))
-      textView.typingAttributes = MarkdownAttributedRenderer.baseTypingAttributes(fontSize: parent.fontSize, theme: parent.theme)
+      textView.typingAttributes = MarkdownAttributedRenderer.baseTypingAttributes(
+        fontSize: parent.fontSize,
+        fontFamily: parent.fontFamily,
+        theme: parent.theme
+      )
       (textView as? MarkdownTextView)?.invalidateLineNumberRuler()
       lastRenderedFontSize = parent.fontSize
+      lastRenderedFontFamily = parent.fontFamily
       lastRenderedWikiLinkStates = parent.wikiLinkStates
       lastRenderedTheme = parent.theme
       isRendering = false
@@ -230,6 +241,32 @@ private final class MarkdownTextView: NSTextView {
   override func draw(_ dirtyRect: NSRect) {
     super.draw(dirtyRect)
     drawThematicBreaks()
+  }
+
+  override func drawInsertionPoint(in rect: NSRect, color: NSColor, turnedOn flag: Bool) {
+    guard showsVimNormalModeIndicator else {
+      super.drawInsertionPoint(in: rect, color: color, turnedOn: flag)
+      return
+    }
+
+    guard flag else {
+      return
+    }
+
+    theme.nsColor(.accent).setFill()
+    vimBlockCursorRect(fallbackRect: rect).fill()
+  }
+
+  override func setNeedsDisplay(_ rect: NSRect, avoidAdditionalLayout flag: Bool) {
+    guard showsVimNormalModeIndicator else {
+      super.setNeedsDisplay(rect, avoidAdditionalLayout: flag)
+      return
+    }
+
+    super.setNeedsDisplay(
+      rect.insetBy(dx: -vimFallbackCursorWidth, dy: -1),
+      avoidAdditionalLayout: flag
+    )
   }
 
   override func performKeyEquivalent(with event: NSEvent) -> Bool {
@@ -394,6 +431,89 @@ private final class MarkdownTextView: NSTextView {
 
     return coordinator.parent.isVimModeEnabled
       && coordinator.parent.vimState.mode == .normal
+  }
+
+  private func vimBlockCursorRect(fallbackRect: NSRect) -> NSRect {
+    let location = min(selectedRange().location, (string as NSString).length)
+    let cursorFont = vimCursorFont(at: location)
+    let fallbackWidth = vimFallbackCursorWidth(for: cursorFont)
+    let fallbackHeight = max(2, ceil(cursorFont.ascender - cursorFont.descender))
+    var cursorRect = fallbackRect
+    cursorRect.size.width = max(fallbackWidth, fallbackRect.width)
+    cursorRect.size.height = min(fallbackRect.height, fallbackHeight)
+    cursorRect.origin.y = fallbackRect.midY - (cursorRect.height / 2)
+
+    guard
+      let layoutManager,
+      let textContainer
+    else {
+      return cursorRect.integral
+    }
+
+    layoutManager.ensureLayout(for: textContainer)
+
+    let nsString = string as NSString
+    guard location < nsString.length else {
+      return cursorRect.integral
+    }
+
+    guard let scalar = Unicode.Scalar(nsString.character(at: location)),
+          !CharacterSet.newlines.contains(scalar) else {
+      return cursorRect.integral
+    }
+
+    let characterRange = NSRange(location: location, length: 1)
+    let glyphRange = layoutManager.glyphRange(
+      forCharacterRange: characterRange,
+      actualCharacterRange: nil
+    )
+    guard glyphRange.length > 0 else {
+      return cursorRect.integral
+    }
+
+    let glyphLocation = layoutManager.location(forGlyphAt: glyphRange.location)
+    let glyphBounds = layoutManager.boundingRect(forGlyphRange: glyphRange, in: textContainer)
+    cursorRect.origin.x = textContainerOrigin.x + glyphLocation.x
+    cursorRect.size.width = glyphBounds.width > 1
+      ? max(2, ceil(glyphBounds.width) + 2)
+      : fallbackWidth
+
+    let nextGlyphIndex = NSMaxRange(glyphRange)
+    if glyphBounds.width <= 1, nextGlyphIndex < layoutManager.numberOfGlyphs {
+      let lineRect = layoutManager.lineFragmentUsedRect(forGlyphAt: glyphRange.location, effectiveRange: nil)
+      let nextLineRect = layoutManager.lineFragmentUsedRect(forGlyphAt: nextGlyphIndex, effectiveRange: nil)
+      if abs(nextLineRect.minY - lineRect.minY) < 0.5 {
+        let nextGlyphLocation = layoutManager.location(forGlyphAt: nextGlyphIndex)
+        cursorRect.size.width = max(cursorRect.size.width, nextGlyphLocation.x - glyphLocation.x)
+      }
+    }
+
+    return cursorRect.integral
+  }
+
+  private var vimFallbackCursorWidth: CGFloat {
+    let location = min(selectedRange().location, (string as NSString).length)
+    return vimFallbackCursorWidth(for: vimCursorFont(at: location))
+  }
+
+  private func vimFallbackCursorWidth(for cursorFont: NSFont) -> CGFloat {
+    let measuredWidth = ("m" as NSString).size(withAttributes: [.font: cursorFont]).width
+    return max(2, ceil(measuredWidth))
+  }
+
+  private func vimCursorFont(at location: Int) -> NSFont {
+    if let textStorage, textStorage.length > 0 {
+      let clampedLocation = min(location, textStorage.length - 1)
+      if let attributedFont = textStorage.attribute(
+        .font,
+        at: clampedLocation,
+        effectiveRange: nil
+      ) as? NSFont {
+        return attributedFont
+      }
+    }
+
+    return font ?? NSFont.systemFont(ofSize: NSFont.systemFontSize)
   }
 
   private func toggleTaskCheckbox(at event: NSEvent) -> Bool {
@@ -721,6 +841,7 @@ public struct MarkdownTextEditor: UIViewRepresentable {
   @Binding var selectedRange: NSRange
   @Binding var vimState: VimEditorState
   let fontSize: CGFloat
+  let fontFamily: EditorFontFamily
   let focusToken: Int
   let isVimModeEnabled: Bool
   let showsRelativeLineNumbers: Bool
@@ -740,6 +861,7 @@ public struct MarkdownTextEditor: UIViewRepresentable {
     selectedRange: Binding<NSRange>,
     vimState: Binding<VimEditorState>,
     fontSize: CGFloat,
+    fontFamily: EditorFontFamily,
     focusToken: Int,
     isVimModeEnabled: Bool,
     showsRelativeLineNumbers: Bool,
@@ -758,6 +880,7 @@ public struct MarkdownTextEditor: UIViewRepresentable {
     self._selectedRange = selectedRange
     self._vimState = vimState
     self.fontSize = fontSize
+    self.fontFamily = fontFamily
     self.focusToken = focusToken
     self.isVimModeEnabled = isVimModeEnabled
     self.showsRelativeLineNumbers = showsRelativeLineNumbers
@@ -788,7 +911,7 @@ public struct MarkdownTextEditor: UIViewRepresentable {
     textView.alwaysBounceVertical = true
     textView.keyboardDismissMode = .interactive
     textView.textContainerInset = UIEdgeInsets(top: 34, left: 22, bottom: 34, right: 22)
-    textView.font = .preferredFont(forTextStyle: .title3)
+    textView.font = MarkdownAttributedRenderer.bodyFont(fontFamily: fontFamily)
     textView.adjustsFontForContentSizeCategory = true
     textView.autocorrectionType = .yes
     textView.smartDashesType = .no
@@ -806,6 +929,7 @@ public struct MarkdownTextEditor: UIViewRepresentable {
   public func updateUIView(_ textView: UITextView, context: Context) {
     context.coordinator.parent = self
     if textView.text != text
+      || context.coordinator.lastRenderedFontFamily != fontFamily
       || context.coordinator.lastRenderedWikiLinkStates != wikiLinkStates
       || context.coordinator.lastRenderedTheme != theme {
       context.coordinator.render(text, in: textView, preserving: selectedRange)
@@ -825,6 +949,7 @@ public struct MarkdownTextEditor: UIViewRepresentable {
   public final class Coordinator: NSObject, UITextViewDelegate, UIGestureRecognizerDelegate {
     var parent: MarkdownTextEditor
     var lastFocusToken = 0
+    var lastRenderedFontFamily: EditorFontFamily?
     var lastRenderedWikiLinkStates: [WikiLinkRenderState] = []
     var lastRenderedTheme = LatticeTheme(id: .system)
     private var isRendering = false
@@ -910,12 +1035,17 @@ public struct MarkdownTextEditor: UIViewRepresentable {
       activeWikiLinkRange = WikiLinkParser.link(at: clampedSelection.location, in: text)?.range
       textView.attributedText = MarkdownAttributedRenderer.render(
         text,
+        fontFamily: parent.fontFamily,
         activeRanges: [clampedSelection],
         wikiLinkStates: parent.wikiLinkStates,
         theme: parent.theme
       )
       textView.selectedRange = clampedSelection
-      textView.typingAttributes = MarkdownAttributedRenderer.baseTypingAttributes(theme: parent.theme)
+      textView.typingAttributes = MarkdownAttributedRenderer.baseTypingAttributes(
+        fontFamily: parent.fontFamily,
+        theme: parent.theme
+      )
+      lastRenderedFontFamily = parent.fontFamily
       lastRenderedWikiLinkStates = parent.wikiLinkStates
       lastRenderedTheme = parent.theme
       isRendering = false
