@@ -436,20 +436,21 @@ private struct TimelinePane: View {
       .frame(maxWidth: maximumTimelineWidth, maxHeight: .infinity)
       .padding(.horizontal, 18)
       .frame(maxWidth: .infinity, maxHeight: .infinity)
-    .navigationTitle("Timeline")
-    #if os(macOS)
-    .navigationSplitViewColumnWidth(min: 420, ideal: 760)
-    #endif
-    .toolbar {
-      ToolbarItem(placement: .primaryAction) {
-        Button {
-          model.composeNewTimelineEntry()
-        } label: {
-          Label("New Entry", systemImage: "plus")
+      .background(theme.color(.appBackground))
+      .navigationTitle("Timeline")
+      #if os(macOS)
+      .navigationSplitViewColumnWidth(min: 420, ideal: 760)
+      #endif
+      .toolbar {
+        ToolbarItem(placement: .primaryAction) {
+          Button {
+            model.composeNewTimelineEntry()
+          } label: {
+            Label("New Entry", systemImage: "plus")
+          }
+          .disabled(!model.hasFolder)
         }
-        .disabled(!model.hasFolder)
       }
-    }
   }
 
   private var editorContent: some View {
@@ -492,6 +493,7 @@ private struct TimelinePane: View {
       )
       .ignoresSafeArea(.keyboard, edges: .bottom)
       .frame(maxWidth: .infinity, maxHeight: .infinity)
+      .background(theme.color(.editorBackground))
 
       if model.showsStatusBar {
         HStack(spacing: 8) {
@@ -515,6 +517,7 @@ private struct TimelinePane: View {
         .background(theme.color(.barBackground))
       }
     }
+    .frame(maxWidth: .infinity, maxHeight: .infinity)
   }
 
   private var statusText: String {
