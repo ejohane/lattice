@@ -97,7 +97,7 @@ public struct LatticeTheme: Equatable, Sendable {
     case .graphite:
       return [
         .appBackground: 0xF4F2EF,
-        .editorBackground: 0xFCFBFA,
+        .editorBackground: 0xF4F2EF,
         .sidebarBackground: 0xE8E5E0,
         .surfaceBackground: 0xFFFFFF,
         .barBackground: 0xEEEAE4,
@@ -116,7 +116,7 @@ public struct LatticeTheme: Equatable, Sendable {
     case .darkGraphite:
       return [
         .appBackground: 0x151719,
-        .editorBackground: 0x1C1F21,
+        .editorBackground: 0x151719,
         .sidebarBackground: 0x111315,
         .surfaceBackground: 0x222629,
         .barBackground: 0x181B1D,
@@ -135,7 +135,7 @@ public struct LatticeTheme: Equatable, Sendable {
     case .solarizedLight:
       return [
         .appBackground: 0xFDF6E3,
-        .editorBackground: 0xFFF9E8,
+        .editorBackground: 0xFDF6E3,
         .sidebarBackground: 0xEEE8D5,
         .surfaceBackground: 0xFDF6E3,
         .barBackground: 0xEEE8D5,
@@ -154,7 +154,7 @@ public struct LatticeTheme: Equatable, Sendable {
     case .solarizedDark:
       return [
         .appBackground: 0x002B36,
-        .editorBackground: 0x073642,
+        .editorBackground: 0x002B36,
         .sidebarBackground: 0x00212A,
         .surfaceBackground: 0x073642,
         .barBackground: 0x002B36,

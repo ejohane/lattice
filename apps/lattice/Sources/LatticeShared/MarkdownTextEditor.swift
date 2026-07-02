@@ -93,10 +93,13 @@ public struct MarkdownTextEditor: NSViewRepresentable {
 
   public func makeNSView(context: Context) -> NSScrollView {
     let scrollView = NSScrollView()
-    scrollView.drawsBackground = false
+    scrollView.drawsBackground = true
+    scrollView.backgroundColor = theme.nsColor(.editorBackground)
     scrollView.hasVerticalScroller = true
     scrollView.autohidesScrollers = true
     scrollView.contentView = MarkdownClipView()
+    scrollView.contentView.drawsBackground = true
+    scrollView.contentView.backgroundColor = theme.nsColor(.editorBackground)
     scrollView.contentView.postsBoundsChangedNotifications = true
 
     let textView = MarkdownTextView()
@@ -110,7 +113,8 @@ public struct MarkdownTextEditor: NSViewRepresentable {
     textView.isAutomaticQuoteSubstitutionEnabled = false
     textView.isAutomaticTextReplacementEnabled = false
     textView.theme = theme
-    textView.backgroundColor = .clear
+    textView.drawsBackground = true
+    textView.backgroundColor = theme.nsColor(.editorBackground)
     textView.textColor = theme.nsColor(.primaryText)
     textView.insertionPointColor = theme.nsColor(.accent)
     textView.font = MarkdownAttributedRenderer.bodyFont(size: fontSize, family: fontFamily)
@@ -157,6 +161,9 @@ public struct MarkdownTextEditor: NSViewRepresentable {
       context.coordinator.render(text, in: textView, preserving: clampedSelectedRange)
     }
     textView.theme = theme
+    scrollView.backgroundColor = theme.nsColor(.editorBackground)
+    scrollView.contentView.backgroundColor = theme.nsColor(.editorBackground)
+    textView.backgroundColor = theme.nsColor(.editorBackground)
     textView.textColor = theme.nsColor(.primaryText)
     textView.insertionPointColor = theme.nsColor(.accent)
     textView.configureRuler(
@@ -1741,7 +1748,7 @@ public struct MarkdownTextEditor: UIViewRepresentable {
     let textView = MarkdownUIKitTextView()
     textView.delegate = context.coordinator
     textView.theme = theme
-    textView.backgroundColor = .clear
+    textView.backgroundColor = theme.uiColor(.editorBackground)
     textView.textColor = theme.uiColor(.primaryText)
     textView.tintColor = theme.uiColor(.accent)
     textView.isScrollEnabled = true
@@ -1775,6 +1782,7 @@ public struct MarkdownTextEditor: UIViewRepresentable {
       context.coordinator.render(text, in: textView, preserving: clampedSelectedRange)
     }
     (textView as? MarkdownUIKitTextView)?.theme = theme
+    textView.backgroundColor = theme.uiColor(.editorBackground)
     textView.textColor = theme.uiColor(.primaryText)
     textView.tintColor = theme.uiColor(.accent)
     if context.coordinator.lastFocusToken != focusToken {
