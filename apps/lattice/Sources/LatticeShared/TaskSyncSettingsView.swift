@@ -76,15 +76,20 @@ public struct TaskSyncSettingsView: View {
 
   @ViewBuilder
   private var editorSection: some View {
-    #if os(macOS)
     Section("Editor") {
+      Picker("Font", selection: fontFamilyBinding) {
+        ForEach(EditorFontFamily.allCases) { fontFamily in
+          Text(fontFamily.displayName).tag(fontFamily)
+        }
+      }
+      Toggle("Status Bar", isOn: statusBarBinding)
+
+      #if os(macOS)
       Toggle("Vim Mode", isOn: vimModeBinding)
       Toggle("Relative Line Numbers", isOn: relativeLineNumbersBinding)
       Toggle("Timeline Ruler", isOn: timelineRulerBinding)
+      #endif
     }
-    #else
-    EmptyView()
-    #endif
   }
 
   private var providerSection: some View {
@@ -200,6 +205,22 @@ public struct TaskSyncSettingsView: View {
       model.selectedThemeID
     } set: { value in
       model.setTheme(value)
+    }
+  }
+
+  private var fontFamilyBinding: Binding<EditorFontFamily> {
+    Binding {
+      model.editorFontFamily
+    } set: { value in
+      model.setEditorFontFamily(value)
+    }
+  }
+
+  private var statusBarBinding: Binding<Bool> {
+    Binding {
+      model.showsStatusBar
+    } set: { value in
+      model.setStatusBarVisible(value)
     }
   }
 

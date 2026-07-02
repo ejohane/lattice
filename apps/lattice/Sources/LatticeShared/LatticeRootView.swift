@@ -282,6 +282,7 @@ private struct NoteEditorPane: View {
         selectedRange: $model.selectedRange,
         vimState: $model.vimState,
         fontSize: CGFloat(model.editorFontSize),
+        fontFamily: model.editorFontFamily,
         focusToken: model.editorFocusToken,
         isVimModeEnabled: model.isVimModeEnabled,
         showsRelativeLineNumbers: model.showsRelativeLineNumbers,
@@ -314,7 +315,9 @@ private struct NoteEditorPane: View {
       .frame(maxWidth: .infinity, maxHeight: .infinity)
       .background(theme.color(.editorBackground))
       autocompleteBar
-      statusBar
+      if model.showsStatusBar {
+        statusBar
+      }
     }
     .frame(maxWidth: .infinity, maxHeight: .infinity)
   }
@@ -449,6 +452,7 @@ private struct TimelinePane: View {
         selectedRange: $model.timelineSelectedRange,
         vimState: $model.vimState,
         fontSize: CGFloat(model.editorFontSize),
+        fontFamily: model.editorFontFamily,
         focusToken: model.timelineFocusToken,
         isVimModeEnabled: model.isVimModeEnabled,
         showsRelativeLineNumbers: false,

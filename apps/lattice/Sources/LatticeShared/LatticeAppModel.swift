@@ -39,6 +39,8 @@ public final class LatticeAppModel {
   public var preferredCompactColumn = NavigationColumn.sidebar
   public var editorFocusToken = 0
   public var editorFontSize = 14.0
+  public var editorFontFamily = EditorFontFamily.system
+  public var showsStatusBar = true
   public var isVimModeEnabled = false
   public var showsRelativeLineNumbers = false
   public var showsTimelineRuler = true
@@ -91,6 +93,8 @@ public final class LatticeAppModel {
     self.showsRelativeLineNumbers = editorPreferences.showsRelativeLineNumbers
     self.showsTimelineRuler = editorPreferences.showsTimelineRuler
     self.selectedThemeID = editorPreferences.themeID
+    self.editorFontFamily = editorPreferences.fontFamily
+    self.showsStatusBar = editorPreferences.showsStatusBar
     self.vimState = VimEditorState(mode: editorPreferences.isVimModeEnabled ? .normal : .insert)
   }
 
@@ -699,6 +703,16 @@ public final class LatticeAppModel {
 
   public func setTheme(_ themeID: LatticeThemeID) {
     selectedThemeID = themeID
+    saveEditorPreferences()
+  }
+
+  public func setEditorFontFamily(_ fontFamily: EditorFontFamily) {
+    editorFontFamily = fontFamily
+    saveEditorPreferences()
+  }
+
+  public func setStatusBarVisible(_ isVisible: Bool) {
+    showsStatusBar = isVisible
     saveEditorPreferences()
   }
 
@@ -1424,7 +1438,9 @@ public final class LatticeAppModel {
       isVimModeEnabled: isVimModeEnabled,
       showsRelativeLineNumbers: showsRelativeLineNumbers,
       showsTimelineRuler: showsTimelineRuler,
-      themeID: selectedThemeID
+      themeID: selectedThemeID,
+      fontFamily: editorFontFamily,
+      showsStatusBar: showsStatusBar
     ))
   }
 
