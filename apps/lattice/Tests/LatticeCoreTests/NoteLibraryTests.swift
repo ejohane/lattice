@@ -17,6 +17,85 @@ struct NoteLibraryTests {
     #expect(!fixture.fileManager.fileExists(atPath: fixture.root.appendingPathComponent(".lattice").path))
   }
 
+  @Test("recommends app-owned iCloud Drive folder when available")
+  func recommendsICloudFolderWhenAvailable() throws {
+    let fixture = try Fixture()
+    defer { fixture.cleanup() }
+    let iCloudRoot = fixture.root.appendingPathComponent("ubiquity", isDirectory: true)
+    let library = NoteLibrary(
+      defaults: fixture.defaults,
+      fileManager: fixture.fileManager,
+      iCloudContainerURLProvider: { iCloudRoot }
+    )
+
+    #expect(library.recommendedNotesFolder == .iCloud(
+      iCloudRoot
+        .appendingPathComponent("Documents", isDirectory: true)
+        .appendingPathComponent("Lattice", isDirectory: true)
+    ))
+  }
+
+  @Test("falls back to local documents folder when iCloud Drive is unavailable")
+  func fallsBackWhenICloudUnavailable() throws {
+    let fixture = try Fixture()
+    defer { fixture.cleanup() }
+    let library = NoteLibrary(
+      defaults: fixture.defaults,
+      fileManager: fixture.fileManager,
+      iCloudContainerURLProvider: { nil }
+    )
+
+    #expect(library.recommendedNotesFolder == .localFallback(library.fallbackNotesFolderURL))
+  }
+
+  @Test("migrates local fallback notes into iCloud without overwriting cloud notes")
+  func migratesFallbackNotesToICloud() throws {
+    let fixture = try Fixture()
+    defer { fixture.cleanup() }
+    let fallbackRoot = fixture.root.appendingPathComponent("local", isDirectory: true)
+    let iCloudRoot = fixture.root.appendingPathComponent("ubiquity", isDirectory: true)
+    let library = NoteLibrary(
+      defaults: fixture.defaults,
+      fileManager: fixture.fileManager,
+      fallbackNotesFolderURLProvider: { fallbackRoot },
+      iCloudContainerURLProvider: { iCloudRoot }
+    )
+    let fallbackDateURL = fallbackRoot
+      .appendingPathComponent("notes", isDirectory: true)
+      .appendingPathComponent("2026-06-17", isDirectory: true)
+    let iCloudDateURL = iCloudRoot
+      .appendingPathComponent("notes", isDirectory: true)
+      .appendingPathComponent("2026-06-17", isDirectory: true)
+    try fixture.fileManager.createDirectory(at: fallbackDateURL, withIntermediateDirectories: true)
+    try fixture.fileManager.createDirectory(at: iCloudDateURL, withIntermediateDirectories: true)
+    try "Local\n".write(
+      to: fallbackDateURL.appendingPathComponent("local.md"),
+      atomically: true,
+      encoding: .utf8
+    )
+    try "Existing cloud\n".write(
+      to: iCloudDateURL.appendingPathComponent("conflict.md"),
+      atomically: true,
+      encoding: .utf8
+    )
+    try "Local conflict\n".write(
+      to: fallbackDateURL.appendingPathComponent("conflict.md"),
+      atomically: true,
+      encoding: .utf8
+    )
+
+    try library.migrateFallbackNotesToICloudIfNeeded(iCloudFolderURL: iCloudRoot)
+
+    #expect(try String(
+      contentsOf: iCloudDateURL.appendingPathComponent("local.md"),
+      encoding: .utf8
+    ) == "Local\n")
+    #expect(try String(
+      contentsOf: iCloudDateURL.appendingPathComponent("conflict.md"),
+      encoding: .utf8
+    ) == "Existing cloud\n")
+  }
+
   @Test("creates timestamped markdown notes under date folders")
   func createsTimestampedMarkdownNote() throws {
     let fixture = try Fixture()

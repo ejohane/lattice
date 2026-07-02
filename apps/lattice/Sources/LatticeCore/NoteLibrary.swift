@@ -81,6 +81,25 @@ public enum NoteSaveResult: Equatable, Sendable {
   case saved(SavedNote)
 }
 
+public enum RecommendedNotesFolder: Equatable, Sendable {
+  case iCloud(URL)
+  case localFallback(URL)
+
+  public var url: URL {
+    switch self {
+    case .iCloud(let url), .localFallback(let url):
+      return url
+    }
+  }
+
+  public var isCloudBacked: Bool {
+    if case .iCloud = self {
+      return true
+    }
+    return false
+  }
+}
+
 public struct RestoredNote: Equatable, Sendable {
   public let note: SavedNote
   public let body: String
@@ -180,30 +199,51 @@ public final class NoteEditingSession {
 }
 
 public final class NoteLibrary {
+  public static let iCloudContainerIdentifier = "iCloud.com.ejohane.lattice.ios"
   public static let activeNotesFolderPathKey = "activeNotesFolderPath"
   public static let activeNotePathKey = "activeNotePath"
 
   private let defaults: UserDefaults
   private let fileManager: FileManager
+  private let fallbackNotesFolderURLProvider: () -> URL
+  private let iCloudContainerURLProvider: () -> URL?
 
-  public init(defaults: UserDefaults = .standard, fileManager: FileManager = .default) {
+  public init(
+    defaults: UserDefaults = .standard,
+    fileManager: FileManager = .default,
+    fallbackNotesFolderURLProvider: (() -> URL)? = nil,
+    iCloudContainerURLProvider: (() -> URL?)? = nil
+  ) {
     self.defaults = defaults
     self.fileManager = fileManager
+    let resolvedFileManager = fileManager
+    self.fallbackNotesFolderURLProvider = fallbackNotesFolderURLProvider ?? {
+      (resolvedFileManager.urls(for: .documentDirectory, in: .userDomainMask).first
+        ?? URL(fileURLWithPath: NSHomeDirectory()).appendingPathComponent("Documents", isDirectory: true))
+        .appendingPathComponent("Lattice", isDirectory: true)
+    }
+    self.iCloudContainerURLProvider = iCloudContainerURLProvider ?? {
+      resolvedFileManager.url(forUbiquityContainerIdentifier: Self.iCloudContainerIdentifier)
+    }
   }
 
   public var fallbackNotesFolderURL: URL {
-    (fileManager.urls(for: .documentDirectory, in: .userDomainMask).first
-      ?? URL(fileURLWithPath: NSHomeDirectory()).appendingPathComponent("Documents", isDirectory: true))
-      .appendingPathComponent("Lattice", isDirectory: true)
+    fallbackNotesFolderURLProvider()
+  }
+
+  public var recommendedNotesFolder: RecommendedNotesFolder {
+    if let cloudURL = iCloudContainerURLProvider() {
+      return .iCloud(
+        cloudURL
+        .appendingPathComponent("Documents", isDirectory: true)
+        .appendingPathComponent("Lattice", isDirectory: true)
+      )
+    }
+    return .localFallback(fallbackNotesFolderURL)
   }
 
   public var suggestedNotesFolderURL: URL {
-    if let cloudURL = fileManager.url(forUbiquityContainerIdentifier: nil) {
-      return cloudURL
-        .appendingPathComponent("Documents", isDirectory: true)
-        .appendingPathComponent("Lattice", isDirectory: true)
-    }
-    return fallbackNotesFolderURL
+    recommendedNotesFolder.url
   }
 
   public func activeNotesFolderURL() -> URL? {
@@ -305,6 +345,23 @@ public final class NoteLibrary {
   public func initializeNotesFolder(at url: URL) throws {
     try createDirectory(url)
     try createDirectory(notesDirectory(in: url))
+  }
+
+  public func migrateFallbackNotesToICloudIfNeeded(iCloudFolderURL: URL) throws {
+    let sourceRootURL = fallbackNotesFolderURL.standardizedFileURL
+    let destinationRootURL = iCloudFolderURL.standardizedFileURL
+    guard sourceRootURL != destinationRootURL else {
+      return
+    }
+
+    let sourceNotesURL = notesDirectory(in: sourceRootURL)
+    var isDirectory: ObjCBool = false
+    guard fileManager.fileExists(atPath: sourceNotesURL.path, isDirectory: &isDirectory), isDirectory.boolValue else {
+      return
+    }
+
+    try initializeNotesFolder(at: destinationRootURL)
+    try copyMissingItems(from: sourceNotesURL, to: notesDirectory(in: destinationRootURL))
   }
 
   public func listNotes() throws -> [NoteSection] {
@@ -597,6 +654,28 @@ public final class NoteLibrary {
 
   private func createDirectory(_ url: URL) throws {
     try fileManager.createDirectory(at: url, withIntermediateDirectories: true)
+  }
+
+  private func copyMissingItems(from sourceURL: URL, to destinationURL: URL) throws {
+    try createDirectory(destinationURL)
+    let childURLs = try fileManager.contentsOfDirectory(
+      at: sourceURL,
+      includingPropertiesForKeys: [.isDirectoryKey],
+      options: [.skipsHiddenFiles]
+    )
+
+    for sourceChildURL in childURLs {
+      let resourceValues = try sourceChildURL.resourceValues(forKeys: [.isDirectoryKey])
+      let destinationChildURL = destinationURL.appendingPathComponent(
+        sourceChildURL.lastPathComponent,
+        isDirectory: resourceValues.isDirectory == true
+      )
+      if resourceValues.isDirectory == true {
+        try copyMissingItems(from: sourceChildURL, to: destinationChildURL)
+      } else if !fileManager.fileExists(atPath: destinationChildURL.path) {
+        try fileManager.copyItem(at: sourceChildURL, to: destinationChildURL)
+      }
+    }
   }
 
   private func writeNoteBody(_ body: String, to url: URL) throws {
