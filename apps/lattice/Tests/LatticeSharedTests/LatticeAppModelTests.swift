@@ -196,11 +196,15 @@ struct LatticeAppModelTests {
     #expect(!model.isVimModeEnabled)
     #expect(!model.showsRelativeLineNumbers)
     #expect(model.selectedThemeID == .system)
+    #expect(model.editorFontFamily == .system)
+    #expect(model.showsStatusBar)
     #expect(model.vimState.mode == .insert)
 
     model.setVimModeEnabled(true)
     model.setRelativeLineNumbersEnabled(true)
     model.setTheme(.solarizedDark)
+    model.setEditorFontFamily(.monospaced)
+    model.setStatusBarVisible(false)
 
     let restored = LatticeAppModel(
       noteLibrary: NoteLibrary(defaults: defaults),
@@ -211,6 +215,8 @@ struct LatticeAppModelTests {
     #expect(restored.isVimModeEnabled)
     #expect(restored.showsRelativeLineNumbers)
     #expect(restored.selectedThemeID == .solarizedDark)
+    #expect(restored.editorFontFamily == .monospaced)
+    #expect(!restored.showsStatusBar)
     #expect(restored.vimState.mode == .normal)
   }
 

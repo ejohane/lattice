@@ -17,6 +17,21 @@ struct MarkdownAttributedRendererTests {
     #expect(paragraphStyle?.paragraphSpacing == 6)
   }
 
+  @Test("uses selected editor font family for body text")
+  func usesSelectedEditorFontFamilyForBodyText() throws {
+    let systemAttributed = MarkdownAttributedRenderer.render("plain `code`", fontFamily: .system)
+    let monospacedAttributed = MarkdownAttributedRenderer.render("plain `code`", fontFamily: .monospaced)
+    let codeRange = (systemAttributed.string as NSString).range(of: "code")
+
+    let systemBodyFont = try #require(systemAttributed.attribute(.font, at: 0, effectiveRange: nil) as? NSFont)
+    let monospacedBodyFont = try #require(monospacedAttributed.attribute(.font, at: 0, effectiveRange: nil) as? NSFont)
+    let codeFont = try #require(systemAttributed.attribute(.font, at: codeRange.location, effectiveRange: nil) as? NSFont)
+
+    #expect(!systemBodyFont.fontDescriptor.symbolicTraits.contains(.monoSpace))
+    #expect(monospacedBodyFont.fontDescriptor.symbolicTraits.contains(.monoSpace))
+    #expect(codeFont.fontDescriptor.symbolicTraits.contains(.monoSpace))
+  }
+
   @Test("renders inactive unordered list markers as bullets")
   func rendersInactiveListMarkersAsBullets() {
     let attributed = MarkdownAttributedRenderer.render("- bullets\nnext", activeRanges: [NSRange(location: 10, length: 0)])
