@@ -26,7 +26,7 @@ struct NoteIndexTests {
 
     try fixture.writeNote(
       relativePath: "notes/2026-06-17/2026-06-17T14-32-10.md",
-      body: "# Project Brief\n\nUseful body text"
+      body: "**Project Brief**\n\n# Later Heading\n\nUseful body text"
     )
     try fixture.writeNote(
       relativePath: "notes/2026-06-17/not-markdown.txt",
@@ -42,12 +42,12 @@ struct NoteIndexTests {
     #expect(note.relativePath == "notes/2026-06-17/2026-06-17T14-32-10.md")
     #expect(!note.noteID.isEmpty)
     #expect(note.title == "Project Brief")
-    #expect(note.excerpt == "Useful body text")
+    #expect(note.excerpt == "**Project Brief**")
     #expect(note.createdAt != nil)
   }
 
-  @Test("falls back to filename title and extracts the first useful excerpt")
-  func fallbackTitleAndExcerpt() throws {
+  @Test("uses plain first line as title and extracts the first useful excerpt")
+  func plainFirstLineTitleAndExcerpt() throws {
     let fixture = try Fixture()
     defer { fixture.cleanup() }
 
@@ -59,7 +59,7 @@ struct NoteIndexTests {
     try fixture.index.rebuild(notesFolderURL: fixture.root)
 
     let note = try #require(try fixture.index.indexedNotes(notesFolderURL: fixture.root).first)
-    #expect(note.title == "2026-06-17T14-32-10")
+    #expect(note.title == "Plain first line")
     #expect(note.excerpt == "Plain first line")
   }
 

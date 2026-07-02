@@ -476,7 +476,7 @@ public final class NoteIndex: NoteIndexing {
     let dateString = noteURL.deletingLastPathComponent().lastPathComponent
     let modifiedAt = resourceValues.contentModificationDate
     let size = Int64(resourceValues.fileSize ?? 0)
-    let title = NoteLibrary.firstHeading(in: body) ?? noteURL.deletingPathExtension().lastPathComponent
+    let title = NoteLibrary.firstRenderedLine(in: body) ?? noteURL.deletingPathExtension().lastPathComponent
     let note = IndexedNote(
       url: noteURL.standardizedFileURL,
       relativePath: relativePath,
