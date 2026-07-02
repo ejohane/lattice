@@ -39,6 +39,15 @@ verify_checksum() {
   fi
 }
 
+register_app() {
+  app="$1"
+  lsregister="/System/Library/Frameworks/CoreServices.framework/Frameworks/LaunchServices.framework/Support/lsregister"
+
+  if [ -x "$lsregister" ]; then
+    "$lsregister" -f "$app" >/dev/null 2>&1 || true
+  fi
+}
+
 detect_artifact() {
   os="$(uname -s)"
   arch="$(uname -m)"
@@ -96,6 +105,7 @@ fi
 mkdir -p "$install_dir"
 rm -rf "$install_dir/Lattice.app"
 cp -R "$tmp_dir/Lattice.app" "$install_dir/Lattice.app"
+register_app "$install_dir/Lattice.app"
 
 printf 'Installed %s\n' "$install_dir/Lattice.app"
 printf 'Open it with: open %s\n' "$install_dir/Lattice.app"
