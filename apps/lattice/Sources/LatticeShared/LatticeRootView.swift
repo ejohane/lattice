@@ -493,25 +493,27 @@ private struct TimelinePane: View {
       .ignoresSafeArea(.keyboard, edges: .bottom)
       .frame(maxWidth: .infinity, maxHeight: .infinity)
 
-      HStack(spacing: 8) {
-        if let modeText {
-          Text(modeText)
-            .font(.caption2.weight(.bold))
-            .foregroundStyle(modeText == "NORMAL" ? theme.color(.highlightedText) : theme.color(.secondaryText))
-            .padding(.horizontal, 7)
-            .padding(.vertical, 3)
-            .background {
-              Capsule()
-                .fill(modeText == "NORMAL" ? theme.color(.accent) : theme.color(.secondaryText).opacity(0.14))
-            }
+      if model.showsStatusBar {
+        HStack(spacing: 8) {
+          if let modeText {
+            Text(modeText)
+              .font(.caption2.weight(.bold))
+              .foregroundStyle(modeText == "NORMAL" ? theme.color(.highlightedText) : theme.color(.secondaryText))
+              .padding(.horizontal, 7)
+              .padding(.vertical, 3)
+              .background {
+                Capsule()
+                  .fill(modeText == "NORMAL" ? theme.color(.accent) : theme.color(.secondaryText).opacity(0.14))
+              }
+          }
+          Text(statusText)
+            .font(.footnote.weight(.medium))
+            .foregroundStyle(theme.color(.secondaryText))
         }
-        Text(statusText)
-          .font(.footnote.weight(.medium))
-          .foregroundStyle(theme.color(.secondaryText))
+        .frame(maxWidth: .infinity)
+        .padding(.vertical, 10)
+        .background(theme.color(.barBackground))
       }
-      .frame(maxWidth: .infinity)
-      .padding(.vertical, 10)
-      .background(theme.color(.barBackground))
     }
   }
 
