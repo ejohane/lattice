@@ -250,6 +250,77 @@ struct MarkdownAttributedRendererTests {
     #expect(destinationColor == NSColor.clear)
   }
 
+  @Test("marks inactive image links for inline previews")
+  func marksInactiveImageLinksForInlinePreviews() throws {
+    let text = "Before\n![Screenshot](../../attachments/2026-06-17/screenshot.png)\nAfter"
+    let image = try #require(MarkdownImageParser.links(in: text).first)
+    let imageURL = URL(fileURLWithPath: "/tmp/screenshot.png")
+    let attributed = MarkdownAttributedRenderer.render(
+      text,
+      activeRanges: [NSRange(location: (text as NSString).length, length: 0)],
+      imagePreviewStates: [MarkdownImageRenderState(link: image, url: imageURL)]
+    )
+
+    let previewURL = attributed.attribute(.latticeImagePreviewURL, at: image.range.location, effectiveRange: nil) as? URL
+    let color = attributed.attribute(.foregroundColor, at: image.range.location, effectiveRange: nil) as? NSColor
+    let paragraphStyle = attributed.attribute(.paragraphStyle, at: image.range.location, effectiveRange: nil) as? NSParagraphStyle
+
+    #expect(previewURL == imageURL)
+    #expect(color == NSColor.clear)
+    #expect(paragraphStyle?.minimumLineHeight == MarkdownAttributedRenderer.imagePreviewHeight)
+  }
+
+  @Test("carries image preview widths into renderer attributes")
+  func carriesImagePreviewWidthsIntoRendererAttributes() throws {
+    let text = "![Screenshot|640](../../attachments/2026-06-17/screenshot.png)\nAfter"
+    let image = try #require(MarkdownImageParser.links(in: text).first)
+    let attributed = MarkdownAttributedRenderer.render(
+      text,
+      activeRanges: [NSRange(location: (text as NSString).length, length: 0)],
+      imagePreviewStates: [MarkdownImageRenderState(link: image, url: URL(fileURLWithPath: "/tmp/screenshot.png"))]
+    )
+
+    let width = attributed.attribute(.latticeImagePreviewWidth, at: image.range.location, effectiveRange: nil) as? Double
+
+    #expect(width == 640)
+  }
+
+  @Test("sizes image preview line height from stored width")
+  func sizesImagePreviewLineHeightFromStoredWidth() throws {
+    let imageURL = try writeTestPNG(width: 400, height: 200)
+    defer { try? FileManager.default.removeItem(at: imageURL) }
+
+    let text = "![Screenshot|200](../../attachments/2026-06-17/screenshot.png)\nAfter"
+    let image = try #require(MarkdownImageParser.links(in: text).first)
+    let attributed = MarkdownAttributedRenderer.render(
+      text,
+      activeRanges: [NSRange(location: (text as NSString).length, length: 0)],
+      imagePreviewStates: [MarkdownImageRenderState(link: image, url: imageURL)]
+    )
+
+    let paragraphStyle = attributed.attribute(.paragraphStyle, at: image.range.location, effectiveRange: nil) as? NSParagraphStyle
+
+    #expect(paragraphStyle?.minimumLineHeight == 118)
+    #expect(paragraphStyle?.maximumLineHeight == 118)
+  }
+
+  @Test("shows active image links as editable markdown")
+  func showsActiveImageLinksAsEditableMarkdown() throws {
+    let text = "![Screenshot](../../attachments/2026-06-17/screenshot.png)"
+    let image = try #require(MarkdownImageParser.links(in: text).first)
+    let attributed = MarkdownAttributedRenderer.render(
+      text,
+      activeRanges: [NSRange(location: image.range.location + 2, length: 0)],
+      imagePreviewStates: [MarkdownImageRenderState(link: image, url: URL(fileURLWithPath: "/tmp/screenshot.png"))]
+    )
+
+    let previewURL = attributed.attribute(.latticeImagePreviewURL, at: image.range.location, effectiveRange: nil) as? URL
+    let openingColor = attributed.attribute(.foregroundColor, at: image.range.location, effectiveRange: nil) as? NSColor
+
+    #expect(previewURL == nil)
+    #expect(openingColor == NSColor.tertiaryLabelColor)
+  }
+
   @Test("renders inactive thematic breaks as rule lines")
   func rendersInactiveThematicBreaksAsRuleLines() throws {
     let text = "Before\n---\nAfter"
@@ -336,6 +407,34 @@ struct MarkdownAttributedRendererTests {
     #expect(codeColor == theme.nsColor(.codeText))
     #expect(codeBackground == theme.nsColor(.codeBackground).withAlphaComponent(0.8))
     #expect(linkColor == theme.nsColor(.link))
+  }
+
+  private func writeTestPNG(width: Int, height: Int) throws -> URL {
+    let bitmap = try #require(NSBitmapImageRep(
+      bitmapDataPlanes: nil,
+      pixelsWide: width,
+      pixelsHigh: height,
+      bitsPerSample: 8,
+      samplesPerPixel: 4,
+      hasAlpha: true,
+      isPlanar: false,
+      colorSpaceName: .deviceRGB,
+      bytesPerRow: 0,
+      bitsPerPixel: 0
+    ))
+    bitmap.size = NSSize(width: width, height: height)
+    NSGraphicsContext.saveGraphicsState()
+    NSGraphicsContext.current = NSGraphicsContext(bitmapImageRep: bitmap)
+    NSColor.systemBlue.setFill()
+    NSRect(x: 0, y: 0, width: width, height: height).fill()
+    NSGraphicsContext.restoreGraphicsState()
+
+    let data = try #require(bitmap.representation(using: .png, properties: [:]))
+    let url = FileManager.default.temporaryDirectory
+      .appendingPathComponent("lattice-preview-\(UUID().uuidString)")
+      .appendingPathExtension("png")
+    try data.write(to: url)
+    return url
   }
 }
 #endif

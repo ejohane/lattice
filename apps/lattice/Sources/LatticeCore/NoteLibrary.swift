@@ -110,6 +110,30 @@ public struct RestoredNote: Equatable, Sendable {
   }
 }
 
+public struct ImageAttachmentImport: Equatable, Sendable {
+  public let data: Data
+  public let suggestedFilename: String?
+  public let preferredExtension: String?
+
+  public init(data: Data, suggestedFilename: String? = nil, preferredExtension: String? = nil) {
+    self.data = data
+    self.suggestedFilename = suggestedFilename
+    self.preferredExtension = preferredExtension
+  }
+}
+
+public struct SavedAttachment: Equatable, Sendable {
+  public let url: URL
+  public let markdownPath: String
+  public let altText: String
+
+  public init(url: URL, markdownPath: String, altText: String) {
+    self.url = url.standardizedFileURL
+    self.markdownPath = markdownPath
+    self.altText = altText
+  }
+}
+
 public final class NoteEditingSession {
   private let library: NoteLibrary
   private var activeNote: SavedNote?
@@ -169,7 +193,7 @@ public final class NoteEditingSession {
   }
 
   @discardableResult
-  public func save(body: String) throws -> NoteSaveResult {
+  public func save(body: String, now: Date = Date()) throws -> NoteSaveResult {
     let normalizedBody = Self.normalizedBody(body)
     guard activeNote != nil || !normalizedBody.isEmpty else {
       return .skippedEmptyDraft
@@ -182,7 +206,7 @@ public final class NoteEditingSession {
     if let activeNote {
       note = try library.updateNote(activeNote, body: normalizedBody)
     } else {
-      note = try library.createNote(body: normalizedBody)
+      note = try library.createNote(body: normalizedBody, now: now)
     }
     activeNote = note
     lastSavedBody = normalizedBody
@@ -586,6 +610,49 @@ public final class NoteLibrary {
     rootURL.appendingPathComponent("notes", isDirectory: true)
   }
 
+  public func noteDateDirectory(in rootURL: URL, now: Date = Date()) -> URL {
+    notesDirectory(in: rootURL)
+      .appendingPathComponent(Self.localDateString(from: now), isDirectory: true)
+  }
+
+  public func attachmentsDirectory(in rootURL: URL) -> URL {
+    rootURL.appendingPathComponent("attachments", isDirectory: true)
+  }
+
+  @discardableResult
+  public func saveImageAttachment(
+    data: Data,
+    suggestedFilename: String? = nil,
+    preferredExtension: String? = nil,
+    now: Date = Date(),
+    relativeTo noteDirectoryURL: URL
+  ) throws -> SavedAttachment {
+    guard let folderURL = activeNotesFolderURL() else {
+      throw NoteLibraryError.noActiveNotesFolder
+    }
+
+    try initializeNotesFolder(at: folderURL)
+    let dateDirectory = attachmentsDirectory(in: folderURL)
+      .appendingPathComponent(Self.localDateString(from: now), isDirectory: true)
+    try createDirectory(dateDirectory)
+
+    let stem = sanitizedAttachmentStem(suggestedFilename)
+    let fileExtension = normalizedImageExtension(preferredExtension, suggestedFilename: suggestedFilename)
+    let baseName = "\(stem)-\(Self.timestampString(from: now))"
+    let attachmentURL = try availableAttachmentURL(
+      baseName: baseName,
+      fileExtension: fileExtension,
+      in: dateDirectory
+    )
+    try data.write(to: attachmentURL, options: [.atomic])
+
+    return SavedAttachment(
+      url: attachmentURL,
+      markdownPath: Self.relativePath(from: noteDirectoryURL, to: attachmentURL),
+      altText: Self.attachmentAltText(from: stem)
+    )
+  }
+
   private func note(at url: URL, dateString: String? = nil) -> SavedNote {
     let resourceValues = try? url.resourceValues(forKeys: [.contentModificationDateKey])
     return SavedNote(
@@ -645,11 +712,64 @@ public final class NoteLibrary {
     throw NoteLibraryError.invalidNotesFolder("Could not create a unique note filename for \(title).")
   }
 
+  private func availableAttachmentURL(
+    baseName: String,
+    fileExtension: String,
+    in directoryURL: URL
+  ) throws -> URL {
+    let firstURL = directoryURL.appendingPathComponent("\(baseName).\(fileExtension)")
+    if !fileManager.fileExists(atPath: firstURL.path) {
+      return firstURL
+    }
+
+    for index in 2..<100 {
+      let candidate = directoryURL.appendingPathComponent("\(baseName)-\(index).\(fileExtension)")
+      if !fileManager.fileExists(atPath: candidate.path) {
+        return candidate
+      }
+    }
+
+    throw NoteLibraryError.invalidNotesFolder("Could not create a unique attachment filename.")
+  }
+
   private func sanitizedFilenameStem(_ title: String) -> String {
     title
       .trimmingCharacters(in: .whitespacesAndNewlines)
       .replacingOccurrences(of: "/", with: "-")
       .replacingOccurrences(of: ":", with: "-")
+  }
+
+  private func sanitizedAttachmentStem(_ filename: String?) -> String {
+    let rawStem = filename
+      .map { URL(fileURLWithPath: $0).deletingPathExtension().lastPathComponent }
+      ?? "screenshot"
+    let trimmed = rawStem.trimmingCharacters(in: .whitespacesAndNewlines)
+    let fallback = trimmed.isEmpty ? "screenshot" : trimmed
+    let allowed = CharacterSet.alphanumerics.union(CharacterSet(charactersIn: " -_"))
+    let scalars = fallback.unicodeScalars.map { scalar in
+      allowed.contains(scalar) ? Character(scalar) : "-"
+    }
+    let sanitized = String(scalars)
+      .replacingRegex(#"-{2,}"#, with: "-")
+      .trimmingCharacters(in: CharacterSet(charactersIn: " -_"))
+    return sanitized.isEmpty ? "screenshot" : sanitized
+  }
+
+  private func normalizedImageExtension(_ preferredExtension: String?, suggestedFilename: String?) -> String {
+    let allowedExtensions = Set(["png", "jpg", "jpeg", "gif", "heic", "tif", "tiff", "webp"])
+    let candidates = [
+      preferredExtension,
+      suggestedFilename.map { URL(fileURLWithPath: $0).pathExtension }
+    ]
+    for candidate in candidates {
+      let normalized = candidate?
+        .trimmingCharacters(in: CharacterSet(charactersIn: ". \n\t"))
+        .lowercased()
+      if let normalized, allowedExtensions.contains(normalized) {
+        return normalized
+      }
+    }
+    return "png"
   }
 
   private func createDirectory(_ url: URL) throws {
@@ -777,6 +897,29 @@ public final class NoteLibrary {
     formatter.calendar = Calendar(identifier: .gregorian)
     formatter.dateFormat = "yyyy-MM-dd'T'HH-mm-ss"
     return formatter.string(from: date)
+  }
+
+  private static func attachmentAltText(from stem: String) -> String {
+    let text = stem
+      .replacingOccurrences(of: "-", with: " ")
+      .replacingRegex(#"\s+"#, with: " ")
+      .trimmingCharacters(in: .whitespacesAndNewlines)
+    return text.isEmpty ? "Screenshot" : text
+  }
+
+  public static func relativePath(from baseDirectoryURL: URL, to targetURL: URL) -> String {
+    let baseComponents = baseDirectoryURL.standardizedFileURL.pathComponents
+    let targetComponents = targetURL.standardizedFileURL.pathComponents
+    var commonCount = 0
+    while commonCount < baseComponents.count,
+          commonCount < targetComponents.count,
+          baseComponents[commonCount] == targetComponents[commonCount] {
+      commonCount += 1
+    }
+
+    let parentComponents = Array(repeating: "..", count: max(0, baseComponents.count - commonCount))
+    let childComponents = Array(targetComponents.dropFirst(commonCount))
+    return (parentComponents + childComponents).joined(separator: "/")
   }
 
   private static func rewrittenWikiLink(

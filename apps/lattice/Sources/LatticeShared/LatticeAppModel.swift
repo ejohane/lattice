@@ -48,6 +48,7 @@ public final class LatticeAppModel {
   public var vimState = VimEditorState(mode: .insert)
   public var vimStatusMessage: String?
   public var wikiLinkStates: [WikiLinkRenderState] = []
+  public var imagePreviewStates: [MarkdownImageRenderState] = []
   public var wikiAutocompleteSuggestions: [WikiAutocompleteSuggestion] = []
   public var ambiguousWikiLink: AmbiguousWikiLinkResolution?
   public var renamingNote: SavedNote?
@@ -286,6 +287,7 @@ public final class LatticeAppModel {
     text = ""
     selectedRange = NSRange(location: 0, length: 0)
     wikiLinkStates = []
+    imagePreviewStates = []
     wikiAutocompleteSuggestions = []
     vimStatusMessage = nil
     ambiguousWikiLink = nil
@@ -365,6 +367,7 @@ public final class LatticeAppModel {
       preferredCompactColumn = .detail
       reloadNotes(selecting: restored.note)
       refreshWikiLinkStates()
+      refreshImagePreviewStates()
       updateWikiAutocomplete()
       editorFocusToken += 1
       return true
@@ -549,6 +552,7 @@ public final class LatticeAppModel {
     wikiAutocompleteSuggestions = []
     scheduleAutosave()
     refreshWikiLinkStates()
+    refreshImagePreviewStates()
     editorFocusToken += 1
   }
 
@@ -620,6 +624,7 @@ public final class LatticeAppModel {
     vimStatusMessage = nil
     scheduleAutosave()
     refreshWikiLinkStates()
+    refreshImagePreviewStates()
     updateWikiAutocomplete()
     editorFocusToken += 1
   }
@@ -628,6 +633,53 @@ public final class LatticeAppModel {
     vimStatusMessage = nil
     scheduleAutosave()
     refreshWikiLinkStates()
+    refreshImagePreviewStates()
+    updateWikiAutocomplete()
+  }
+
+  public func insertImageAttachments(_ imports: [ImageAttachmentImport]) {
+    guard let folderURL, !imports.isEmpty else {
+      return
+    }
+
+    let now = dateProvider()
+    do {
+      let noteDirectory = selectedNote?.url.deletingLastPathComponent()
+        ?? noteLibrary.noteDateDirectory(in: folderURL, now: now)
+      for imageImport in imports {
+        let attachment = try noteLibrary.saveImageAttachment(
+          data: imageImport.data,
+          suggestedFilename: imageImport.suggestedFilename,
+          preferredExtension: imageImport.preferredExtension,
+          now: now,
+          relativeTo: noteDirectory
+        )
+        insertMarkdownImage(attachment)
+      }
+      vimStatusMessage = nil
+      refreshWikiLinkStates()
+      refreshImagePreviewStates()
+      updateWikiAutocomplete()
+      editorFocusToken += 1
+      autosave(showStatus: true, now: now)
+      status = imports.count == 1 ? "Attached image" : "Attached \(imports.count) images"
+    } catch {
+      errorMessage = error.localizedDescription
+    }
+  }
+
+  public func resizeImageAttachment(lineLocation: Int, width: Double) {
+    let clampedWidth = min(2400, max(96, width.rounded()))
+    guard let link = MarkdownImageParser.links(in: text).first(where: { $0.lineRange.location == lineLocation }) else {
+      return
+    }
+    let replacement = "![\(escapedMarkdownImageAltText(link.altText))|\(Int(clampedWidth))](\(link.destination))"
+    text = (text as NSString).replacingCharacters(in: link.range, with: replacement)
+    selectedRange = clampedRange(selectedRange, in: text)
+    vimStatusMessage = nil
+    scheduleAutosave()
+    refreshWikiLinkStates()
+    refreshImagePreviewStates()
     updateWikiAutocomplete()
   }
 
@@ -867,6 +919,7 @@ public final class LatticeAppModel {
         status = "Opened \(displayTitle(for: restored.note))"
         preferredCompactColumn = .detail
         refreshWikiLinkStates()
+        refreshImagePreviewStates()
         updateWikiAutocomplete()
       }
       reloadNotes(selecting: selectedNote)
@@ -875,13 +928,14 @@ public final class LatticeAppModel {
     }
   }
 
-  private func autosave(showStatus: Bool, syncSavedNote: Bool = true) {
+  private func autosave(showStatus: Bool, syncSavedNote: Bool = true, now: Date? = nil) {
     autosaveWorkItem?.cancel()
     autosaveWorkItem = nil
     do {
+      let saveDate = now ?? dateProvider()
       let previousBody = session.savedBody
       let wasExistingNote = session.currentNote != nil
-      switch try session.save(body: text) {
+      switch try session.save(body: text, now: saveDate) {
       case .skippedEmptyDraft, .unchanged:
         return
       case .saved(let note):
@@ -890,6 +944,7 @@ public final class LatticeAppModel {
         rewriteHeadingLinksIfNeeded(for: note, previousBody: previousBody, nextBody: text)
         reloadNotes(selecting: note)
         refreshWikiLinkStates()
+        refreshImagePreviewStates()
         updateWikiAutocomplete()
         let rawBody = try noteLibrary.rawBody(for: note)
         recordSavedNoteActivity(
@@ -1059,6 +1114,25 @@ public final class LatticeAppModel {
       )
     } catch {
       wikiLinkStates = []
+    }
+  }
+
+  private func refreshImagePreviewStates() {
+    guard let folderURL else {
+      imagePreviewStates = []
+      return
+    }
+    let baseDirectory = selectedNote?.url.deletingLastPathComponent()
+      ?? noteLibrary.noteDateDirectory(in: folderURL, now: dateProvider())
+    imagePreviewStates = MarkdownImageParser.links(in: text).compactMap { link in
+      guard let url = resolvedLocalImageURL(
+        destination: link.destination,
+        baseDirectory: baseDirectory,
+        notesFolderURL: folderURL
+      ) else {
+        return nil
+      }
+      return MarkdownImageRenderState(link: link, url: url)
     }
   }
 
@@ -1392,6 +1466,8 @@ public final class LatticeAppModel {
       text = editorBody
       selectedRange = NSRange(location: min(selectedRange.location, (editorBody as NSString).length), length: 0)
       session.updateSavedBody(updatedBody, for: selectedNote)
+      refreshWikiLinkStates()
+      refreshImagePreviewStates()
     } catch {
       taskSyncErrorMessage = error.localizedDescription
     }
@@ -1619,6 +1695,73 @@ public final class LatticeAppModel {
 
       return TimelineEntry(createdAt: dateProvider(), body: block.body)
     }
+  }
+
+  private func insertMarkdownImage(_ attachment: SavedAttachment) {
+    let nsString = text as NSString
+    let range = clampedRange(selectedRange, in: text)
+    let markdown = "![\(escapedMarkdownImageAltText(attachment.altText))](\(attachment.markdownPath))"
+    let insertion = paddedInsertion(markdown, in: text, replacing: range)
+    text = nsString.replacingCharacters(in: range, with: insertion.text)
+    selectedRange = NSRange(location: range.location + insertion.cursorOffset, length: 0)
+  }
+
+  private func paddedInsertion(
+    _ markdown: String,
+    in body: String,
+    replacing range: NSRange
+  ) -> (text: String, cursorOffset: Int) {
+    let nsString = body as NSString
+    var prefix = ""
+    var suffix = ""
+    if range.location > 0 {
+      let previous = nsString.substring(with: NSRange(location: range.location - 1, length: 1))
+      if previous != "\n" {
+        prefix = "\n\n"
+      }
+    }
+    let rangeEnd = NSMaxRange(range)
+    if rangeEnd < nsString.length {
+      let next = nsString.substring(with: NSRange(location: rangeEnd, length: 1))
+      if next != "\n" {
+        suffix = "\n\n"
+      }
+    } else {
+      suffix = "\n"
+    }
+    return ("\(prefix)\(markdown)\(suffix)", (prefix + markdown).utf16.count)
+  }
+
+  private func escapedMarkdownImageAltText(_ text: String) -> String {
+    text
+      .replacingOccurrences(of: "[", with: "\\[")
+      .replacingOccurrences(of: "]", with: "\\]")
+  }
+
+  private func resolvedLocalImageURL(
+    destination: String,
+    baseDirectory: URL,
+    notesFolderURL: URL
+  ) -> URL? {
+    let trimmedDestination = destination.trimmingCharacters(in: .whitespacesAndNewlines)
+    guard
+      !trimmedDestination.isEmpty,
+      URL(string: trimmedDestination)?.scheme == nil,
+      !trimmedDestination.hasPrefix("/")
+    else {
+      return nil
+    }
+
+    let candidate = URL(fileURLWithPath: trimmedDestination, relativeTo: baseDirectory).standardizedFileURL
+    let rootPath = notesFolderURL.standardizedFileURL.path
+    let candidatePath = candidate.path
+    guard
+      (candidatePath == rootPath || candidatePath.hasPrefix("\(rootPath)/")),
+      FileManager.default.fileExists(atPath: candidatePath)
+    else {
+      return nil
+    }
+    return candidate
   }
 
   private static func activityExcerpt(from body: String, limit: Int = 240) -> String? {

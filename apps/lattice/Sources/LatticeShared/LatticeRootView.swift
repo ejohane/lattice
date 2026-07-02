@@ -289,6 +289,7 @@ private struct NoteEditorPane: View {
         hasAutocompleteSuggestions: !model.wikiAutocompleteSuggestions.isEmpty,
         wikiLinkStates: model.wikiLinkStates,
         theme: theme,
+        imagePreviewStates: model.imagePreviewStates,
         onTextChange: {
           model.noteTextDidChange()
         },
@@ -309,6 +310,12 @@ private struct NoteEditorPane: View {
         },
         onVimStatusChange: { message in
           model.setVimStatusMessage(message)
+        },
+        onImageAttachmentsImported: { imports in
+          model.insertImageAttachments(imports)
+        },
+        onImageAttachmentResized: { lineLocation, width in
+          model.resizeImageAttachment(lineLocation: lineLocation, width: width)
         }
       )
       .ignoresSafeArea(.keyboard, edges: .bottom)
@@ -463,6 +470,7 @@ private struct TimelinePane: View {
         hasAutocompleteSuggestions: false,
         wikiLinkStates: [],
         theme: theme,
+        imagePreviewStates: [],
         onTextChange: {
           model.timelineTextDidChange()
         },
@@ -478,7 +486,9 @@ private struct TimelinePane: View {
         },
         onVimStatusChange: { message in
           model.setVimStatusMessage(message)
-        }
+        },
+        onImageAttachmentsImported: { _ in },
+        onImageAttachmentResized: { _, _ in }
       )
       .ignoresSafeArea(.keyboard, edges: .bottom)
       .frame(maxWidth: .infinity, maxHeight: .infinity)

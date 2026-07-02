@@ -22,6 +22,7 @@ public struct MarkdownTextEditor: NSViewRepresentable {
   let hasAutocompleteSuggestions: Bool
   let wikiLinkStates: [WikiLinkRenderState]
   let theme: LatticeTheme
+  let imagePreviewStates: [MarkdownImageRenderState]
   let onTextChange: () -> Void
   let onSelectionChange: () -> Void
   let onWikiLinkActivated: (Int) -> Void
@@ -29,6 +30,8 @@ public struct MarkdownTextEditor: NSViewRepresentable {
   let onDismissAutocomplete: () -> Void
   let onVimWrite: () -> Void
   let onVimStatusChange: (String?) -> Void
+  let onImageAttachmentsImported: ([ImageAttachmentImport]) -> Void
+  let onImageAttachmentResized: (Int, Double) -> Void
 
   public init(
     text: Binding<String>,
@@ -46,13 +49,16 @@ public struct MarkdownTextEditor: NSViewRepresentable {
     hasAutocompleteSuggestions: Bool,
     wikiLinkStates: [WikiLinkRenderState],
     theme: LatticeTheme,
+    imagePreviewStates: [MarkdownImageRenderState],
     onTextChange: @escaping () -> Void,
     onSelectionChange: @escaping () -> Void,
     onWikiLinkActivated: @escaping (Int) -> Void,
     onMarkdownLinkActivated: @escaping (Int) -> Void,
     onDismissAutocomplete: @escaping () -> Void,
     onVimWrite: @escaping () -> Void,
-    onVimStatusChange: @escaping (String?) -> Void
+    onVimStatusChange: @escaping (String?) -> Void,
+    onImageAttachmentsImported: @escaping ([ImageAttachmentImport]) -> Void,
+    onImageAttachmentResized: @escaping (Int, Double) -> Void
   ) {
     self._text = text
     self._selectedRange = selectedRange
@@ -69,6 +75,7 @@ public struct MarkdownTextEditor: NSViewRepresentable {
     self.hasAutocompleteSuggestions = hasAutocompleteSuggestions
     self.wikiLinkStates = wikiLinkStates
     self.theme = theme
+    self.imagePreviewStates = imagePreviewStates
     self.onTextChange = onTextChange
     self.onSelectionChange = onSelectionChange
     self.onWikiLinkActivated = onWikiLinkActivated
@@ -76,6 +83,8 @@ public struct MarkdownTextEditor: NSViewRepresentable {
     self.onDismissAutocomplete = onDismissAutocomplete
     self.onVimWrite = onVimWrite
     self.onVimStatusChange = onVimStatusChange
+    self.onImageAttachmentsImported = onImageAttachmentsImported
+    self.onImageAttachmentResized = onImageAttachmentResized
   }
 
   public func makeCoordinator() -> Coordinator {
@@ -116,6 +125,7 @@ public struct MarkdownTextEditor: NSViewRepresentable {
       height: CGFloat.greatestFiniteMagnitude
     )
     textView.setAccessibilityIdentifier("noteEditor")
+    textView.registerForDraggedTypes([.fileURL, .png, .tiff])
 
     scrollView.documentView = textView
     context.coordinator.attachScrollView(scrollView)
@@ -140,7 +150,8 @@ public struct MarkdownTextEditor: NSViewRepresentable {
       || context.coordinator.lastRenderedWikiLinkStates != wikiLinkStates
       || context.coordinator.lastRenderedTimelineEntries != timelineEntries
       || context.coordinator.lastRenderedDimsInactiveParagraphs != dimsInactiveParagraphs
-      || context.coordinator.lastRenderedTheme != theme {
+      || context.coordinator.lastRenderedTheme != theme
+      || context.coordinator.lastRenderedImagePreviewStates != imagePreviewStates {
       context.coordinator.render(text, in: textView, preserving: clampedSelectedRange)
     } else if textView.selectedRange() != clampedSelectedRange {
       context.coordinator.render(text, in: textView, preserving: clampedSelectedRange)
@@ -174,6 +185,7 @@ public struct MarkdownTextEditor: NSViewRepresentable {
     var lastRenderedTimelineEntries: [TimelineEntry] = []
     var lastRenderedDimsInactiveParagraphs = false
     var lastRenderedTheme = LatticeTheme(id: .system)
+    var lastRenderedImagePreviewStates: [MarkdownImageRenderState] = []
     private var isRendering = false
     private let defaultTextContainerInset = NSSize(width: 36, height: 34)
     private var pendingAnchorTask: Task<Void, Never>?
@@ -276,7 +288,8 @@ public struct MarkdownTextEditor: NSViewRepresentable {
         activeRanges: activeRanges,
         wikiLinkStates: parent.wikiLinkStates,
         dimsInactiveText: parent.dimsInactiveParagraphs,
-        theme: parent.theme
+        theme: parent.theme,
+        imagePreviewStates: parent.imagePreviewStates
       )
       textView.textStorage?.setAttributedString(attributed)
       textView.setSelectedRange(clamped(selection, length: (text as NSString).length))
@@ -292,6 +305,7 @@ public struct MarkdownTextEditor: NSViewRepresentable {
       lastRenderedTimelineEntries = parent.timelineEntries
       lastRenderedDimsInactiveParagraphs = parent.dimsInactiveParagraphs
       lastRenderedTheme = parent.theme
+      lastRenderedImagePreviewStates = parent.imagePreviewStates
       isRendering = false
       scheduleCaretAnchor(selection: selection, animated: true)
     }
@@ -485,6 +499,7 @@ private final class MarkdownClipView: NSClipView {
 private final class MarkdownTextView: NSTextView {
   weak var coordinator: MarkdownTextEditor.Coordinator?
   var theme = LatticeTheme(id: .system)
+  private var activeImageResize: ImageResizeDrag?
 
   override func keyDown(with event: NSEvent) {
     guard let coordinator else {
@@ -524,6 +539,25 @@ private final class MarkdownTextView: NSTextView {
   override func draw(_ dirtyRect: NSRect) {
     super.draw(dirtyRect)
     drawThematicBreaks()
+    drawImagePreviews()
+  }
+
+  override func paste(_ sender: Any?) {
+    if importImages(from: .general) {
+      return
+    }
+    super.paste(sender)
+  }
+
+  override func draggingEntered(_ sender: NSDraggingInfo) -> NSDragOperation {
+    imageImports(from: sender.draggingPasteboard).isEmpty ? super.draggingEntered(sender) : .copy
+  }
+
+  override func performDragOperation(_ sender: NSDraggingInfo) -> Bool {
+    if importImages(from: sender.draggingPasteboard, dropLocation: sender.draggingLocation) {
+      return true
+    }
+    return super.performDragOperation(sender)
   }
 
   override func scrollRangeToVisible(_ range: NSRange) {
@@ -570,6 +604,10 @@ private final class MarkdownTextView: NSTextView {
   }
 
   override func mouseDown(with event: NSEvent) {
+    if beginImageResize(at: event) {
+      return
+    }
+
     if toggleTaskCheckbox(at: event) {
       return
     }
@@ -587,6 +625,24 @@ private final class MarkdownTextView: NSTextView {
     }
 
     super.mouseDown(with: event)
+  }
+
+  override func mouseDragged(with event: NSEvent) {
+    guard let activeImageResize else {
+      super.mouseDragged(with: event)
+      return
+    }
+    let location = convert(event.locationInWindow, from: nil)
+    let width = min(activeImageResize.maxWidth, max(activeImageResize.minWidth, location.x - activeImageResize.imageMinX))
+    coordinator?.parent.onImageAttachmentResized(activeImageResize.lineLocation, Double(width))
+  }
+
+  override func mouseUp(with event: NSEvent) {
+    if activeImageResize != nil {
+      activeImageResize = nil
+      return
+    }
+    super.mouseUp(with: event)
   }
 
   override func insertTab(_ sender: Any?) {
@@ -632,6 +688,71 @@ private final class MarkdownTextView: NSTextView {
       return false
     }
 
+    return true
+  }
+
+  private func importImages(from pasteboard: NSPasteboard, dropLocation: NSPoint? = nil) -> Bool {
+    let imports = imageImports(from: pasteboard)
+    guard !imports.isEmpty else {
+      return false
+    }
+    if let dropLocation {
+      let location = characterIndex(atWindowPoint: dropLocation) ?? (string as NSString).length
+      setSelectedRange(NSRange(location: location, length: 0))
+      coordinator?.parent.selectedRange = selectedRange()
+    }
+    coordinator?.parent.onImageAttachmentsImported(imports)
+    return true
+  }
+
+  private func imageImports(from pasteboard: NSPasteboard) -> [ImageAttachmentImport] {
+    if let urls = pasteboard.readObjects(
+      forClasses: [NSURL.self],
+      options: [.urlReadingFileURLsOnly: true]
+    ) as? [URL] {
+      let fileImports = urls.compactMap(Self.imageImport(fromFileURL:))
+      if !fileImports.isEmpty {
+        return fileImports
+      }
+    }
+
+    if let pngData = pasteboard.data(forType: .png) {
+      return [ImageAttachmentImport(data: pngData, suggestedFilename: "screenshot.png", preferredExtension: "png")]
+    }
+    if let tiffData = pasteboard.data(forType: .tiff),
+       let image = NSImage(data: tiffData),
+       let pngData = image.pngData() {
+      return [ImageAttachmentImport(data: pngData, suggestedFilename: "screenshot.png", preferredExtension: "png")]
+    }
+    return []
+  }
+
+  private static func imageImport(fromFileURL url: URL) -> ImageAttachmentImport? {
+    let supportedExtensions = Set(["png", "jpg", "jpeg", "gif", "heic", "tif", "tiff", "webp"])
+    let fileExtension = url.pathExtension.lowercased()
+    guard supportedExtensions.contains(fileExtension),
+          let data = try? Data(contentsOf: url) else {
+      return nil
+    }
+    return ImageAttachmentImport(
+      data: data,
+      suggestedFilename: url.lastPathComponent,
+      preferredExtension: fileExtension
+    )
+  }
+
+  private func beginImageResize(at event: NSEvent) -> Bool {
+    let location = convert(event.locationInWindow, from: nil)
+    guard let layout = imagePreviewLayout(at: location) else {
+      return false
+    }
+    activeImageResize = ImageResizeDrag(
+      lineLocation: layout.lineLocation,
+      imageMinX: layout.imageRect.minX,
+      minWidth: 96,
+      maxWidth: layout.maxWidth
+    )
+    NSCursor.resizeLeftRight.set()
     return true
   }
 
@@ -884,6 +1005,10 @@ private final class MarkdownTextView: NSTextView {
   }
 
   private func characterIndex(at event: NSEvent) -> Int? {
+    characterIndex(atWindowPoint: event.locationInWindow)
+  }
+
+  private func characterIndex(atWindowPoint point: NSPoint) -> Int? {
     guard
       let layoutManager,
       let textContainer
@@ -891,7 +1016,7 @@ private final class MarkdownTextView: NSTextView {
       return nil
     }
 
-    var location = convert(event.locationInWindow, from: nil)
+    var location = convert(point, from: nil)
     location.x -= textContainerOrigin.x
     location.y -= textContainerOrigin.y
 
@@ -940,6 +1065,124 @@ private final class MarkdownTextView: NSTextView {
       theme.nsColor(.separator).withAlphaComponent(0.85).setStroke()
       path.stroke()
     }
+  }
+
+  private func drawImagePreviews() {
+    guard let layoutManager, let textContainer else {
+      return
+    }
+
+    let visibleGlyphRange = layoutManager.glyphRange(
+      forBoundingRect: visibleRect.offsetBy(dx: -textContainerOrigin.x, dy: -textContainerOrigin.y),
+      in: textContainer
+    )
+    let visibleCharacterRange = layoutManager.characterRange(
+      forGlyphRange: visibleGlyphRange,
+      actualGlyphRange: nil
+    )
+
+    for layout in imagePreviewLayouts(in: visibleCharacterRange) {
+      let backgroundRect = layout.imageRect.insetBy(dx: -6, dy: -6)
+      NSColor.controlBackgroundColor.withAlphaComponent(0.72).setFill()
+      NSBezierPath(roundedRect: backgroundRect, xRadius: 6, yRadius: 6).fill()
+      layout.image.draw(in: layout.imageRect, from: .zero, operation: .sourceOver, fraction: 1, respectFlipped: true, hints: nil)
+      drawResizeHandle(in: layout.handleRect)
+    }
+  }
+
+  private func imagePreviewLayout(at location: NSPoint) -> ImagePreviewLayout? {
+    guard let textStorage else {
+      return nil
+    }
+    let range = NSRange(location: 0, length: textStorage.length)
+    return imagePreviewLayouts(in: range).first {
+      $0.handleRect.contains(location) || $0.imageRect.contains(location)
+    }
+  }
+
+  private func imagePreviewLayouts(in characterRange: NSRange) -> [ImagePreviewLayout] {
+    guard let layoutManager, let textStorage else {
+      return []
+    }
+    var layouts: [ImagePreviewLayout] = []
+    textStorage.enumerateAttribute(.latticeImagePreviewURL, in: characterRange) { value, range, _ in
+      guard
+        let url = value as? URL,
+        let image = NSImage(contentsOf: url)
+      else {
+        return
+      }
+
+      let glyphRange = layoutManager.glyphRange(forCharacterRange: range, actualCharacterRange: nil)
+      guard glyphRange.length > 0 else {
+        return
+      }
+
+      let lineRect = layoutManager.lineFragmentUsedRect(forGlyphAt: glyphRange.location, effectiveRange: nil)
+      let maxWidth = max(0, bounds.width - textContainerInset.width - 2)
+      let maxHeight = max(0, lineRect.height - 18)
+      guard image.size.width > 0, image.size.height > 0, maxWidth > 0, maxHeight > 0 else {
+        return
+      }
+
+      let storedWidth = textStorage.attribute(.latticeImagePreviewWidth, at: range.location, effectiveRange: nil) as? Double
+      let widthLimit = storedWidth.map { min(maxWidth, max(96, CGFloat($0))) } ?? maxWidth
+      let scale = min(widthLimit / image.size.width, maxHeight / image.size.height)
+      let size = NSSize(width: image.size.width * scale, height: image.size.height * scale)
+      let rect = NSRect(
+        x: textContainerOrigin.x,
+        y: textContainerOrigin.y + lineRect.minY + max(0, (lineRect.height - size.height) / 2),
+        width: size.width,
+        height: size.height
+      )
+      let handleRect = NSRect(x: rect.maxX - 12, y: rect.minY, width: 24, height: rect.height)
+      layouts.append(ImagePreviewLayout(
+        lineLocation: range.location,
+        image: image,
+        imageRect: rect,
+        handleRect: handleRect,
+        maxWidth: maxWidth
+      ))
+    }
+    return layouts
+  }
+
+  private func drawResizeHandle(in rect: NSRect) {
+    let handleRect = NSRect(
+      x: rect.midX - 2,
+      y: rect.midY - 28,
+      width: 4,
+      height: 56
+    )
+    NSColor.separatorColor.withAlphaComponent(0.85).setFill()
+    NSBezierPath(roundedRect: handleRect, xRadius: 2, yRadius: 2).fill()
+  }
+}
+
+private struct ImagePreviewLayout {
+  let lineLocation: Int
+  let image: NSImage
+  let imageRect: NSRect
+  let handleRect: NSRect
+  let maxWidth: CGFloat
+}
+
+private struct ImageResizeDrag {
+  let lineLocation: Int
+  let imageMinX: CGFloat
+  let minWidth: CGFloat
+  let maxWidth: CGFloat
+}
+
+private extension NSImage {
+  func pngData() -> Data? {
+    guard
+      let tiffRepresentation,
+      let bitmap = NSBitmapImageRep(data: tiffRepresentation)
+    else {
+      return nil
+    }
+    return bitmap.representation(using: .png, properties: [:])
   }
 }
 
@@ -1425,6 +1668,7 @@ public struct MarkdownTextEditor: UIViewRepresentable {
   let hasAutocompleteSuggestions: Bool
   let wikiLinkStates: [WikiLinkRenderState]
   let theme: LatticeTheme
+  let imagePreviewStates: [MarkdownImageRenderState]
   let onTextChange: () -> Void
   let onSelectionChange: () -> Void
   let onWikiLinkActivated: (Int) -> Void
@@ -1432,6 +1676,8 @@ public struct MarkdownTextEditor: UIViewRepresentable {
   let onDismissAutocomplete: () -> Void
   let onVimWrite: () -> Void
   let onVimStatusChange: (String?) -> Void
+  let onImageAttachmentsImported: ([ImageAttachmentImport]) -> Void
+  let onImageAttachmentResized: (Int, Double) -> Void
 
   public init(
     text: Binding<String>,
@@ -1449,13 +1695,16 @@ public struct MarkdownTextEditor: UIViewRepresentable {
     hasAutocompleteSuggestions: Bool,
     wikiLinkStates: [WikiLinkRenderState],
     theme: LatticeTheme,
+    imagePreviewStates: [MarkdownImageRenderState],
     onTextChange: @escaping () -> Void,
     onSelectionChange: @escaping () -> Void,
     onWikiLinkActivated: @escaping (Int) -> Void,
     onMarkdownLinkActivated: @escaping (Int) -> Void,
     onDismissAutocomplete: @escaping () -> Void,
     onVimWrite: @escaping () -> Void,
-    onVimStatusChange: @escaping (String?) -> Void
+    onVimStatusChange: @escaping (String?) -> Void,
+    onImageAttachmentsImported: @escaping ([ImageAttachmentImport]) -> Void,
+    onImageAttachmentResized: @escaping (Int, Double) -> Void
   ) {
     self._text = text
     self._selectedRange = selectedRange
@@ -1472,6 +1721,7 @@ public struct MarkdownTextEditor: UIViewRepresentable {
     self.hasAutocompleteSuggestions = hasAutocompleteSuggestions
     self.wikiLinkStates = wikiLinkStates
     self.theme = theme
+    self.imagePreviewStates = imagePreviewStates
     self.onTextChange = onTextChange
     self.onSelectionChange = onSelectionChange
     self.onWikiLinkActivated = onWikiLinkActivated
@@ -1479,6 +1729,8 @@ public struct MarkdownTextEditor: UIViewRepresentable {
     self.onDismissAutocomplete = onDismissAutocomplete
     self.onVimWrite = onVimWrite
     self.onVimStatusChange = onVimStatusChange
+    self.onImageAttachmentsImported = onImageAttachmentsImported
+    self.onImageAttachmentResized = onImageAttachmentResized
   }
 
   public func makeCoordinator() -> Coordinator {
@@ -1626,7 +1878,8 @@ public struct MarkdownTextEditor: UIViewRepresentable {
         fontFamily: parent.fontFamily,
         activeRanges: [clampedSelection],
         wikiLinkStates: parent.wikiLinkStates,
-        theme: parent.theme
+        theme: parent.theme,
+        imagePreviewStates: parent.imagePreviewStates
       )
       textView.selectedRange = clampedSelection
       textView.typingAttributes = MarkdownAttributedRenderer.baseTypingAttributes(
