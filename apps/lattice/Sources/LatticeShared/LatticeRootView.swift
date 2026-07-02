@@ -439,7 +439,7 @@ private struct TimelinePane: View {
         focusToken: model.timelineFocusToken,
         isVimModeEnabled: model.isVimModeEnabled,
         showsRelativeLineNumbers: false,
-        showsTimelineRuler: true,
+        showsTimelineRuler: model.showsTimelineRuler,
         timelineEntries: model.timelineEntries,
         dimsInactiveParagraphs: true,
         hasAutocompleteSuggestions: false,

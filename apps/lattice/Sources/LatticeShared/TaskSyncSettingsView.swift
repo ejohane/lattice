@@ -52,6 +52,7 @@ public struct TaskSyncSettingsView: View {
     Section("Editor") {
       Toggle("Vim Mode", isOn: vimModeBinding)
       Toggle("Relative Line Numbers", isOn: relativeLineNumbersBinding)
+      Toggle("Timeline Ruler", isOn: timelineRulerBinding)
     }
     #else
     EmptyView()
@@ -155,6 +156,14 @@ public struct TaskSyncSettingsView: View {
       model.showsRelativeLineNumbers
     } set: { value in
       model.setRelativeLineNumbersEnabled(value)
+    }
+  }
+
+  private var timelineRulerBinding: Binding<Bool> {
+    Binding {
+      model.showsTimelineRuler
+    } set: { value in
+      model.setTimelineRulerEnabled(value)
     }
   }
 

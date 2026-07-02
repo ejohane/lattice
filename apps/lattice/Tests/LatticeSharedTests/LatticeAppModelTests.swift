@@ -217,10 +217,12 @@ struct LatticeAppModelTests {
 
     #expect(!model.isVimModeEnabled)
     #expect(!model.showsRelativeLineNumbers)
+    #expect(model.showsTimelineRuler)
     #expect(model.vimState.mode == .insert)
 
     model.setVimModeEnabled(true)
     model.setRelativeLineNumbersEnabled(true)
+    model.setTimelineRulerEnabled(false)
 
     let restored = LatticeAppModel(
       noteLibrary: NoteLibrary(defaults: defaults),
@@ -230,6 +232,7 @@ struct LatticeAppModelTests {
 
     #expect(restored.isVimModeEnabled)
     #expect(restored.showsRelativeLineNumbers)
+    #expect(!restored.showsTimelineRuler)
     #expect(restored.vimState.mode == .normal)
   }
 

@@ -41,6 +41,7 @@ public final class LatticeAppModel {
   public var editorFontSize = 14.0
   public var isVimModeEnabled = false
   public var showsRelativeLineNumbers = false
+  public var showsTimelineRuler = true
   public var vimState = VimEditorState(mode: .insert)
   public var vimStatusMessage: String?
   public var wikiLinkStates: [WikiLinkRenderState] = []
@@ -87,6 +88,7 @@ public final class LatticeAppModel {
     let editorPreferences = editorPreferencesStore.load()
     self.isVimModeEnabled = editorPreferences.isVimModeEnabled
     self.showsRelativeLineNumbers = editorPreferences.showsRelativeLineNumbers
+    self.showsTimelineRuler = editorPreferences.showsTimelineRuler
     self.vimState = VimEditorState(mode: editorPreferences.isVimModeEnabled ? .normal : .insert)
   }
 
@@ -681,6 +683,11 @@ public final class LatticeAppModel {
 
   public func setRelativeLineNumbersEnabled(_ isEnabled: Bool) {
     showsRelativeLineNumbers = isEnabled
+    saveEditorPreferences()
+  }
+
+  public func setTimelineRulerEnabled(_ isEnabled: Bool) {
+    showsTimelineRuler = isEnabled
     saveEditorPreferences()
   }
 
@@ -1404,7 +1411,8 @@ public final class LatticeAppModel {
   private func saveEditorPreferences() {
     editorPreferencesStore.save(EditorPreferences(
       isVimModeEnabled: isVimModeEnabled,
-      showsRelativeLineNumbers: showsRelativeLineNumbers
+      showsRelativeLineNumbers: showsRelativeLineNumbers,
+      showsTimelineRuler: showsTimelineRuler
     ))
   }
 
