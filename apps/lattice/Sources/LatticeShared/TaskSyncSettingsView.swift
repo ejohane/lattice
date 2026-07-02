@@ -12,6 +12,7 @@ public struct TaskSyncSettingsView: View {
   public var body: some View {
     NavigationStack {
       Form {
+        themeSection
         editorSection
         providerSection
         destinationSection
@@ -43,6 +44,33 @@ public struct TaskSyncSettingsView: View {
       }
     } message: {
       Text(initialSyncMessage)
+    }
+  }
+
+  private var themeSection: some View {
+    Section("Theme") {
+      Picker("Theme", selection: themeBinding) {
+        ForEach(LatticeThemeID.allCases) { themeID in
+          Text(themeID.displayName).tag(themeID)
+        }
+      }
+      #if os(macOS)
+      .pickerStyle(.menu)
+      #endif
+
+      ScrollView(.horizontal, showsIndicators: false) {
+        HStack(spacing: 12) {
+          ForEach(LatticeThemeID.allCases) { themeID in
+            ThemePreviewCard(
+              theme: LatticeTheme(id: themeID),
+              isSelected: model.selectedThemeID == themeID
+            ) {
+              model.setTheme(themeID)
+            }
+          }
+        }
+        .padding(.vertical, 4)
+      }
     }
   }
 
@@ -167,6 +195,14 @@ public struct TaskSyncSettingsView: View {
     }
   }
 
+  private var themeBinding: Binding<LatticeThemeID> {
+    Binding {
+      model.selectedThemeID
+    } set: { value in
+      model.setTheme(value)
+    }
+  }
+
   private var initialSyncConfirmationBinding: Binding<Bool> {
     Binding {
       model.pendingInitialSyncTaskCount != nil
@@ -194,5 +230,49 @@ public struct TaskSyncSettingsView: View {
     case .restricted:
       return "Restricted"
     }
+  }
+}
+
+private struct ThemePreviewCard: View {
+  let theme: LatticeTheme
+  let isSelected: Bool
+  let action: () -> Void
+
+  var body: some View {
+    Button(action: action) {
+      VStack(alignment: .leading, spacing: 10) {
+        HStack {
+          Text(theme.displayName)
+            .font(.caption.weight(.semibold))
+            .lineLimit(1)
+          Spacer(minLength: 12)
+          Image(systemName: isSelected ? "checkmark.circle.fill" : "circle")
+            .imageScale(.small)
+        }
+        .foregroundStyle(theme.color(.primaryText))
+
+        VStack(alignment: .leading, spacing: 5) {
+          RoundedRectangle(cornerRadius: 2)
+            .fill(theme.color(.primaryText))
+            .frame(width: 92, height: 5)
+          RoundedRectangle(cornerRadius: 2)
+            .fill(theme.color(.secondaryText))
+            .frame(width: 116, height: 5)
+          RoundedRectangle(cornerRadius: 2)
+            .fill(theme.color(.accent))
+            .frame(width: 76, height: 5)
+        }
+      }
+      .padding(12)
+      .frame(width: 170, height: 96, alignment: .leading)
+      .background(theme.color(.editorBackground))
+      .overlay {
+        RoundedRectangle(cornerRadius: 8, style: .continuous)
+          .stroke(isSelected ? theme.color(.accent) : theme.color(.separator), lineWidth: isSelected ? 2 : 1)
+      }
+      .clipShape(RoundedRectangle(cornerRadius: 8, style: .continuous))
+    }
+    .buttonStyle(.plain)
+    .accessibilityLabel(theme.displayName)
   }
 }

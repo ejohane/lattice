@@ -88,6 +88,10 @@ public struct LatticeRootView: View {
     } message: {
       Text("Several notes match this link.")
     }
+    .background(model.theme.color(.appBackground))
+    .environment(\.latticeTheme, model.theme)
+    .preferredColorScheme(model.theme.preferredColorScheme)
+    .tint(model.theme.color(.accent))
   }
 
   private var preferredColumnBinding: Binding<NavigationSplitViewColumn> {
@@ -125,6 +129,7 @@ public struct LatticeRootView: View {
 
 private struct NoteSidebar: View {
   @Bindable var model: LatticeAppModel
+  @Environment(\.latticeTheme) private var theme
 
   var body: some View {
     List {
@@ -138,12 +143,13 @@ private struct NoteSidebar: View {
                 HStack(spacing: 8) {
                   Text(model.displayTitle(for: note))
                     .lineLimit(1)
+                    .truncationMode(.tail)
                   Spacer()
-                  if model.selectedNote == note {
-                    Image(systemName: "checkmark")
-                      .font(.caption.weight(.semibold))
-                      .foregroundStyle(.secondary)
-                  }
+	                  if model.selectedNote == note {
+	                    Image(systemName: "checkmark")
+	                      .font(.caption.weight(.semibold))
+	                      .foregroundStyle(theme.color(.secondaryText))
+	                  }
                 }
               }
               .buttonStyle(.plain)
@@ -170,6 +176,8 @@ private struct NoteSidebar: View {
         )
       }
     }
+    .scrollContentBackground(.hidden)
+    .background(theme.color(.sidebarBackground))
     .navigationTitle("Lattice")
     #if os(macOS)
     .navigationSplitViewColumnWidth(min: 140, ideal: 180, max: 260)
@@ -203,6 +211,7 @@ private struct NoteSidebar: View {
 
 private struct NoteEditorPane: View {
   @Bindable var model: LatticeAppModel
+  @Environment(\.latticeTheme) private var theme
   private let maximumEditorWidth: CGFloat = 920
   private let editorHorizontalPadding: CGFloat = 18
 
@@ -211,6 +220,7 @@ private struct NoteEditorPane: View {
       .frame(maxWidth: maximumEditorWidth, maxHeight: .infinity)
       .padding(.horizontal, editorHorizontalPadding)
       .frame(maxWidth: .infinity, maxHeight: .infinity)
+      .background(theme.color(.appBackground))
       .navigationTitle(model.selectedNote.map { model.displayTitle(for: $0) } ?? "New Note")
       #if os(macOS)
       .navigationSplitViewColumnWidth(min: 260, ideal: 720)
@@ -277,6 +287,7 @@ private struct NoteEditorPane: View {
         showsRelativeLineNumbers: model.showsRelativeLineNumbers,
         hasAutocompleteSuggestions: !model.wikiAutocompleteSuggestions.isEmpty,
         wikiLinkStates: model.wikiLinkStates,
+        theme: theme,
         onTextChange: {
           model.noteTextDidChange()
         },
@@ -301,6 +312,7 @@ private struct NoteEditorPane: View {
       )
       .ignoresSafeArea(.keyboard, edges: .bottom)
       .frame(maxWidth: .infinity, maxHeight: .infinity)
+      .background(theme.color(.editorBackground))
       autocompleteBar
       statusBar
     }
@@ -312,22 +324,22 @@ private struct NoteEditorPane: View {
       if let modeText {
         Text(modeText)
           .font(.caption2.weight(.bold))
-          .foregroundStyle(modeText == "NORMAL" ? .white : .secondary)
+          .foregroundStyle(modeText == "NORMAL" ? theme.color(.highlightedText) : theme.color(.secondaryText))
           .padding(.horizontal, 7)
           .padding(.vertical, 3)
           .background {
             Capsule()
-              .fill(modeText == "NORMAL" ? Color.accentColor : Color.secondary.opacity(0.14))
+              .fill(modeText == "NORMAL" ? theme.color(.accent) : theme.color(.secondaryText).opacity(0.14))
           }
       }
 
       Text(statusText)
         .font(.footnote.weight(.medium))
-        .foregroundStyle(.secondary)
+        .foregroundStyle(theme.color(.secondaryText))
     }
       .frame(maxWidth: .infinity)
       .padding(.vertical, 10)
-      .background(.bar)
+      .background(theme.color(.barBackground))
   }
 
   @ViewBuilder
@@ -345,7 +357,7 @@ private struct NoteEditorPane: View {
                   .lineLimit(1)
                 Text(suggestion.subtitle)
                   .font(.caption)
-                  .foregroundStyle(.secondary)
+                  .foregroundStyle(theme.color(.secondaryText))
                   .lineLimit(1)
               }
               .frame(minWidth: 120, alignment: .leading)
@@ -356,7 +368,7 @@ private struct NoteEditorPane: View {
         .padding(.horizontal, 12)
         .padding(.vertical, 8)
       }
-      .background(.bar)
+      .background(theme.color(.barBackground))
     }
   }
 
@@ -406,6 +418,7 @@ private struct NoteEditorPane: View {
 
 private struct TimelinePane: View {
   @Bindable var model: LatticeAppModel
+  @Environment(\.latticeTheme) private var theme
   private let maximumTimelineWidth: CGFloat = 980
 
   var body: some View {
@@ -445,6 +458,7 @@ private struct TimelinePane: View {
         caretAnchorFraction: 1.0 / 3.0,
         hasAutocompleteSuggestions: false,
         wikiLinkStates: [],
+        theme: theme,
         onTextChange: {
           model.timelineTextDidChange()
         },
@@ -469,21 +483,21 @@ private struct TimelinePane: View {
         if let modeText {
           Text(modeText)
             .font(.caption2.weight(.bold))
-            .foregroundStyle(modeText == "NORMAL" ? .white : .secondary)
+            .foregroundStyle(modeText == "NORMAL" ? theme.color(.highlightedText) : theme.color(.secondaryText))
             .padding(.horizontal, 7)
             .padding(.vertical, 3)
             .background {
               Capsule()
-                .fill(modeText == "NORMAL" ? Color.accentColor : Color.secondary.opacity(0.14))
+                .fill(modeText == "NORMAL" ? theme.color(.accent) : theme.color(.secondaryText).opacity(0.14))
             }
         }
         Text(statusText)
           .font(.footnote.weight(.medium))
-          .foregroundStyle(.secondary)
+          .foregroundStyle(theme.color(.secondaryText))
       }
       .frame(maxWidth: .infinity)
       .padding(.vertical, 10)
-      .background(.bar)
+      .background(theme.color(.barBackground))
     }
   }
 
@@ -516,17 +530,18 @@ private struct TimelinePane: View {
 
 private struct FolderSetupView: View {
   @Bindable var model: LatticeAppModel
+  @Environment(\.latticeTheme) private var theme
 
   var body: some View {
     VStack(spacing: 18) {
       Image(systemName: "folder.badge.plus")
         .font(.system(size: 44, weight: .regular))
-        .foregroundStyle(.secondary)
+        .foregroundStyle(theme.color(.secondaryText))
       Text("Choose a notes folder")
         .font(.title2.weight(.semibold))
       Text("Lattice writes ordinary Markdown files into a folder you control. Use the recommended iCloud Drive location to sync between devices, or choose another folder.")
         .font(.body)
-        .foregroundStyle(.secondary)
+        .foregroundStyle(theme.color(.secondaryText))
         .multilineTextAlignment(.center)
         .frame(maxWidth: 420)
       VStack(spacing: 8) {
@@ -539,11 +554,11 @@ private struct FolderSetupView: View {
         .buttonStyle(.borderedProminent)
         Text(model.recommendedFolderDescription)
           .font(.caption)
-          .foregroundStyle(model.isRecommendedFolderCloudBacked ? Color.secondary : Color.orange)
+          .foregroundStyle(model.isRecommendedFolderCloudBacked ? theme.color(.secondaryText) : theme.color(.warning))
           .multilineTextAlignment(.center)
         Text(model.recommendedFolderURL.path)
           .font(.caption)
-          .foregroundStyle(.tertiary)
+          .foregroundStyle(theme.color(.tertiaryText))
           .lineLimit(2)
           .multilineTextAlignment(.center)
         Button {
@@ -557,6 +572,7 @@ private struct FolderSetupView: View {
     }
     .padding(32)
     .frame(maxWidth: .infinity, maxHeight: .infinity)
+    .background(theme.color(.appBackground))
     .navigationTitle("Lattice")
     #if os(macOS)
     .navigationSplitViewColumnWidth(min: 260, ideal: 560)

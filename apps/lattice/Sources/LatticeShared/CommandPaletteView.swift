@@ -3,6 +3,7 @@ import SwiftUI
 
 public struct CommandPaletteView: View {
   @Bindable private var model: LatticeAppModel
+  @Environment(\.latticeTheme) private var theme
   private let platformCommands: [CommandPaletteCommand]
   @FocusState private var isSearchFocused: Bool
   @State private var highlightedID: CommandPaletteItem.ID?
@@ -21,6 +22,7 @@ public struct CommandPaletteView: View {
       Divider()
       resultsList
     }
+    .background(theme.color(.surfaceBackground))
     #if os(macOS)
     .frame(width: 540, height: 480)
     #else
@@ -56,7 +58,7 @@ public struct CommandPaletteView: View {
   private var searchField: some View {
     HStack(spacing: 10) {
       Image(systemName: "magnifyingglass")
-        .foregroundStyle(.secondary)
+        .foregroundStyle(theme.color(.secondaryText))
       TextField("Search commands and notes", text: $model.commandPaletteQuery)
         .textFieldStyle(.plain)
         .focused($isSearchFocused)
@@ -204,6 +206,7 @@ private enum CommandPaletteItem: Identifiable {
 }
 
 private struct CommandPaletteRow: View {
+  @Environment(\.latticeTheme) private var theme
   let item: CommandPaletteItem
   let isHighlighted: Bool
 
@@ -211,18 +214,20 @@ private struct CommandPaletteRow: View {
     HStack(spacing: 12) {
       Image(systemName: item.systemImage)
         .font(.system(size: 16, weight: .medium))
-        .foregroundStyle(isHighlighted ? .white : .secondary)
+        .foregroundStyle(isHighlighted ? theme.color(.highlightedText) : theme.color(.secondaryText))
         .frame(width: 24, height: 24)
       VStack(alignment: .leading, spacing: 2) {
         Text(item.title)
           .font(.body.weight(.medium))
-          .foregroundStyle(isHighlighted ? .white : .primary)
+          .foregroundStyle(isHighlighted ? theme.color(.highlightedText) : theme.color(.primaryText))
           .lineLimit(1)
+          .truncationMode(.tail)
         if let subtitle = item.subtitle, !subtitle.isEmpty {
           Text(subtitle)
             .font(.caption)
-            .foregroundStyle(isHighlighted ? .white.opacity(0.82) : .secondary)
+            .foregroundStyle(isHighlighted ? theme.color(.highlightedText).opacity(0.82) : theme.color(.secondaryText))
             .lineLimit(1)
+            .truncationMode(.tail)
         }
       }
       Spacer(minLength: 12)
@@ -230,7 +235,7 @@ private struct CommandPaletteRow: View {
     .padding(.horizontal, 10)
     .padding(.vertical, 8)
     .frame(maxWidth: .infinity, alignment: .leading)
-    .background(isHighlighted ? Color.accentColor : Color.clear)
+    .background(isHighlighted ? theme.color(.accent) : Color.clear)
     .clipShape(RoundedRectangle(cornerRadius: 6, style: .continuous))
   }
 }

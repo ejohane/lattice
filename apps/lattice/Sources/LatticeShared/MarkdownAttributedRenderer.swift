@@ -17,12 +17,13 @@ enum MarkdownAttributedRenderer {
     fontSize: CGFloat = bodyFontSize,
     activeRanges: [NSRange] = [],
     wikiLinkStates: [WikiLinkRenderState] = [],
-    dimsInactiveText: Bool = false
+    dimsInactiveText: Bool = false,
+    theme: LatticeTheme = LatticeTheme(id: .system)
   ) -> NSAttributedString {
-    let attributed = NSMutableAttributedString(string: text, attributes: baseTypingAttributes(fontSize: fontSize))
-    applyStyles(to: attributed, fontSize: fontSize, activeRanges: activeRanges, wikiLinkStates: wikiLinkStates)
+    let attributed = NSMutableAttributedString(string: text, attributes: baseTypingAttributes(fontSize: fontSize, theme: theme))
+    applyStyles(to: attributed, fontSize: fontSize, activeRanges: activeRanges, wikiLinkStates: wikiLinkStates, theme: theme)
     if dimsInactiveText {
-      applyInactiveTextDimming(to: attributed, activeRanges: activeRanges)
+      applyInactiveTextDimming(to: attributed, activeRanges: activeRanges, theme: theme)
     }
     return attributed
   }
@@ -35,13 +36,16 @@ enum MarkdownAttributedRenderer {
     NSFont.monospacedSystemFont(ofSize: size, weight: weight)
   }
 
-  static func baseTypingAttributes(fontSize: CGFloat = bodyFontSize) -> [NSAttributedString.Key: Any] {
+  static func baseTypingAttributes(
+    fontSize: CGFloat = bodyFontSize,
+    theme: LatticeTheme = LatticeTheme(id: .system)
+  ) -> [NSAttributedString.Key: Any] {
     let paragraphStyle = NSMutableParagraphStyle()
     paragraphStyle.lineSpacing = 5 * fontSize / bodyFontSize
     paragraphStyle.paragraphSpacing = 6 * fontSize / bodyFontSize
     return [
       .font: bodyFont(size: fontSize),
-      .foregroundColor: NSColor.labelColor,
+      .foregroundColor: theme.nsColor(.primaryText),
       .paragraphStyle: paragraphStyle
     ]
   }
@@ -50,21 +54,23 @@ enum MarkdownAttributedRenderer {
     to attributed: NSMutableAttributedString,
     fontSize: CGFloat,
     activeRanges: [NSRange],
-    wikiLinkStates: [WikiLinkRenderState]
+    wikiLinkStates: [WikiLinkRenderState],
+    theme: LatticeTheme
   ) {
     let nsString = attributed.string as NSString
     let codeBlocks = codeBlockRanges(in: nsString)
-    applyBlockStyles(to: attributed, fontSize: fontSize, codeBlocks: codeBlocks, activeRanges: activeRanges)
-    applyInlineStyles(to: attributed, fontSize: fontSize, skippedRanges: codeBlocks, activeRanges: activeRanges)
-    applyWikiLinkStyles(to: attributed, fontSize: fontSize, states: wikiLinkStates, activeRanges: activeRanges)
-    hideLatticeMetadataComments(in: attributed, fontSize: fontSize, activeRanges: activeRanges)
+    applyBlockStyles(to: attributed, fontSize: fontSize, codeBlocks: codeBlocks, activeRanges: activeRanges, theme: theme)
+    applyInlineStyles(to: attributed, fontSize: fontSize, skippedRanges: codeBlocks, activeRanges: activeRanges, theme: theme)
+    applyWikiLinkStyles(to: attributed, fontSize: fontSize, states: wikiLinkStates, activeRanges: activeRanges, theme: theme)
+    hideLatticeMetadataComments(in: attributed, fontSize: fontSize, activeRanges: activeRanges, theme: theme)
   }
 
   private static func applyBlockStyles(
     to attributed: NSMutableAttributedString,
     fontSize: CGFloat,
     codeBlocks: [NSRange],
-    activeRanges: [NSRange]
+    activeRanges: [NSRange],
+    theme: LatticeTheme
   ) {
     let nsString = attributed.string as NSString
     var location = 0
@@ -73,20 +79,20 @@ enum MarkdownAttributedRenderer {
       let line = nsString.substring(with: lineRange)
       let isActiveLine = lineRangeContainsActiveRange(lineRange, activeRanges: activeRanges, in: nsString)
       let tokenAttributes = isActiveLine
-        ? tokenAttributes(fontSize: fontSize)
+        ? tokenAttributes(fontSize: fontSize, theme: theme)
         : hiddenTokenAttributes(fontSize: fontSize)
 
       if range(lineRange, intersectsAny: codeBlocks) {
-        attributed.addAttributes(codeBlockAttributes(fontSize: fontSize), range: lineRange)
+        attributed.addAttributes(codeBlockAttributes(fontSize: fontSize, theme: theme), range: lineRange)
       } else if let match = firstMatch("^\\s*(#{1,6})(\\s+)(.+)$", in: line) {
         let level = min(match.range(at: 1).length, 6)
         attributed.addAttributes(tokenAttributes, range: shifted(match.range(at: 1), by: lineRange.location))
         attributed.addAttributes(tokenAttributes, range: shifted(match.range(at: 2), by: lineRange.location))
-        attributed.addAttributes(headingAttributes(level: level, fontSize: fontSize), range: shifted(match.range(at: 3), by: lineRange.location))
+        attributed.addAttributes(headingAttributes(level: level, fontSize: fontSize, theme: theme), range: shifted(match.range(at: 3), by: lineRange.location))
       } else if let match = firstMatch("^\\s{0,3}>\\s?(.+)$", in: line) {
-        attributed.addAttributes(blockQuoteAttributes(fontSize: fontSize), range: lineRange)
+        attributed.addAttributes(blockQuoteAttributes(fontSize: fontSize, theme: theme), range: lineRange)
         attributed.addAttributes(tokenAttributes, range: shifted(NSRange(location: 0, length: 1), by: lineRange.location))
-        attributed.addAttributes([.font: italicBodyFont(size: fontSize)], range: shifted(match.range(at: 1), by: lineRange.location))
+        attributed.addAttributes([.font: italicBodyFont(size: fontSize), .foregroundColor: theme.nsColor(.quoteText)], range: shifted(match.range(at: 1), by: lineRange.location))
       } else if let match = firstMatch("^\\s*([-*+])\\s+(\\[[ xX]\\])\\s+(.*)$", in: line) {
         let markerRange = shifted(match.range(at: 1), by: lineRange.location)
         let checkboxRange = shifted(match.range(at: 2), by: lineRange.location)
@@ -97,12 +103,12 @@ enum MarkdownAttributedRenderer {
 
         attributed.addAttributes(listAttributes(fontSize: fontSize), range: lineRange)
         attributed.addAttributes(
-          shouldRenderMarker ? renderedTaskCheckboxAttributes(isChecked: isChecked, fontSize: fontSize) : bulletAttributes(fontSize: fontSize),
+          shouldRenderMarker ? renderedTaskCheckboxAttributes(isChecked: isChecked, fontSize: fontSize, theme: theme) : bulletAttributes(fontSize: fontSize, theme: theme),
           range: markerRange
         )
-        attributed.addAttributes(isActiveLine ? bulletAttributes(fontSize: fontSize) : hiddenTokenAttributes(fontSize: fontSize), range: checkboxRange)
+        attributed.addAttributes(isActiveLine ? bulletAttributes(fontSize: fontSize, theme: theme) : hiddenTokenAttributes(fontSize: fontSize), range: checkboxRange)
         if isChecked {
-          attributed.addAttributes(completedTaskAttributes(), range: contentRange)
+          attributed.addAttributes(completedTaskAttributes(theme: theme), range: contentRange)
         }
       } else if let match = firstMatch("^\\s*([-*+])\\s+(.*)$", in: line) {
         let contentRange = match.range(at: 2)
@@ -110,18 +116,18 @@ enum MarkdownAttributedRenderer {
 
         attributed.addAttributes(listAttributes(fontSize: fontSize), range: lineRange)
         attributed.addAttributes(
-          shouldRenderMarker ? renderedBulletAttributes(fontSize: fontSize) : bulletAttributes(fontSize: fontSize),
+          shouldRenderMarker ? renderedBulletAttributes(fontSize: fontSize, theme: theme) : bulletAttributes(fontSize: fontSize, theme: theme),
           range: shifted(match.range(at: 1), by: lineRange.location)
         )
       } else if let match = firstMatch("^\\s*(\\d+[.)])\\s+(.*)$", in: line) {
         attributed.addAttributes(listAttributes(fontSize: fontSize), range: lineRange)
         attributed.addAttributes(
-          isActiveLine ? bulletAttributes(fontSize: fontSize) : hiddenTokenAttributes(fontSize: fontSize),
+          isActiveLine ? bulletAttributes(fontSize: fontSize, theme: theme) : hiddenTokenAttributes(fontSize: fontSize),
           range: shifted(match.range(at: 1), by: lineRange.location)
         )
       } else if firstMatch("^\\s{0,3}(([-*_])\\s*){3,}$", in: line) != nil {
         attributed.addAttributes(
-          isActiveLine ? thematicBreakAttributes(fontSize: fontSize) : thematicBreakLineAttributes(fontSize: fontSize),
+          isActiveLine ? thematicBreakAttributes(fontSize: fontSize, theme: theme) : thematicBreakLineAttributes(fontSize: fontSize),
           range: lineRange
         )
       }
@@ -134,7 +140,8 @@ enum MarkdownAttributedRenderer {
     to attributed: NSMutableAttributedString,
     fontSize: CGFloat,
     skippedRanges: [NSRange],
-    activeRanges: [NSRange]
+    activeRanges: [NSRange],
+    theme: LatticeTheme
   ) {
     let fullRange = NSRange(location: 0, length: attributed.length)
     let inlineCodeRanges = rangesMatching(
@@ -155,9 +162,10 @@ enum MarkdownAttributedRenderer {
       fontSize: fontSize,
       skippedRanges: skippedRanges,
       activeRanges: activeRanges,
-      contentAttributes: inlineCodeAttributes(fontSize: fontSize),
+      contentAttributes: inlineCodeAttributes(fontSize: fontSize, theme: theme),
       tokenGroups: [0],
-      contentGroups: [1]
+      contentGroups: [1],
+      theme: theme
     )
     applyInlineLinkStyle(
       pattern: "!\\[([^\\]\\n]*)\\]\\(([^)\\n]+)\\)",
@@ -167,7 +175,8 @@ enum MarkdownAttributedRenderer {
       activeRanges: activeRanges,
       tokenGroups: [0],
       labelGroup: 1,
-      urlGroup: 2
+      urlGroup: 2,
+      theme: theme
     )
     applyInlineLinkStyle(
       pattern: "\\[([^\\]\\n]+)\\]\\(([^)\\n]+)\\)",
@@ -177,12 +186,14 @@ enum MarkdownAttributedRenderer {
       activeRanges: activeRanges,
       tokenGroups: [0],
       labelGroup: 1,
-      urlGroup: 2
+      urlGroup: 2,
+      theme: theme
     )
     applyAutolinkStyles(
       to: attributed,
       fontSize: fontSize,
-      skippedRanges: skippedRanges + inlineCodeRanges + markdownLinkRanges
+      skippedRanges: skippedRanges + inlineCodeRanges + markdownLinkRanges,
+      theme: theme
     )
     applyInlineStyle(
       pattern: "(\\*\\*|__)(.+?)\\1",
@@ -190,9 +201,10 @@ enum MarkdownAttributedRenderer {
       fontSize: fontSize,
       skippedRanges: skippedRanges,
       activeRanges: activeRanges,
-      contentAttributes: [.font: bodyFont(size: fontSize, weight: .semibold), .foregroundColor: NSColor.labelColor],
+      contentAttributes: [.font: bodyFont(size: fontSize, weight: .semibold), .foregroundColor: theme.nsColor(.primaryText)],
       tokenGroups: [0],
-      contentGroups: [2]
+      contentGroups: [2],
+      theme: theme
     )
     applyInlineStyle(
       pattern: "(~~)(.+?)\\1",
@@ -202,11 +214,12 @@ enum MarkdownAttributedRenderer {
       activeRanges: activeRanges,
       contentAttributes: [
         .font: bodyFont(size: fontSize),
-        .foregroundColor: NSColor.labelColor,
+        .foregroundColor: theme.nsColor(.primaryText),
         .strikethroughStyle: NSUnderlineStyle.single.rawValue
       ],
       tokenGroups: [0],
-      contentGroups: [2]
+      contentGroups: [2],
+      theme: theme
     )
     applyInlineStyle(
       pattern: "(?<!\\*)\\*(?!\\*)([^*\\n]+)(?<!\\*)\\*(?!\\*)",
@@ -214,9 +227,10 @@ enum MarkdownAttributedRenderer {
       fontSize: fontSize,
       skippedRanges: skippedRanges,
       activeRanges: activeRanges,
-      contentAttributes: [.font: italicBodyFont(size: fontSize), .foregroundColor: NSColor.labelColor],
+      contentAttributes: [.font: italicBodyFont(size: fontSize), .foregroundColor: theme.nsColor(.primaryText)],
       tokenGroups: [0],
-      contentGroups: [1]
+      contentGroups: [1],
+      theme: theme
     )
     applyInlineStyle(
       pattern: "(?<!_)_(?!_)([^_\\n]+)(?<!_)_(?!_)",
@@ -224,9 +238,10 @@ enum MarkdownAttributedRenderer {
       fontSize: fontSize,
       skippedRanges: skippedRanges,
       activeRanges: activeRanges,
-      contentAttributes: [.font: italicBodyFont(size: fontSize), .foregroundColor: NSColor.labelColor],
+      contentAttributes: [.font: italicBodyFont(size: fontSize), .foregroundColor: theme.nsColor(.primaryText)],
       tokenGroups: [0],
-      contentGroups: [1]
+      contentGroups: [1],
+      theme: theme
     )
   }
 
@@ -238,7 +253,8 @@ enum MarkdownAttributedRenderer {
     activeRanges: [NSRange],
     contentAttributes: [NSAttributedString.Key: Any],
     tokenGroups: [Int],
-    contentGroups: [Int]
+    contentGroups: [Int],
+    theme: LatticeTheme
   ) {
     guard let regex = try? NSRegularExpression(pattern: pattern) else {
       return
@@ -247,7 +263,7 @@ enum MarkdownAttributedRenderer {
     let fullRange = NSRange(location: 0, length: attributed.length)
     for match in regex.matches(in: attributed.string, range: fullRange) where !range(match.range, intersectsAny: skippedRanges) {
       let markdownTokenAttributes = range(match.range, containsAnyActive: activeRanges)
-        ? tokenAttributes(fontSize: fontSize)
+        ? tokenAttributes(fontSize: fontSize, theme: theme)
         : hiddenTokenAttributes(fontSize: fontSize)
 
       for group in tokenGroups {
@@ -274,7 +290,8 @@ enum MarkdownAttributedRenderer {
     activeRanges: [NSRange],
     tokenGroups: [Int],
     labelGroup: Int,
-    urlGroup: Int
+    urlGroup: Int,
+    theme: LatticeTheme
   ) {
     guard let regex = try? NSRegularExpression(pattern: pattern) else {
       return
@@ -284,7 +301,7 @@ enum MarkdownAttributedRenderer {
     let fullRange = NSRange(location: 0, length: attributed.length)
     for match in regex.matches(in: attributed.string, range: fullRange) where !range(match.range, intersectsAny: skippedRanges) {
       let markdownTokenAttributes = range(match.range, containsAnyActive: activeRanges)
-        ? tokenAttributes(fontSize: fontSize)
+        ? tokenAttributes(fontSize: fontSize, theme: theme)
         : hiddenTokenAttributes(fontSize: fontSize)
 
       for group in tokenGroups {
@@ -301,14 +318,15 @@ enum MarkdownAttributedRenderer {
       }
 
       let urlString = nsString.substring(with: urlRange)
-      attributed.addAttributes(linkAttributes(fontSize: fontSize, urlString: urlString), range: labelRange)
+      attributed.addAttributes(linkAttributes(fontSize: fontSize, urlString: urlString, theme: theme), range: labelRange)
     }
   }
 
   private static func applyAutolinkStyles(
     to attributed: NSMutableAttributedString,
     fontSize: CGFloat,
-    skippedRanges: [NSRange]
+    skippedRanges: [NSRange],
+    theme: LatticeTheme
   ) {
     guard let detector = try? NSDataDetector(types: NSTextCheckingResult.CheckingType.link.rawValue) else {
       return
@@ -317,11 +335,11 @@ enum MarkdownAttributedRenderer {
     let fullRange = NSRange(location: 0, length: attributed.length)
     for match in detector.matches(in: attributed.string, range: fullRange)
     where match.resultType == .link && !range(match.range, intersectsAny: skippedRanges) {
-      attributed.addAttributes(linkAttributes(fontSize: fontSize, url: match.url), range: match.range)
+      attributed.addAttributes(linkAttributes(fontSize: fontSize, url: match.url, theme: theme), range: match.range)
     }
   }
 
-  private static func headingAttributes(level: Int, fontSize: CGFloat) -> [NSAttributedString.Key: Any] {
+  private static func headingAttributes(level: Int, fontSize: CGFloat, theme: LatticeTheme) -> [NSAttributedString.Key: Any] {
     let sizes: [CGFloat] = [34, 30, 26, 23, 21, 20]
     let index = max(0, min(level - 1, sizes.count - 1))
     let paragraphStyle = NSMutableParagraphStyle()
@@ -331,14 +349,14 @@ enum MarkdownAttributedRenderer {
 
     return [
       .font: bodyFont(size: sizes[index] * fontSize / bodyFontSize, weight: .bold),
-      .foregroundColor: NSColor.labelColor,
+      .foregroundColor: theme.nsColor(.primaryText),
       .paragraphStyle: paragraphStyle
     ]
   }
 
-  private static func tokenAttributes(fontSize: CGFloat) -> [NSAttributedString.Key: Any] {
+  private static func tokenAttributes(fontSize: CGFloat, theme: LatticeTheme) -> [NSAttributedString.Key: Any] {
     [
-      .foregroundColor: NSColor.tertiaryLabelColor,
+      .foregroundColor: theme.nsColor(.tertiaryText),
       .font: NSFont.monospacedSystemFont(ofSize: fontSize, weight: .regular)
     ]
   }
@@ -350,17 +368,17 @@ enum MarkdownAttributedRenderer {
     ]
   }
 
-  private static func bulletAttributes(fontSize: CGFloat) -> [NSAttributedString.Key: Any] {
+  private static func bulletAttributes(fontSize: CGFloat, theme: LatticeTheme) -> [NSAttributedString.Key: Any] {
     [
-      .foregroundColor: NSColor.controlAccentColor,
+      .foregroundColor: theme.nsColor(.accent),
       .font: bodyFont(size: 14 * fontSize / bodyFontSize, weight: .semibold)
     ]
   }
 
-  private static func renderedBulletAttributes(fontSize: CGFloat) -> [NSAttributedString.Key: Any] {
+  private static func renderedBulletAttributes(fontSize: CGFloat, theme: LatticeTheme) -> [NSAttributedString.Key: Any] {
     let font = bodyFont(size: 14 * fontSize / bodyFontSize, weight: .semibold)
     var attributes: [NSAttributedString.Key: Any] = [
-      .foregroundColor: NSColor.controlAccentColor,
+      .foregroundColor: theme.nsColor(.accent),
       .font: font
     ]
 
@@ -373,11 +391,12 @@ enum MarkdownAttributedRenderer {
 
   private static func renderedTaskCheckboxAttributes(
     isChecked: Bool,
-    fontSize: CGFloat
+    fontSize: CGFloat,
+    theme: LatticeTheme
   ) -> [NSAttributedString.Key: Any] {
     let font = bodyFont(size: 15 * fontSize / bodyFontSize, weight: .semibold)
     var attributes: [NSAttributedString.Key: Any] = [
-      .foregroundColor: NSColor.controlAccentColor,
+      .foregroundColor: theme.nsColor(.accent),
       .font: font
     ]
 
@@ -398,7 +417,7 @@ enum MarkdownAttributedRenderer {
     return [.paragraphStyle: paragraphStyle]
   }
 
-  private static func blockQuoteAttributes(fontSize: CGFloat) -> [NSAttributedString.Key: Any] {
+  private static func blockQuoteAttributes(fontSize: CGFloat, theme: LatticeTheme) -> [NSAttributedString.Key: Any] {
     let paragraphStyle = NSMutableParagraphStyle()
     paragraphStyle.lineSpacing = 5 * fontSize / bodyFontSize
     paragraphStyle.paragraphSpacing = 10 * fontSize / bodyFontSize
@@ -406,14 +425,14 @@ enum MarkdownAttributedRenderer {
     paragraphStyle.firstLineHeadIndent = 20 * fontSize / bodyFontSize
 
     return [
-      .foregroundColor: NSColor.secondaryLabelColor,
+      .foregroundColor: theme.nsColor(.quoteText),
       .paragraphStyle: paragraphStyle
     ]
   }
 
-  private static func thematicBreakAttributes(fontSize: CGFloat) -> [NSAttributedString.Key: Any] {
+  private static func thematicBreakAttributes(fontSize: CGFloat, theme: LatticeTheme) -> [NSAttributedString.Key: Any] {
     [
-      .foregroundColor: NSColor.tertiaryLabelColor,
+      .foregroundColor: theme.nsColor(.tertiaryText),
       .font: NSFont.monospacedSystemFont(ofSize: 18 * fontSize / bodyFontSize, weight: .medium)
     ]
   }
@@ -430,35 +449,36 @@ enum MarkdownAttributedRenderer {
     ]
   }
 
-  private static func codeBlockAttributes(fontSize: CGFloat) -> [NSAttributedString.Key: Any] {
+  private static func codeBlockAttributes(fontSize: CGFloat, theme: LatticeTheme) -> [NSAttributedString.Key: Any] {
     let paragraphStyle = NSMutableParagraphStyle()
     paragraphStyle.lineSpacing = 3 * fontSize / bodyFontSize
     paragraphStyle.paragraphSpacing = 0
 
     return [
       .font: monospaceBodyFont(size: fontSize),
-      .foregroundColor: NSColor.labelColor,
-      .backgroundColor: NSColor.controlBackgroundColor.withAlphaComponent(0.8),
+      .foregroundColor: theme.nsColor(.codeText),
+      .backgroundColor: theme.nsColor(.codeBackground).withAlphaComponent(0.8),
       .paragraphStyle: paragraphStyle
     ]
   }
 
-  private static func inlineCodeAttributes(fontSize: CGFloat) -> [NSAttributedString.Key: Any] {
+  private static func inlineCodeAttributes(fontSize: CGFloat, theme: LatticeTheme) -> [NSAttributedString.Key: Any] {
     [
       .font: monospaceBodyFont(size: fontSize),
-      .foregroundColor: NSColor.systemPink,
-      .backgroundColor: NSColor.controlBackgroundColor.withAlphaComponent(0.8)
+      .foregroundColor: theme.nsColor(.codeText),
+      .backgroundColor: theme.nsColor(.codeBackground).withAlphaComponent(0.8)
     ]
   }
 
   private static func linkAttributes(
     fontSize: CGFloat,
     urlString: String? = nil,
-    url: URL? = nil
+    url: URL? = nil,
+    theme: LatticeTheme
   ) -> [NSAttributedString.Key: Any] {
     var attributes: [NSAttributedString.Key: Any] = [
       .font: bodyFont(size: fontSize),
-      .foregroundColor: NSColor.systemBlue,
+      .foregroundColor: theme.nsColor(.link),
       .underlineStyle: NSUnderlineStyle.single.rawValue
     ]
 
@@ -473,17 +493,18 @@ enum MarkdownAttributedRenderer {
     to attributed: NSMutableAttributedString,
     fontSize: CGFloat,
     states: [WikiLinkRenderState],
-    activeRanges: [NSRange]
+    activeRanges: [NSRange],
+    theme: LatticeTheme
   ) {
     for link in WikiLinkParser.links(in: attributed.string) where NSMaxRange(link.range) <= attributed.length {
       let status = states.first { $0.range == link.range }?.status ?? .resolved
       attributed.addAttributes(
-        wikiLinkAttributes(fontSize: fontSize, status: status),
+        wikiLinkAttributes(fontSize: fontSize, status: status, theme: theme),
         range: linkContentRange(for: link.range)
       )
 
       let delimiterAttributes = range(link.range, containsAnyActive: activeRanges)
-        ? tokenAttributes(fontSize: fontSize)
+        ? tokenAttributes(fontSize: fontSize, theme: theme)
         : hiddenTokenAttributes(fontSize: fontSize)
       for delimiterRange in linkDelimiterRanges(for: link.range) {
         attributed.addAttributes(delimiterAttributes, range: delimiterRange)
@@ -493,26 +514,27 @@ enum MarkdownAttributedRenderer {
 
   private static func wikiLinkAttributes(
     fontSize: CGFloat,
-    status: WikiLinkRenderStatus
+    status: WikiLinkRenderStatus,
+    theme: LatticeTheme
   ) -> [NSAttributedString.Key: Any] {
     switch status {
     case .resolved:
       return [
         .font: bodyFont(size: fontSize),
-        .foregroundColor: NSColor.systemBlue,
+        .foregroundColor: theme.nsColor(.link),
         .underlineStyle: NSUnderlineStyle.single.rawValue
       ]
     case .ambiguous:
       return [
         .font: bodyFont(size: fontSize),
-        .foregroundColor: NSColor.systemBlue.withAlphaComponent(0.85),
+        .foregroundColor: theme.nsColor(.link).withAlphaComponent(0.85),
         .underlineStyle: NSUnderlineStyle.patternDot.rawValue | NSUnderlineStyle.single.rawValue
       ]
     case .broken:
       return [
         .font: bodyFont(size: fontSize),
-        .foregroundColor: NSColor.secondaryLabelColor,
-        .underlineColor: NSColor.systemOrange.withAlphaComponent(0.65),
+        .foregroundColor: theme.nsColor(.secondaryText),
+        .underlineColor: theme.nsColor(.warning).withAlphaComponent(0.65),
         .underlineStyle: NSUnderlineStyle.patternDash.rawValue | NSUnderlineStyle.single.rawValue
       ]
     }
@@ -521,7 +543,8 @@ enum MarkdownAttributedRenderer {
   private static func hideLatticeMetadataComments(
     in attributed: NSMutableAttributedString,
     fontSize: CGFloat,
-    activeRanges: [NSRange]
+    activeRanges: [NSRange],
+    theme: LatticeTheme
   ) {
     guard let regex = try? NSRegularExpression(pattern: #"<!--\s*lattice:[^>]*-->"#) else {
       return
@@ -529,15 +552,15 @@ enum MarkdownAttributedRenderer {
     let fullRange = NSRange(location: 0, length: attributed.length)
     for match in regex.matches(in: attributed.string, range: fullRange) {
       let attributes = range(match.range, containsAnyActive: activeRanges)
-        ? tokenAttributes(fontSize: fontSize)
+        ? tokenAttributes(fontSize: fontSize, theme: theme)
         : hiddenTokenAttributes(fontSize: fontSize)
       attributed.addAttributes(attributes, range: match.range)
     }
   }
 
-  private static func completedTaskAttributes() -> [NSAttributedString.Key: Any] {
+  private static func completedTaskAttributes(theme: LatticeTheme) -> [NSAttributedString.Key: Any] {
     [
-      .foregroundColor: NSColor.secondaryLabelColor,
+      .foregroundColor: theme.nsColor(.secondaryText),
       .strikethroughStyle: NSUnderlineStyle.single.rawValue
     ]
   }
@@ -662,13 +685,14 @@ enum MarkdownAttributedRenderer {
 
   private static func applyInactiveTextDimming(
     to attributed: NSMutableAttributedString,
-    activeRanges: [NSRange]
+    activeRanges: [NSRange],
+    theme: LatticeTheme
   ) {
     guard attributed.length > 0, !activeRanges.isEmpty else {
       return
     }
 
-    let inactiveColor = NSColor.tertiaryLabelColor
+    let inactiveColor = theme.nsColor(.tertiaryText)
     let fullRange = NSRange(location: 0, length: attributed.length)
     var cursor = 0
     for activeRange in activeRanges.sorted(by: { $0.location < $1.location }) {
@@ -703,20 +727,21 @@ enum MarkdownAttributedRenderer {
     _ text: String,
     activeRanges: [NSRange] = [],
     wikiLinkStates: [WikiLinkRenderState] = [],
-    dimsInactiveText: Bool = false
+    dimsInactiveText: Bool = false,
+    theme: LatticeTheme = LatticeTheme(id: .system)
   ) -> NSAttributedString {
-    let attributed = NSMutableAttributedString(string: text, attributes: baseTypingAttributes())
-    applyStyles(to: attributed, activeRanges: activeRanges, wikiLinkStates: wikiLinkStates)
+    let attributed = NSMutableAttributedString(string: text, attributes: baseTypingAttributes(theme: theme))
+    applyStyles(to: attributed, activeRanges: activeRanges, wikiLinkStates: wikiLinkStates, theme: theme)
     return attributed
   }
 
-  static func baseTypingAttributes() -> [NSAttributedString.Key: Any] {
+  static func baseTypingAttributes(theme: LatticeTheme = LatticeTheme(id: .system)) -> [NSAttributedString.Key: Any] {
     let paragraphStyle = NSMutableParagraphStyle()
     paragraphStyle.lineSpacing = 2
     paragraphStyle.paragraphSpacing = 6
     return [
       .font: UIFont.preferredFont(forTextStyle: .title3),
-      .foregroundColor: UIColor.label,
+      .foregroundColor: theme.uiColor(.primaryText),
       .paragraphStyle: paragraphStyle
     ]
   }
@@ -724,52 +749,57 @@ enum MarkdownAttributedRenderer {
   private static func applyStyles(
     to attributed: NSMutableAttributedString,
     activeRanges: [NSRange],
-    wikiLinkStates: [WikiLinkRenderState]
+    wikiLinkStates: [WikiLinkRenderState],
+    theme: LatticeTheme
   ) {
     for span in MarkdownStyler.spans(in: attributed.string) {
       guard NSMaxRange(span.range) <= attributed.length else {
         continue
       }
-      attributed.addAttributes(attributes(for: span), range: span.range)
+      attributed.addAttributes(attributes(for: span, theme: theme), range: span.range)
     }
-    applyWikiLinkStyles(to: attributed, activeRanges: activeRanges, states: wikiLinkStates)
-    hideLatticeMetadataComments(in: attributed)
+    applyWikiLinkStyles(to: attributed, activeRanges: activeRanges, states: wikiLinkStates, theme: theme)
+    hideLatticeMetadataComments(in: attributed, theme: theme)
   }
 
-  private static func attributes(for span: MarkdownStyleSpan) -> [NSAttributedString.Key: Any] {
+  private static func attributes(for span: MarkdownStyleSpan, theme: LatticeTheme) -> [NSAttributedString.Key: Any] {
     switch span.kind {
     case .heading:
       let sizes: [CGFloat] = [34, 30, 26, 23, 21, 20]
       let index = max(0, min((span.level ?? 1) - 1, sizes.count - 1))
       return [.font: UIFont.systemFont(ofSize: sizes[index], weight: .bold)]
     case .headingMarker:
-      return [.foregroundColor: UIColor.tertiaryLabel, .font: UIFont.monospacedSystemFont(ofSize: 16, weight: .regular)]
+      return [.foregroundColor: theme.uiColor(.tertiaryText), .font: UIFont.monospacedSystemFont(ofSize: 16, weight: .regular)]
     case .listMarker:
-      return [.foregroundColor: UIColor.tintColor, .font: UIFont.systemFont(ofSize: 21, weight: .semibold)]
+      return [.foregroundColor: theme.uiColor(.accent), .font: UIFont.systemFont(ofSize: 21, weight: .semibold)]
     case .taskCheckbox:
-      return [.foregroundColor: UIColor.tintColor, .font: UIFont.monospacedSystemFont(ofSize: 18, weight: .semibold)]
+      return [.foregroundColor: theme.uiColor(.accent), .font: UIFont.monospacedSystemFont(ofSize: 18, weight: .semibold)]
     case .completedTask:
-      return [.foregroundColor: UIColor.secondaryLabel, .strikethroughStyle: NSUnderlineStyle.single.rawValue]
+      return [.foregroundColor: theme.uiColor(.secondaryText), .strikethroughStyle: NSUnderlineStyle.single.rawValue]
     case .blockquote:
-      return [.foregroundColor: UIColor.secondaryLabel]
+      return [.foregroundColor: theme.uiColor(.quoteText)]
     case .thematicBreak:
       return thematicBreakAttributes()
     case .codeBlock:
-      return [.font: UIFont.monospacedSystemFont(ofSize: 18, weight: .regular), .backgroundColor: UIColor.secondarySystemBackground]
+      return [
+        .font: UIFont.monospacedSystemFont(ofSize: 18, weight: .regular),
+        .foregroundColor: theme.uiColor(.codeText),
+        .backgroundColor: theme.uiColor(.codeBackground)
+      ]
     case .inlineCode:
-      return [.font: UIFont.monospacedSystemFont(ofSize: 18, weight: .regular), .foregroundColor: UIColor.systemPink]
+      return [.font: UIFont.monospacedSystemFont(ofSize: 18, weight: .regular), .foregroundColor: theme.uiColor(.codeText)]
     case .bold:
       return [.font: UIFont.systemFont(ofSize: 21, weight: .semibold)]
     case .italic:
       return [.font: italicBodyFont()]
     case .link:
-      return linkAttributes(destination: span.linkDestination)
+      return linkAttributes(destination: span.linkDestination, theme: theme)
     }
   }
 
-  private static func linkAttributes(destination: String?) -> [NSAttributedString.Key: Any] {
+  private static func linkAttributes(destination: String?, theme: LatticeTheme) -> [NSAttributedString.Key: Any] {
     var attributes: [NSAttributedString.Key: Any] = [
-      .foregroundColor: UIColor.systemBlue,
+      .foregroundColor: theme.uiColor(.link),
       .underlineStyle: NSUnderlineStyle.single.rawValue
     ]
 
@@ -800,16 +830,16 @@ enum MarkdownAttributedRenderer {
     ]
   }
 
-  private static func wikiLinkAttributes(for status: WikiLinkRenderStatus) -> [NSAttributedString.Key: Any] {
+  private static func wikiLinkAttributes(for status: WikiLinkRenderStatus, theme: LatticeTheme) -> [NSAttributedString.Key: Any] {
     switch status {
     case .resolved:
-      return [.foregroundColor: UIColor.systemBlue, .underlineStyle: NSUnderlineStyle.single.rawValue]
+      return [.foregroundColor: theme.uiColor(.link), .underlineStyle: NSUnderlineStyle.single.rawValue]
     case .ambiguous:
-      return [.foregroundColor: UIColor.systemBlue.withAlphaComponent(0.85), .underlineStyle: NSUnderlineStyle.patternDot.rawValue | NSUnderlineStyle.single.rawValue]
+      return [.foregroundColor: theme.uiColor(.link).withAlphaComponent(0.85), .underlineStyle: NSUnderlineStyle.patternDot.rawValue | NSUnderlineStyle.single.rawValue]
     case .broken:
       return [
-        .foregroundColor: UIColor.secondaryLabel,
-        .underlineColor: UIColor.systemOrange.withAlphaComponent(0.65),
+        .foregroundColor: theme.uiColor(.secondaryText),
+        .underlineColor: theme.uiColor(.warning).withAlphaComponent(0.65),
         .underlineStyle: NSUnderlineStyle.patternDash.rawValue | NSUnderlineStyle.single.rawValue
       ]
     }
@@ -818,14 +848,15 @@ enum MarkdownAttributedRenderer {
   private static func applyWikiLinkStyles(
     to attributed: NSMutableAttributedString,
     activeRanges: [NSRange],
-    states: [WikiLinkRenderState]
+    states: [WikiLinkRenderState],
+    theme: LatticeTheme
   ) {
     for link in WikiLinkParser.links(in: attributed.string) where NSMaxRange(link.range) <= attributed.length {
       let status = states.first { $0.range == link.range }?.status ?? .resolved
-      attributed.addAttributes(wikiLinkAttributes(for: status), range: linkContentRange(for: link.range))
+      attributed.addAttributes(wikiLinkAttributes(for: status, theme: theme), range: linkContentRange(for: link.range))
 
       let delimiterAttributes = range(link.range, containsAnyActive: activeRanges)
-        ? wikiLinkDelimiterAttributes()
+        ? wikiLinkDelimiterAttributes(theme: theme)
         : hiddenWikiLinkDelimiterAttributes()
       for delimiterRange in linkDelimiterRanges(for: link.range) {
         attributed.addAttributes(delimiterAttributes, range: delimiterRange)
@@ -833,9 +864,9 @@ enum MarkdownAttributedRenderer {
     }
   }
 
-  private static func wikiLinkDelimiterAttributes() -> [NSAttributedString.Key: Any] {
+  private static func wikiLinkDelimiterAttributes(theme: LatticeTheme) -> [NSAttributedString.Key: Any] {
     [
-      .foregroundColor: UIColor.tertiaryLabel,
+      .foregroundColor: theme.uiColor(.tertiaryText),
       .font: UIFont.monospacedSystemFont(ofSize: 16, weight: .regular)
     ]
   }
@@ -874,7 +905,7 @@ enum MarkdownAttributedRenderer {
     ]
   }
 
-  private static func hideLatticeMetadataComments(in attributed: NSMutableAttributedString) {
+  private static func hideLatticeMetadataComments(in attributed: NSMutableAttributedString, theme _: LatticeTheme) {
     guard let regex = try? NSRegularExpression(pattern: #"<!--\s*lattice:[^>]*-->"#) else {
       return
     }
