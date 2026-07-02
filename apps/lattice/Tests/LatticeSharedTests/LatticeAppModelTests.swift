@@ -40,6 +40,27 @@ struct LatticeAppModelTests {
     #expect(model.text == "**Universal Note**\n\n# Later Heading\n\nBody")
   }
 
+  @Test("indents and outdents selected list items")
+  func indentsAndOutdentsSelectedListItems() throws {
+    let fixture = try Fixture()
+    defer { fixture.cleanup() }
+    let model = LatticeAppModel(
+      noteLibrary: fixture.library,
+      folderAccessStore: fixture.folderAccessStore
+    )
+
+    model.text = "- Parent\n- Child"
+    model.selectedRange = (model.text as NSString).range(of: "Child")
+
+    model.indentSelectedListItems()
+    #expect(model.text == "- Parent\n    - Child")
+    #expect((model.text as NSString).substring(with: model.selectedRange) == "Child")
+
+    model.outdentSelectedListItems()
+    #expect(model.text == "- Parent\n- Child")
+    #expect((model.text as NSString).substring(with: model.selectedRange) == "Child")
+  }
+
   @Test("inserts image attachments into a new note and autosaves matching paths")
   func insertsImageAttachmentIntoNewNote() throws {
     let fixture = try Fixture()
