@@ -215,16 +215,22 @@ private struct NoteEditorPane: View {
   private let maximumEditorWidth: CGFloat = 920
   private let editorHorizontalPadding: CGFloat = 18
 
+  @ViewBuilder
   var body: some View {
-    editorContent
+    let content = editorContent
       .frame(maxWidth: maximumEditorWidth, maxHeight: .infinity)
       .padding(.horizontal, editorHorizontalPadding)
       .frame(maxWidth: .infinity, maxHeight: .infinity)
       .background(theme.color(.appBackground))
+
+    #if os(iOS)
+    content
       .navigationTitle(model.selectedNote.map { model.displayTitle(for: $0) } ?? "New Note")
-      #if os(macOS)
+      .navigationBarTitleDisplayMode(.inline)
+    #else
+    content
+      .navigationTitle(model.selectedNote.map { model.displayTitle(for: $0) } ?? "New Note")
       .navigationSplitViewColumnWidth(min: 260, ideal: 720)
-      #endif
       .toolbar {
         ToolbarItemGroup(placement: .primaryAction) {
           Button {
@@ -244,7 +250,6 @@ private struct NoteEditorPane: View {
           .disabled(!model.canNavigateForward)
         }
 
-        #if os(macOS)
         ToolbarItem(placement: .primaryAction) {
           Menu {
             markdownButton(.heading, title: "Heading", systemImage: "textformat.size")
@@ -260,19 +265,8 @@ private struct NoteEditorPane: View {
           }
           .disabled(!model.hasFolder)
         }
-        #else
-        ToolbarItemGroup(placement: .primaryAction) {
-          markdownButton(.heading, title: "Heading", systemImage: "textformat.size")
-          markdownButton(.bold, title: "Bold", systemImage: "bold")
-          markdownButton(.italic, title: "Italic", systemImage: "italic")
-          markdownButton(.horizontalRule, title: "Horizontal Rule", systemImage: "minus")
-          markdownButton(.bulletList, title: "List", systemImage: "list.bullet")
-          markdownButton(.taskList, title: "Checkbox", systemImage: "checklist")
-          markdownButton(.code, title: "Code", systemImage: "chevron.left.forwardslash.chevron.right")
-          markdownButton(.link, title: "Link", systemImage: "link")
-        }
-        #endif
       }
+    #endif
   }
 
   private var editorContent: some View {
@@ -286,6 +280,7 @@ private struct NoteEditorPane: View {
         focusToken: model.editorFocusToken,
         isVimModeEnabled: model.isVimModeEnabled,
         showsRelativeLineNumbers: model.showsRelativeLineNumbers,
+        keyboardAccessoryActions: keyboardAccessoryActions,
         hasAutocompleteSuggestions: !model.wikiAutocompleteSuggestions.isEmpty,
         wikiLinkStates: model.wikiLinkStates,
         theme: theme,
@@ -328,6 +323,80 @@ private struct NoteEditorPane: View {
     }
     .frame(maxWidth: .infinity, maxHeight: .infinity)
   }
+
+  #if os(iOS)
+  private var keyboardAccessoryActions: [MarkdownKeyboardAccessoryAction] {
+    [
+      MarkdownKeyboardAccessoryAction(
+        id: "search",
+        title: "Search",
+        systemImage: "magnifyingglass"
+      ) {
+        model.showCommandPalette()
+      },
+      MarkdownKeyboardAccessoryAction(
+        id: "commands",
+        title: "Commands",
+        systemImage: "command",
+        menuChildren: [
+          markdownKeyboardAction(.heading, title: "Heading", systemImage: nil, displayTitle: "Aa"),
+          markdownKeyboardAction(.bold, title: "Bold", systemImage: "bold"),
+          markdownKeyboardAction(.italic, title: "Italic", systemImage: "italic"),
+          markdownKeyboardAction(.bulletList, title: "List", systemImage: "list.bullet"),
+          markdownKeyboardAction(.taskList, title: "Checklist", systemImage: "checklist"),
+          MarkdownKeyboardAccessoryAction(
+            id: "indent",
+            title: "Indent",
+            systemImage: "increase.indent",
+            isEnabled: model.hasFolder
+          ) {
+            model.indentSelectedListItems()
+          },
+          MarkdownKeyboardAccessoryAction(
+            id: "outdent",
+            title: "Outdent",
+            systemImage: "decrease.indent",
+            isEnabled: model.hasFolder
+          ) {
+            model.outdentSelectedListItems()
+          },
+          markdownKeyboardAction(.code, title: "Code", systemImage: "chevron.left.forwardslash.chevron.right"),
+          markdownKeyboardAction(.link, title: "Link", systemImage: "link"),
+          markdownKeyboardAction(.horizontalRule, title: "Divider", systemImage: "minus"),
+          MarkdownKeyboardAccessoryAction(
+            id: "settings",
+            title: "Settings",
+            systemImage: "gearshape"
+          ) {
+            model.showSettings()
+          }
+        ],
+        symbolPointSize: 17
+      )
+    ]
+  }
+
+  private func markdownKeyboardAction(
+    _ command: MarkdownCommand,
+    title: String,
+    systemImage: String?,
+    displayTitle: String? = nil
+  ) -> MarkdownKeyboardAccessoryAction {
+    MarkdownKeyboardAccessoryAction(
+      id: "markdown.\(command)",
+      title: title,
+      systemImage: systemImage,
+      displayTitle: displayTitle,
+      isEnabled: model.hasFolder
+    ) {
+      model.apply(command)
+    }
+  }
+  #else
+  private var keyboardAccessoryActions: [MarkdownKeyboardAccessoryAction] {
+    []
+  }
+  #endif
 
   private var statusBar: some View {
     HStack(spacing: 8) {

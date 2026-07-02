@@ -2,6 +2,63 @@ import LatticeEditor
 import LatticeCore
 import SwiftUI
 
+#if os(iOS)
+import UIKit
+#endif
+
+public struct MarkdownKeyboardAccessoryAction {
+  public let id: String
+  public let title: String
+  public let systemImage: String?
+  public let displayTitle: String?
+  public let isEnabled: Bool
+  public let menuChildren: [MarkdownKeyboardAccessoryAction]
+  public let symbolPointSize: CGFloat?
+  private let handler: @MainActor () -> Void
+
+  public init(
+    id: String,
+    title: String,
+    systemImage: String?,
+    displayTitle: String? = nil,
+    isEnabled: Bool = true,
+    menuChildren: [MarkdownKeyboardAccessoryAction] = [],
+    symbolPointSize: CGFloat? = nil,
+    handler: @escaping @MainActor () -> Void = {}
+  ) {
+    self.id = id
+    self.title = title
+    self.systemImage = systemImage
+    self.displayTitle = displayTitle
+    self.isEnabled = isEnabled
+    self.menuChildren = menuChildren
+    self.symbolPointSize = symbolPointSize
+    self.handler = handler
+  }
+
+  @MainActor
+  func perform() {
+    handler()
+  }
+}
+
+#if os(iOS)
+private extension MarkdownKeyboardAccessoryAction {
+  var menuImage: UIImage? {
+    guard let systemImage else {
+      return nil
+    }
+    return UIImage(systemName: systemImage)
+  }
+}
+
+private enum MarkdownKeyboardAccessoryHaptics {
+  static func perform() {
+    UIImpactFeedbackGenerator(style: .light).impactOccurred()
+  }
+}
+#endif
+
 #if os(macOS)
 import AppKit
 import QuartzCore
@@ -19,6 +76,7 @@ public struct MarkdownTextEditor: NSViewRepresentable {
   let timelineEntries: [TimelineEntry]
   let dimsInactiveParagraphs: Bool
   let caretAnchorFraction: CGFloat?
+  let keyboardAccessoryActions: [MarkdownKeyboardAccessoryAction]
   let hasAutocompleteSuggestions: Bool
   let wikiLinkStates: [WikiLinkRenderState]
   let theme: LatticeTheme
@@ -46,6 +104,7 @@ public struct MarkdownTextEditor: NSViewRepresentable {
     timelineEntries: [TimelineEntry] = [],
     dimsInactiveParagraphs: Bool = false,
     caretAnchorFraction: CGFloat? = nil,
+    keyboardAccessoryActions: [MarkdownKeyboardAccessoryAction] = [],
     hasAutocompleteSuggestions: Bool,
     wikiLinkStates: [WikiLinkRenderState],
     theme: LatticeTheme,
@@ -72,6 +131,7 @@ public struct MarkdownTextEditor: NSViewRepresentable {
     self.timelineEntries = timelineEntries
     self.dimsInactiveParagraphs = dimsInactiveParagraphs
     self.caretAnchorFraction = caretAnchorFraction
+    self.keyboardAccessoryActions = keyboardAccessoryActions
     self.hasAutocompleteSuggestions = hasAutocompleteSuggestions
     self.wikiLinkStates = wikiLinkStates
     self.theme = theme
@@ -1672,6 +1732,7 @@ public struct MarkdownTextEditor: UIViewRepresentable {
   let timelineEntries: [TimelineEntry]
   let dimsInactiveParagraphs: Bool
   let caretAnchorFraction: CGFloat?
+  let keyboardAccessoryActions: [MarkdownKeyboardAccessoryAction]
   let hasAutocompleteSuggestions: Bool
   let wikiLinkStates: [WikiLinkRenderState]
   let theme: LatticeTheme
@@ -1699,6 +1760,7 @@ public struct MarkdownTextEditor: UIViewRepresentable {
     timelineEntries: [TimelineEntry] = [],
     dimsInactiveParagraphs: Bool = false,
     caretAnchorFraction: CGFloat? = nil,
+    keyboardAccessoryActions: [MarkdownKeyboardAccessoryAction] = [],
     hasAutocompleteSuggestions: Bool,
     wikiLinkStates: [WikiLinkRenderState],
     theme: LatticeTheme,
@@ -1725,6 +1787,7 @@ public struct MarkdownTextEditor: UIViewRepresentable {
     self.timelineEntries = timelineEntries
     self.dimsInactiveParagraphs = dimsInactiveParagraphs
     self.caretAnchorFraction = caretAnchorFraction
+    self.keyboardAccessoryActions = keyboardAccessoryActions
     self.hasAutocompleteSuggestions = hasAutocompleteSuggestions
     self.wikiLinkStates = wikiLinkStates
     self.theme = theme
@@ -1747,8 +1810,10 @@ public struct MarkdownTextEditor: UIViewRepresentable {
   public func makeUIView(context: Context) -> UITextView {
     let textView = MarkdownUIKitTextView()
     textView.delegate = context.coordinator
+    textView.markdownCoordinator = context.coordinator
     textView.theme = theme
     textView.backgroundColor = theme.uiColor(.editorBackground)
+    textView.isOpaque = true
     textView.textColor = theme.uiColor(.primaryText)
     textView.tintColor = theme.uiColor(.accent)
     textView.isScrollEnabled = true
@@ -1767,11 +1832,15 @@ public struct MarkdownTextEditor: UIViewRepresentable {
     tapRecognizer.cancelsTouchesInView = true
     textView.addGestureRecognizer(tapRecognizer)
 
+    context.coordinator.updateKeyboardAccessory(for: textView)
+
     return textView
   }
 
   public func updateUIView(_ textView: UITextView, context: Context) {
     context.coordinator.parent = self
+    (textView as? MarkdownUIKitTextView)?.markdownCoordinator = context.coordinator
+    context.coordinator.updateKeyboardAccessory(for: textView)
     let clampedSelectedRange = clamped(selectedRange, length: (text as NSString).length)
     if textView.text != text
       || context.coordinator.lastRenderedFontFamily != fontFamily
@@ -1802,9 +1871,74 @@ public struct MarkdownTextEditor: UIViewRepresentable {
     var lastRenderedTheme = LatticeTheme(id: .system)
     private var isRendering = false
     private var activeWikiLinkRange: NSRange?
+    private var keyboardAccessoryView: MarkdownKeyboardAccessoryView?
+    private weak var accessoryTextView: UITextView?
 
     init(parent: MarkdownTextEditor) {
       self.parent = parent
+    }
+
+    func updateKeyboardAccessory(for textView: UITextView) {
+      accessoryTextView = textView
+      guard !parent.keyboardAccessoryActions.isEmpty else {
+        if textView.inputAccessoryView != nil {
+          textView.inputAccessoryView = nil
+          textView.reloadInputViews()
+        }
+        keyboardAccessoryView = nil
+        return
+      }
+
+      let accessoryView = keyboardAccessoryView ?? MarkdownKeyboardAccessoryView()
+      keyboardAccessoryView = accessoryView
+      accessoryView.configure(
+        actions: parent.keyboardAccessoryActions,
+        theme: parent.theme,
+        target: self,
+        action: #selector(handleKeyboardAccessoryButton(_:)),
+        dismissAction: #selector(dismissKeyboardAccessoryButton(_:))
+      )
+
+      if textView.inputAccessoryView !== accessoryView {
+        textView.inputAccessoryView = accessoryView
+        textView.reloadInputViews()
+      }
+    }
+
+    @objc private func handleKeyboardAccessoryButton(_ sender: MarkdownKeyboardAccessoryButton) {
+      guard
+        let id = sender.actionID,
+        let action = parent.keyboardAccessoryActions.first(where: { $0.id == id })
+      else {
+        return
+      }
+
+      MarkdownKeyboardAccessoryHaptics.perform()
+      performKeyboardAccessoryAction(action)
+    }
+
+    @objc private func dismissKeyboardAccessoryButton(_ sender: UIButton) {
+      MarkdownKeyboardAccessoryHaptics.perform()
+      accessoryTextView?.resignFirstResponder()
+    }
+
+    func performKeyboardAccessoryAction(_ action: MarkdownKeyboardAccessoryAction) {
+      switch action.id {
+      case "indent":
+        if let accessoryTextView,
+           applyMarkdownListIndentation(in: accessoryTextView, direction: .indent) {
+          return
+        }
+      case "outdent":
+        if let accessoryTextView,
+           applyMarkdownListIndentation(in: accessoryTextView, direction: .outdent) {
+          return
+        }
+      default:
+        break
+      }
+
+      action.perform()
     }
 
     public func textViewDidChange(_ textView: UITextView) {
@@ -1828,6 +1962,60 @@ public struct MarkdownTextEditor: UIViewRepresentable {
       if nextActiveWikiLinkRange != activeWikiLinkRange {
         render(textView.text, in: textView, preserving: clampedSelection)
       }
+    }
+
+    public func textView(
+      _ textView: UITextView,
+      shouldChangeTextIn range: NSRange,
+      replacementText text: String
+    ) -> Bool {
+      if text == "\t" {
+        return !applyMarkdownListIndentation(in: textView, direction: .indent)
+      }
+
+      guard text == "\n",
+            let result = MarkdownListContinuation.applyReturn(to: textView.text, selection: range)
+      else {
+        return true
+      }
+
+      textView.textStorage.replaceCharacters(in: result.replacementRange, with: result.replacement)
+      textView.selectedRange = result.selection
+      parent.text = textView.text
+      parent.selectedRange = textView.selectedRange
+      parent.onTextChange()
+      render(textView.text, in: textView, preserving: textView.selectedRange)
+      return false
+    }
+
+    enum IndentationDirection {
+      case indent
+      case outdent
+    }
+
+    func applyMarkdownListIndentation(
+      in textView: UITextView,
+      direction: IndentationDirection
+    ) -> Bool {
+      let result: MarkdownListIndentationResult?
+      switch direction {
+      case .indent:
+        result = MarkdownListIndentation.applyIndent(to: textView.text, selection: textView.selectedRange)
+      case .outdent:
+        result = MarkdownListIndentation.applyOutdent(to: textView.text, selection: textView.selectedRange)
+      }
+
+      guard let result else {
+        return false
+      }
+
+      textView.textStorage.replaceCharacters(in: result.replacementRange, with: result.replacement)
+      textView.selectedRange = result.selection
+      parent.text = textView.text
+      parent.selectedRange = textView.selectedRange
+      parent.onTextChange()
+      render(textView.text, in: textView, preserving: textView.selectedRange)
+      return true
     }
 
     public func gestureRecognizer(_ gestureRecognizer: UIGestureRecognizer, shouldReceive touch: UITouch) -> Bool {
@@ -1894,12 +2082,224 @@ public struct MarkdownTextEditor: UIViewRepresentable {
         fontFamily: parent.fontFamily,
         theme: parent.theme
       )
+      textView.setNeedsDisplay()
       lastRenderedFontFamily = parent.fontFamily
       lastRenderedWikiLinkStates = parent.wikiLinkStates
       lastRenderedTheme = parent.theme
       isRendering = false
     }
   }
+}
+
+private final class MarkdownKeyboardAccessoryView: UIInputView {
+  private let effectView = UIVisualEffectView(effect: UIBlurEffect(style: .systemMaterial))
+  private let leftButton = MarkdownKeyboardAccessoryButton(type: .system)
+  private let dismissButton = UIButton(type: .system)
+  private let rightButton = MarkdownKeyboardAccessoryButton(type: .system)
+
+  init() {
+    super.init(frame: CGRect(x: 0, y: 0, width: 0, height: 64), inputViewStyle: .keyboard)
+    allowsSelfSizing = true
+    autoresizingMask = [.flexibleWidth]
+    backgroundColor = .clear
+    setupView()
+  }
+
+  @available(*, unavailable)
+  required init?(coder: NSCoder) {
+    nil
+  }
+
+  override var intrinsicContentSize: CGSize {
+    CGSize(width: UIView.noIntrinsicMetric, height: 64)
+  }
+
+  func configure(
+    actions: [MarkdownKeyboardAccessoryAction],
+    theme: LatticeTheme,
+    target: Any?,
+    action: Selector,
+    dismissAction: Selector
+  ) {
+    configureActionButton(
+      leftButton,
+      action: actions.first,
+      theme: theme,
+      target: target,
+      selector: action
+    )
+    configureActionButton(
+      rightButton,
+      action: actions.dropFirst().last,
+      theme: theme,
+      target: target,
+      selector: action
+    )
+
+    configureDismissButton(theme: theme, target: target, action: dismissAction)
+    effectView.layer.borderColor = theme.uiColor(.separator).withAlphaComponent(0.55).cgColor
+  }
+
+  private func setupView() {
+    addSubview(effectView)
+    effectView.translatesAutoresizingMaskIntoConstraints = false
+    effectView.clipsToBounds = true
+    effectView.layer.cornerRadius = 24
+    effectView.layer.borderWidth = 1 / UIScreen.main.scale
+
+    let contentView = effectView.contentView
+    contentView.addSubview(leftButton)
+    contentView.addSubview(dismissButton)
+    contentView.addSubview(rightButton)
+
+    leftButton.translatesAutoresizingMaskIntoConstraints = false
+    dismissButton.translatesAutoresizingMaskIntoConstraints = false
+    rightButton.translatesAutoresizingMaskIntoConstraints = false
+    dismissButton.accessibilityLabel = "Dismiss Keyboard"
+
+    NSLayoutConstraint.activate([
+      effectView.leadingAnchor.constraint(equalTo: leadingAnchor, constant: 12),
+      effectView.trailingAnchor.constraint(equalTo: trailingAnchor, constant: -12),
+      effectView.topAnchor.constraint(equalTo: topAnchor, constant: 8),
+      effectView.bottomAnchor.constraint(equalTo: bottomAnchor, constant: -8),
+
+      leftButton.leadingAnchor.constraint(equalTo: contentView.leadingAnchor, constant: 20),
+      leftButton.centerYAnchor.constraint(equalTo: contentView.centerYAnchor),
+      leftButton.widthAnchor.constraint(equalToConstant: 48),
+      leftButton.heightAnchor.constraint(equalToConstant: 44),
+
+      dismissButton.centerXAnchor.constraint(equalTo: contentView.centerXAnchor),
+      dismissButton.centerYAnchor.constraint(equalTo: contentView.centerYAnchor),
+      dismissButton.widthAnchor.constraint(equalToConstant: 44),
+      dismissButton.heightAnchor.constraint(equalToConstant: 44),
+
+      rightButton.trailingAnchor.constraint(equalTo: contentView.trailingAnchor, constant: -20),
+      rightButton.centerYAnchor.constraint(equalTo: contentView.centerYAnchor),
+      rightButton.widthAnchor.constraint(equalToConstant: 48),
+      rightButton.heightAnchor.constraint(equalToConstant: 44)
+    ])
+  }
+
+  private func configureActionButton(
+    _ button: MarkdownKeyboardAccessoryButton,
+    action: MarkdownKeyboardAccessoryAction?,
+    theme: LatticeTheme,
+    target: Any?,
+    selector: Selector
+  ) {
+    guard let action else {
+      button.actionID = nil
+      button.isHidden = true
+      return
+    }
+
+    button.isHidden = false
+    button.actionID = action.id
+    button.configure(
+      action: action,
+      theme: theme,
+      target: target,
+      selector: selector
+    )
+  }
+
+  private func configureDismissButton(theme: LatticeTheme, target: Any?, action: Selector) {
+    var configuration = UIButton.Configuration.plain()
+    configuration.image = UIImage(systemName: "keyboard.chevron.compact.down")
+    configuration.baseForegroundColor = theme.uiColor(.primaryText)
+    configuration.cornerStyle = .capsule
+    dismissButton.configuration = configuration
+    dismissButton.removeTarget(nil, action: nil, for: .touchUpInside)
+    dismissButton.addTarget(target, action: action, for: .touchUpInside)
+  }
+}
+
+private final class MarkdownKeyboardAccessoryButton: UIButton {
+  var actionID: String?
+
+  func configure(
+    action: MarkdownKeyboardAccessoryAction,
+    theme: LatticeTheme,
+    target: Any?,
+    selector: Selector
+  ) {
+    var configuration = UIButton.Configuration.plain()
+    if let systemImage = action.systemImage {
+      configuration.image = UIImage(systemName: systemImage)
+      configuration.preferredSymbolConfigurationForImage = UIImage.SymbolConfiguration(
+        pointSize: action.symbolPointSize ?? 20,
+        weight: .semibold
+      )
+    } else {
+      configuration.title = action.displayTitle ?? action.title
+      configuration.titleTextAttributesTransformer = UIConfigurationTextAttributesTransformer { incoming in
+        var outgoing = incoming
+        outgoing.font = .systemFont(ofSize: 21, weight: .medium)
+        return outgoing
+      }
+    }
+    configuration.contentInsets = NSDirectionalEdgeInsets(top: 0, leading: 0, bottom: 0, trailing: 0)
+    configuration.baseForegroundColor = action.isEnabled
+      ? theme.uiColor(.primaryText)
+      : theme.uiColor(.tertiaryText)
+    configuration.cornerStyle = .capsule
+
+    self.configuration = configuration
+    configureInteraction(for: action, target: target, selector: selector)
+    titleLabel?.adjustsFontSizeToFitWidth = true
+    titleLabel?.lineBreakMode = .byClipping
+    titleLabel?.numberOfLines = 1
+    isEnabled = action.isEnabled && (action.menuChildren.isEmpty || action.menuChildren.contains(where: \.isEnabled))
+    accessibilityLabel = action.title
+  }
+
+  private func configureInteraction(
+    for action: MarkdownKeyboardAccessoryAction,
+    target: Any?,
+    selector: Selector
+  ) {
+    removeTarget(nil, action: nil, for: .touchUpInside)
+    removeAction(identifiedBy: .markdownKeyboardAccessoryMenuHaptic, for: .menuActionTriggered)
+
+    guard !action.menuChildren.isEmpty else {
+      menu = nil
+      showsMenuAsPrimaryAction = false
+      addTarget(target, action: selector, for: .touchUpInside)
+      return
+    }
+
+    showsMenuAsPrimaryAction = true
+    addAction(
+      UIAction(identifier: .markdownKeyboardAccessoryMenuHaptic) { _ in
+        MarkdownKeyboardAccessoryHaptics.perform()
+      },
+      for: .menuActionTriggered
+    )
+    menu = UIMenu(
+      title: "",
+      options: .displayInline,
+      children: action.menuChildren.map { child in
+        UIAction(
+          title: child.title,
+          image: child.menuImage,
+          attributes: child.isEnabled ? [] : [.disabled]
+        ) { _ in
+          Task { @MainActor in
+            MarkdownKeyboardAccessoryHaptics.perform()
+            if let coordinator = target as? MarkdownTextEditor.Coordinator {
+              coordinator.performKeyboardAccessoryAction(child)
+            } else {
+              child.perform()
+            }
+          }
+        }
+      }
+    )
+  }
+}
+
+private extension UIAction.Identifier {
+  static let markdownKeyboardAccessoryMenuHaptic = UIAction.Identifier("MarkdownKeyboardAccessoryMenuHaptic")
 }
 
 private extension UITextView {
@@ -1918,11 +2318,111 @@ private extension UITextView {
 }
 
 private final class MarkdownUIKitTextView: UITextView {
+  weak var markdownCoordinator: MarkdownTextEditor.Coordinator?
   var theme = LatticeTheme(id: .system)
 
+  override var keyCommands: [UIKeyCommand]? {
+    let indentCommand = UIKeyCommand(
+      input: "\t",
+      modifierFlags: UIKeyModifierFlags(),
+      action: #selector(handleIndentKeyCommand(_:))
+    )
+    indentCommand.discoverabilityTitle = "Indent List Item"
+    indentCommand.wantsPriorityOverSystemBehavior = true
+
+    let outdentCommand = UIKeyCommand(
+      input: "\t",
+      modifierFlags: .shift,
+      action: #selector(handleOutdentKeyCommand(_:))
+    )
+    outdentCommand.discoverabilityTitle = "Outdent List Item"
+    outdentCommand.wantsPriorityOverSystemBehavior = true
+
+    let markdownCommands = [indentCommand, outdentCommand]
+    return (super.keyCommands ?? []) + markdownCommands
+  }
+
+  @objc private func handleIndentKeyCommand(_ command: UIKeyCommand) {
+    guard markdownCoordinator?.applyMarkdownListIndentation(in: self, direction: .indent) != true else {
+      return
+    }
+
+    insertText("\t")
+  }
+
+  @objc private func handleOutdentKeyCommand(_ command: UIKeyCommand) {
+    _ = markdownCoordinator?.applyMarkdownListIndentation(in: self, direction: .outdent)
+  }
+
+  override func pressesBegan(_ presses: Set<UIPress>, with event: UIPressesEvent?) {
+    guard let tabPress = presses.first(where: { $0.key?.keyCode == .keyboardTab }) else {
+      super.pressesBegan(presses, with: event)
+      return
+    }
+
+    if tabPress.key?.modifierFlags.contains(.shift) == true {
+      guard markdownCoordinator?.applyMarkdownListIndentation(in: self, direction: .outdent) != true else {
+        return
+      }
+      super.pressesBegan(presses, with: event)
+      return
+    }
+
+    guard markdownCoordinator?.applyMarkdownListIndentation(in: self, direction: .indent) != true else {
+      return
+    }
+
+    insertText("\t")
+  }
+
   override func draw(_ rect: CGRect) {
+    theme.uiColor(.editorBackground).setFill()
+    UIRectFill(rect)
     super.draw(rect)
+    drawUnorderedListMarkers()
     drawThematicBreaks()
+  }
+
+  private func drawUnorderedListMarkers() {
+    guard let context = UIGraphicsGetCurrentContext() else {
+      return
+    }
+
+    let visibleBounds = bounds.inset(by: textContainerInset)
+    let visibleGlyphRange = layoutManager.glyphRange(
+      forBoundingRect: visibleBounds.offsetBy(dx: -textContainerInset.left, dy: -textContainerInset.top),
+      in: textContainer
+    )
+    let visibleCharacterRange = layoutManager.characterRange(
+      forGlyphRange: visibleGlyphRange,
+      actualGlyphRange: nil
+    )
+
+    textStorage.enumerateAttribute(.latticeUnorderedListMarker, in: visibleCharacterRange) { value, range, _ in
+      guard value as? Bool == true else {
+        return
+      }
+
+      let glyphRange = layoutManager.glyphRange(forCharacterRange: range, actualCharacterRange: nil)
+      guard glyphRange.length > 0 else {
+        return
+      }
+
+      let lineRect = layoutManager.lineFragmentUsedRect(forGlyphAt: glyphRange.location, effectiveRange: nil)
+      let nestingIndent = textStorage.attribute(.latticeUnorderedListIndent, at: range.location, effectiveRange: nil) as? CGFloat ?? 0
+      let markerRadius: CGFloat = 3.25
+      let markerX = textContainerInset.left + textContainer.lineFragmentPadding + 8 + nestingIndent
+      let markerY = textContainerInset.top + lineRect.midY
+      let markerRect = CGRect(
+        x: markerX - markerRadius,
+        y: markerY - markerRadius,
+        width: markerRadius * 2,
+        height: markerRadius * 2
+      )
+
+      context.setFillColor(theme.uiColor(.accent).cgColor)
+      context.fillEllipse(in: markerRect)
+    }
   }
 
   private func drawThematicBreaks() {

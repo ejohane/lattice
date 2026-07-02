@@ -665,6 +665,35 @@ public final class LatticeAppModel {
     editorFocusToken += 1
   }
 
+  public func indentSelectedListItems() {
+    applyListIndentation { body, selection in
+      MarkdownListIndentation.applyIndent(to: body, selection: selection)
+    }
+  }
+
+  public func outdentSelectedListItems() {
+    applyListIndentation { body, selection in
+      MarkdownListIndentation.applyOutdent(to: body, selection: selection)
+    }
+  }
+
+  private func applyListIndentation(
+    _ transform: (String, NSRange) -> MarkdownListIndentationResult?
+  ) {
+    guard let result = transform(text, selectedRange) else {
+      return
+    }
+
+    text = result.body
+    selectedRange = result.selection
+    vimStatusMessage = nil
+    scheduleAutosave()
+    refreshWikiLinkStates()
+    refreshImagePreviewStates()
+    updateWikiAutocomplete()
+    editorFocusToken += 1
+  }
+
   public func noteTextDidChange() {
     vimStatusMessage = nil
     scheduleAutosave()
