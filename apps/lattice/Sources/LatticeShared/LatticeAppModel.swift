@@ -95,7 +95,21 @@ public final class LatticeAppModel {
   }
 
   public var recommendedFolderURL: URL {
-    noteLibrary.suggestedNotesFolderURL
+    recommendedNotesFolder.url
+  }
+
+  public var recommendedNotesFolder: RecommendedNotesFolder {
+    noteLibrary.recommendedNotesFolder
+  }
+
+  public var isRecommendedFolderCloudBacked: Bool {
+    recommendedNotesFolder.isCloudBacked
+  }
+
+  public var recommendedFolderDescription: String {
+    isRecommendedFolderCloudBacked
+      ? "iCloud Drive"
+      : "Local fallback. Sign in to iCloud Drive to sync between devices."
   }
 
   public var canNavigateBack: Bool {
@@ -231,7 +245,11 @@ public final class LatticeAppModel {
 
   public func useRecommendedFolder() {
     do {
-      try activateFolder(recommendedFolderURL, saveBookmark: false)
+      let recommendation = recommendedNotesFolder
+      if recommendation.isCloudBacked {
+        try noteLibrary.migrateFallbackNotesToICloudIfNeeded(iCloudFolderURL: recommendation.url)
+      }
+      try activateFolder(recommendation.url, saveBookmark: false)
       restoreActiveNote()
     } catch {
       errorMessage = error.localizedDescription

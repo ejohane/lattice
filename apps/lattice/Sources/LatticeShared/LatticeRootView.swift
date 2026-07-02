@@ -670,7 +670,7 @@ private struct FolderSetupView: View {
         .foregroundStyle(.secondary)
       Text("Choose a notes folder")
         .font(.title2.weight(.semibold))
-      Text("Lattice writes ordinary Markdown files into a folder you control. Use the recommended location for iCloud Drive sync, or choose another folder.")
+      Text("Lattice writes ordinary Markdown files into a folder you control. Use the recommended iCloud Drive location to sync between devices, or choose another folder.")
         .font(.body)
         .foregroundStyle(.secondary)
         .multilineTextAlignment(.center)
@@ -679,10 +679,14 @@ private struct FolderSetupView: View {
         Button {
           model.useRecommendedFolder()
         } label: {
-          Label("Use Recommended Folder", systemImage: "icloud.and.arrow.up")
+          Label(model.isRecommendedFolderCloudBacked ? "Use iCloud Drive" : "Use Local Folder", systemImage: "icloud.and.arrow.up")
             .frame(minWidth: 240)
         }
         .buttonStyle(.borderedProminent)
+        Text(model.recommendedFolderDescription)
+          .font(.caption)
+          .foregroundStyle(model.isRecommendedFolderCloudBacked ? Color.secondary : Color.orange)
+          .multilineTextAlignment(.center)
         Text(model.recommendedFolderURL.path)
           .font(.caption)
           .foregroundStyle(.tertiary)
