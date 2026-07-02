@@ -15,6 +15,7 @@ public struct MarkdownTextEditor: NSViewRepresentable {
   let showsRelativeLineNumbers: Bool
   let hasAutocompleteSuggestions: Bool
   let wikiLinkStates: [WikiLinkRenderState]
+  let theme: LatticeTheme
   let onTextChange: () -> Void
   let onSelectionChange: () -> Void
   let onWikiLinkActivated: (Int) -> Void
@@ -33,6 +34,7 @@ public struct MarkdownTextEditor: NSViewRepresentable {
     showsRelativeLineNumbers: Bool,
     hasAutocompleteSuggestions: Bool,
     wikiLinkStates: [WikiLinkRenderState],
+    theme: LatticeTheme,
     onTextChange: @escaping () -> Void,
     onSelectionChange: @escaping () -> Void,
     onWikiLinkActivated: @escaping (Int) -> Void,
@@ -50,6 +52,7 @@ public struct MarkdownTextEditor: NSViewRepresentable {
     self.showsRelativeLineNumbers = showsRelativeLineNumbers
     self.hasAutocompleteSuggestions = hasAutocompleteSuggestions
     self.wikiLinkStates = wikiLinkStates
+    self.theme = theme
     self.onTextChange = onTextChange
     self.onSelectionChange = onSelectionChange
     self.onWikiLinkActivated = onWikiLinkActivated
@@ -80,9 +83,10 @@ public struct MarkdownTextEditor: NSViewRepresentable {
     textView.isAutomaticDashSubstitutionEnabled = false
     textView.isAutomaticQuoteSubstitutionEnabled = false
     textView.isAutomaticTextReplacementEnabled = false
+    textView.theme = theme
     textView.backgroundColor = .clear
-    textView.textColor = .labelColor
-    textView.insertionPointColor = .controlAccentColor
+    textView.textColor = theme.nsColor(.primaryText)
+    textView.insertionPointColor = theme.nsColor(.accent)
     textView.font = MarkdownAttributedRenderer.bodyFont(size: fontSize)
     textView.textContainerInset = NSSize(width: 36, height: 34)
     textView.minSize = NSSize(width: 0, height: 0)
@@ -109,9 +113,13 @@ public struct MarkdownTextEditor: NSViewRepresentable {
     }
     if textView.string != text
       || context.coordinator.lastRenderedFontSize != fontSize
-      || context.coordinator.lastRenderedWikiLinkStates != wikiLinkStates {
+      || context.coordinator.lastRenderedWikiLinkStates != wikiLinkStates
+      || context.coordinator.lastRenderedTheme != theme {
       context.coordinator.render(text, in: textView, preserving: selectedRange)
     }
+    textView.theme = theme
+    textView.textColor = theme.nsColor(.primaryText)
+    textView.insertionPointColor = theme.nsColor(.accent)
     textView.configureLineNumberRuler(isVisible: showsRelativeLineNumbers)
     textView.needsDisplay = true
     if context.coordinator.lastFocusToken != focusToken {
@@ -129,6 +137,7 @@ public struct MarkdownTextEditor: NSViewRepresentable {
     var lastFocusToken = 0
     var lastRenderedFontSize: CGFloat?
     var lastRenderedWikiLinkStates: [WikiLinkRenderState] = []
+    var lastRenderedTheme = LatticeTheme(id: .system)
     private var isRendering = false
 
     init(parent: MarkdownTextEditor) {
@@ -164,14 +173,16 @@ public struct MarkdownTextEditor: NSViewRepresentable {
         text,
         fontSize: parent.fontSize,
         activeRanges: [selection],
-        wikiLinkStates: parent.wikiLinkStates
+        wikiLinkStates: parent.wikiLinkStates,
+        theme: parent.theme
       )
       textView.textStorage?.setAttributedString(attributed)
       textView.setSelectedRange(clamped(selection, length: (text as NSString).length))
-      textView.typingAttributes = MarkdownAttributedRenderer.baseTypingAttributes(fontSize: parent.fontSize)
+      textView.typingAttributes = MarkdownAttributedRenderer.baseTypingAttributes(fontSize: parent.fontSize, theme: parent.theme)
       (textView as? MarkdownTextView)?.invalidateLineNumberRuler()
       lastRenderedFontSize = parent.fontSize
       lastRenderedWikiLinkStates = parent.wikiLinkStates
+      lastRenderedTheme = parent.theme
       isRendering = false
     }
   }
@@ -179,6 +190,7 @@ public struct MarkdownTextEditor: NSViewRepresentable {
 
 private final class MarkdownTextView: NSTextView {
   weak var coordinator: MarkdownTextEditor.Coordinator?
+  var theme = LatticeTheme(id: .system)
 
   override func keyDown(with event: NSEvent) {
     guard let coordinator else {
@@ -500,7 +512,7 @@ private final class MarkdownTextView: NSTextView {
       path.lineWidth = 1
       path.move(to: NSPoint(x: textContainerOrigin.x, y: pixelAlignedY))
       path.line(to: NSPoint(x: textContainerOrigin.x + ruleWidth, y: pixelAlignedY))
-      NSColor.separatorColor.withAlphaComponent(0.85).setStroke()
+      theme.nsColor(.separator).withAlphaComponent(0.85).setStroke()
       path.stroke()
     }
   }
@@ -549,15 +561,15 @@ private final class RelativeLineNumberRulerView: NSRulerView {
     layoutManager.ensureLayout(for: textContainer)
     let attributes: [NSAttributedString.Key: Any] = [
       .font: NSFont.monospacedDigitSystemFont(ofSize: 11, weight: .regular),
-      .foregroundColor: NSColor.secondaryLabelColor
+      .foregroundColor: textView.theme.nsColor(.secondaryText)
     ]
     let activeAttributes: [NSAttributedString.Key: Any] = [
       .font: NSFont.monospacedDigitSystemFont(ofSize: 11, weight: .medium),
-      .foregroundColor: NSColor.labelColor
+      .foregroundColor: textView.theme.nsColor(.primaryText)
     ]
     let normalModeActiveAttributes: [NSAttributedString.Key: Any] = [
       .font: NSFont.monospacedDigitSystemFont(ofSize: 11, weight: .semibold),
-      .foregroundColor: NSColor.controlAccentColor
+      .foregroundColor: textView.theme.nsColor(.accent)
     ]
     let showsNormalModeIndicator = textView.showsVimNormalModeIndicator
 
@@ -714,6 +726,7 @@ public struct MarkdownTextEditor: UIViewRepresentable {
   let showsRelativeLineNumbers: Bool
   let hasAutocompleteSuggestions: Bool
   let wikiLinkStates: [WikiLinkRenderState]
+  let theme: LatticeTheme
   let onTextChange: () -> Void
   let onSelectionChange: () -> Void
   let onWikiLinkActivated: (Int) -> Void
@@ -732,6 +745,7 @@ public struct MarkdownTextEditor: UIViewRepresentable {
     showsRelativeLineNumbers: Bool,
     hasAutocompleteSuggestions: Bool,
     wikiLinkStates: [WikiLinkRenderState],
+    theme: LatticeTheme,
     onTextChange: @escaping () -> Void,
     onSelectionChange: @escaping () -> Void,
     onWikiLinkActivated: @escaping (Int) -> Void,
@@ -749,6 +763,7 @@ public struct MarkdownTextEditor: UIViewRepresentable {
     self.showsRelativeLineNumbers = showsRelativeLineNumbers
     self.hasAutocompleteSuggestions = hasAutocompleteSuggestions
     self.wikiLinkStates = wikiLinkStates
+    self.theme = theme
     self.onTextChange = onTextChange
     self.onSelectionChange = onSelectionChange
     self.onWikiLinkActivated = onWikiLinkActivated
@@ -765,7 +780,10 @@ public struct MarkdownTextEditor: UIViewRepresentable {
   public func makeUIView(context: Context) -> UITextView {
     let textView = MarkdownUIKitTextView()
     textView.delegate = context.coordinator
+    textView.theme = theme
     textView.backgroundColor = .clear
+    textView.textColor = theme.uiColor(.primaryText)
+    textView.tintColor = theme.uiColor(.accent)
     textView.isScrollEnabled = true
     textView.alwaysBounceVertical = true
     textView.keyboardDismissMode = .interactive
@@ -787,9 +805,14 @@ public struct MarkdownTextEditor: UIViewRepresentable {
 
   public func updateUIView(_ textView: UITextView, context: Context) {
     context.coordinator.parent = self
-    if textView.text != text || context.coordinator.lastRenderedWikiLinkStates != wikiLinkStates {
+    if textView.text != text
+      || context.coordinator.lastRenderedWikiLinkStates != wikiLinkStates
+      || context.coordinator.lastRenderedTheme != theme {
       context.coordinator.render(text, in: textView, preserving: selectedRange)
     }
+    (textView as? MarkdownUIKitTextView)?.theme = theme
+    textView.textColor = theme.uiColor(.primaryText)
+    textView.tintColor = theme.uiColor(.accent)
     if context.coordinator.lastFocusToken != focusToken {
       context.coordinator.lastFocusToken = focusToken
       DispatchQueue.main.async {
@@ -803,6 +826,7 @@ public struct MarkdownTextEditor: UIViewRepresentable {
     var parent: MarkdownTextEditor
     var lastFocusToken = 0
     var lastRenderedWikiLinkStates: [WikiLinkRenderState] = []
+    var lastRenderedTheme = LatticeTheme(id: .system)
     private var isRendering = false
     private var activeWikiLinkRange: NSRange?
 
@@ -887,11 +911,13 @@ public struct MarkdownTextEditor: UIViewRepresentable {
       textView.attributedText = MarkdownAttributedRenderer.render(
         text,
         activeRanges: [clampedSelection],
-        wikiLinkStates: parent.wikiLinkStates
+        wikiLinkStates: parent.wikiLinkStates,
+        theme: parent.theme
       )
       textView.selectedRange = clampedSelection
-      textView.typingAttributes = MarkdownAttributedRenderer.baseTypingAttributes()
+      textView.typingAttributes = MarkdownAttributedRenderer.baseTypingAttributes(theme: parent.theme)
       lastRenderedWikiLinkStates = parent.wikiLinkStates
+      lastRenderedTheme = parent.theme
       isRendering = false
     }
   }
@@ -913,6 +939,8 @@ private extension UITextView {
 }
 
 private final class MarkdownUIKitTextView: UITextView {
+  var theme = LatticeTheme(id: .system)
+
   override func draw(_ rect: CGRect) {
     super.draw(rect)
     drawThematicBreaks()
@@ -947,7 +975,7 @@ private final class MarkdownUIKitTextView: UITextView {
       let y = textContainerInset.top + lineRect.midY
       let startX = textContainerInset.left + textContainer.lineFragmentPadding
       let endX = bounds.width - textContainerInset.right - textContainer.lineFragmentPadding
-      context.setStrokeColor(UIColor.separator.withAlphaComponent(0.85).cgColor)
+      context.setStrokeColor(theme.uiColor(.separator).withAlphaComponent(0.85).cgColor)
       context.setLineWidth(1 / UIScreen.main.scale)
       context.move(to: CGPoint(x: startX, y: y))
       context.addLine(to: CGPoint(x: endX, y: y))

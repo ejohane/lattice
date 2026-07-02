@@ -304,5 +304,23 @@ struct MarkdownAttributedRendererTests {
     #expect(!notBoldFont.fontDescriptor.symbolicTraits.contains(.bold))
     #expect(boldFont.fontDescriptor.symbolicTraits.contains(.bold))
   }
+
+  @Test("uses selected theme colors for markdown syntax")
+  func usesSelectedThemeColorsForMarkdownSyntax() {
+    let theme = LatticeTheme(id: .solarizedDark)
+    let text = "`code` [link](https://example.com)"
+    let attributed = MarkdownAttributedRenderer.render(text, theme: theme)
+    let string = attributed.string as NSString
+    let codeRange = string.range(of: "code")
+    let linkRange = string.range(of: "link")
+
+    let codeColor = attributed.attribute(.foregroundColor, at: codeRange.location, effectiveRange: nil) as? NSColor
+    let codeBackground = attributed.attribute(.backgroundColor, at: codeRange.location, effectiveRange: nil) as? NSColor
+    let linkColor = attributed.attribute(.foregroundColor, at: linkRange.location, effectiveRange: nil) as? NSColor
+
+    #expect(codeColor == theme.nsColor(.codeText))
+    #expect(codeBackground == theme.nsColor(.codeBackground).withAlphaComponent(0.8))
+    #expect(linkColor == theme.nsColor(.link))
+  }
 }
 #endif
