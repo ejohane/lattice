@@ -733,6 +733,15 @@ public final class LatticeAppModel {
     }
   }
 
+  public func insertImageAttachmentFiles(_ urls: [URL]) {
+    let imports = urls.compactMap(Self.imageAttachmentImport(fromFileURL:))
+    guard !imports.isEmpty else {
+      errorMessage = "Choose a PNG, JPEG, GIF, HEIC, TIFF, or WebP image."
+      return
+    }
+    insertImageAttachments(imports)
+  }
+
   public func resizeImageAttachment(lineLocation: Int, width: Double) {
     let clampedWidth = min(2400, max(96, width.rounded()))
     guard let link = MarkdownImageParser.links(in: text).first(where: { $0.lineRange.location == lineLocation }) else {
@@ -1892,6 +1901,20 @@ public final class LatticeAppModel {
     text
       .replacingOccurrences(of: "[", with: "\\[")
       .replacingOccurrences(of: "]", with: "\\]")
+  }
+
+  private static func imageAttachmentImport(fromFileURL url: URL) -> ImageAttachmentImport? {
+    let supportedExtensions = Set(["png", "jpg", "jpeg", "gif", "heic", "tif", "tiff", "webp"])
+    let fileExtension = url.pathExtension.lowercased()
+    guard supportedExtensions.contains(fileExtension),
+          let data = try? Data(contentsOf: url) else {
+      return nil
+    }
+    return ImageAttachmentImport(
+      data: data,
+      suggestedFilename: url.lastPathComponent,
+      preferredExtension: fileExtension
+    )
   }
 
   private func resolvedLocalImageURL(

@@ -4,6 +4,7 @@ import SwiftUI
 
 #if os(iOS)
 import UIKit
+import UniformTypeIdentifiers
 #endif
 
 public struct MarkdownKeyboardAccessoryAction {
@@ -1822,6 +1823,7 @@ public struct MarkdownTextEditor: UIViewRepresentable {
     textView.smartDashesType = .no
     textView.smartQuotesType = .no
     textView.accessibilityIdentifier = "noteEditor"
+    textView.addInteraction(UIDropInteraction(delegate: context.coordinator))
 
     let tapRecognizer = UITapGestureRecognizer(target: context.coordinator, action: #selector(Coordinator.handleTap(_:)))
     tapRecognizer.delegate = context.coordinator
@@ -1842,7 +1844,8 @@ public struct MarkdownTextEditor: UIViewRepresentable {
       || context.coordinator.lastRenderedFontFamily != fontFamily
       || context.coordinator.lastRenderedWikiLinkStates != wikiLinkStates
       || context.coordinator.lastRenderedDimsInactiveParagraphs != dimsInactiveParagraphs
-      || context.coordinator.lastRenderedTheme != theme {
+      || context.coordinator.lastRenderedTheme != theme
+      || context.coordinator.lastRenderedImagePreviewStates != imagePreviewStates {
       context.coordinator.render(text, in: textView, preserving: clampedSelectedRange)
     } else if textView.selectedRange != clampedSelectedRange {
       context.coordinator.render(text, in: textView, preserving: clampedSelectedRange)
@@ -1859,17 +1862,28 @@ public struct MarkdownTextEditor: UIViewRepresentable {
   }
 
   @MainActor
-  public final class Coordinator: NSObject, UITextViewDelegate, UIGestureRecognizerDelegate {
+  public final class Coordinator: NSObject, UITextViewDelegate, UIGestureRecognizerDelegate, UIDropInteractionDelegate {
     var parent: MarkdownTextEditor
     var lastFocusToken = 0
     var lastRenderedFontFamily: EditorFontFamily?
     var lastRenderedWikiLinkStates: [WikiLinkRenderState] = []
     var lastRenderedDimsInactiveParagraphs = false
     var lastRenderedTheme = LatticeTheme(id: .system)
+    var lastRenderedImagePreviewStates: [MarkdownImageRenderState] = []
     private var isRendering = false
     private var activeWikiLinkRange: NSRange?
     private var keyboardAccessoryView: MarkdownKeyboardAccessoryView?
     private weak var accessoryTextView: UITextView?
+
+    private static let imageTypeIdentifiers = [
+      UTType.image.identifier,
+      UTType.png.identifier,
+      UTType.jpeg.identifier,
+      UTType.heic.identifier,
+      UTType.gif.identifier,
+      UTType.tiff.identifier,
+      "org.webmproject.webp"
+    ]
 
     init(parent: MarkdownTextEditor) {
       self.parent = parent
@@ -2089,7 +2103,151 @@ public struct MarkdownTextEditor: UIViewRepresentable {
       lastRenderedWikiLinkStates = parent.wikiLinkStates
       lastRenderedDimsInactiveParagraphs = parent.dimsInactiveParagraphs
       lastRenderedTheme = parent.theme
+      lastRenderedImagePreviewStates = parent.imagePreviewStates
       isRendering = false
+    }
+
+    public func dropInteraction(_ interaction: UIDropInteraction, canHandle session: UIDropSession) -> Bool {
+      session.hasItemsConforming(toTypeIdentifiers: Self.imageTypeIdentifiers)
+    }
+
+    public func dropInteraction(_ interaction: UIDropInteraction, sessionDidUpdate session: UIDropSession) -> UIDropProposal {
+      UIDropProposal(operation: .copy)
+    }
+
+    public func dropInteraction(_ interaction: UIDropInteraction, performDrop session: UIDropSession) {
+      guard let textView = interaction.view as? UITextView else {
+        return
+      }
+
+      let location = session.location(in: textView)
+      if let position = textView.closestPosition(to: location) {
+        let index = textView.offset(from: textView.beginningOfDocument, to: position)
+        if index >= 0 {
+          let clampedLocation = min(index, (textView.text as NSString).length)
+          textView.selectedRange = NSRange(location: clampedLocation, length: 0)
+          parent.selectedRange = textView.selectedRange
+        }
+      }
+
+      importImages(from: session.items.map(\.itemProvider))
+    }
+
+    func importImages(from pasteboard: UIPasteboard) -> Bool {
+      if let image = pasteboard.image,
+         let pngData = image.pngData() {
+        parent.onImageAttachmentsImported([
+          ImageAttachmentImport(data: pngData, suggestedFilename: "screenshot.png", preferredExtension: "png")
+        ])
+        return true
+      }
+
+      let providers = pasteboard.itemProviders.filter(Self.canImportImage(from:))
+      guard !providers.isEmpty else {
+        return false
+      }
+      importImages(from: providers)
+      return true
+    }
+
+    private func importImages(from itemProviders: [NSItemProvider]) {
+      let providers = itemProviders.filter(Self.canImportImage(from:))
+      guard !providers.isEmpty else {
+        return
+      }
+      loadImageImports(from: providers, at: 0, imports: [])
+    }
+
+    private func loadImageImports(
+      from providers: [NSItemProvider],
+      at index: Int,
+      imports: [ImageAttachmentImport]
+    ) {
+      guard index < providers.count else {
+        guard !imports.isEmpty else {
+          return
+        }
+        parent.onImageAttachmentsImported(imports)
+        return
+      }
+
+      let provider = providers[index]
+      Self.loadImageImport(from: provider) { [weak self] imageImport in
+        Task { @MainActor in
+          guard let self else {
+            return
+          }
+          var nextImports = imports
+          if let imageImport {
+            nextImports.append(imageImport)
+          }
+          self.loadImageImports(from: providers, at: index + 1, imports: nextImports)
+        }
+      }
+    }
+
+    private static func canImportImage(from provider: NSItemProvider) -> Bool {
+      provider.canLoadObject(ofClass: UIImage.self)
+        || imageTypeIdentifiers.contains { provider.hasItemConformingToTypeIdentifier($0) }
+    }
+
+    private static func loadImageImport(
+      from provider: NSItemProvider,
+      completion: @escaping (ImageAttachmentImport?) -> Void
+    ) {
+      if provider.hasItemConformingToTypeIdentifier(UTType.image.identifier) {
+        provider.loadFileRepresentation(forTypeIdentifier: UTType.image.identifier) { url, _ in
+          if let url,
+             let imageImport = imageImport(fromFileURL: url, suggestedFilename: provider.suggestedName) {
+            completion(imageImport)
+            return
+          }
+
+          loadImageObject(from: provider, completion: completion)
+        }
+        return
+      }
+
+      loadImageObject(from: provider, completion: completion)
+    }
+
+    private static func loadImageObject(
+      from provider: NSItemProvider,
+      completion: @escaping (ImageAttachmentImport?) -> Void
+    ) {
+      guard provider.canLoadObject(ofClass: UIImage.self) else {
+        completion(nil)
+        return
+      }
+
+      provider.loadObject(ofClass: UIImage.self) { object, _ in
+        guard let image = object as? UIImage,
+              let pngData = image.pngData()
+        else {
+          completion(nil)
+          return
+        }
+        completion(ImageAttachmentImport(
+          data: pngData,
+          suggestedFilename: provider.suggestedName ?? "screenshot.png",
+          preferredExtension: "png"
+        ))
+      }
+    }
+
+    private static func imageImport(fromFileURL url: URL, suggestedFilename: String?) -> ImageAttachmentImport? {
+      let supportedExtensions = Set(["png", "jpg", "jpeg", "gif", "heic", "tif", "tiff", "webp"])
+      let suggestedExtension = suggestedFilename.map { URL(fileURLWithPath: $0).pathExtension.lowercased() }
+      let fileExtension = url.pathExtension.lowercased()
+      let preferredExtension = supportedExtensions.contains(fileExtension) ? fileExtension : suggestedExtension
+      guard let data = try? Data(contentsOf: url) else {
+        return nil
+      }
+      return ImageAttachmentImport(
+        data: data,
+        suggestedFilename: suggestedFilename ?? url.lastPathComponent,
+        preferredExtension: preferredExtension
+      )
     }
 
     private static func lineRange(containing selection: NSRange, in text: String) -> NSRange {
@@ -2364,6 +2522,14 @@ private final class MarkdownUIKitTextView: UITextView {
 
   @objc private func handleOutdentKeyCommand(_ command: UIKeyCommand) {
     _ = markdownCoordinator?.applyMarkdownListIndentation(in: self, direction: .outdent)
+  }
+
+  override func paste(_ sender: Any?) {
+    if markdownCoordinator?.importImages(from: .general) == true {
+      return
+    }
+
+    super.paste(sender)
   }
 
   override func pressesBegan(_ presses: Set<UIPress>, with event: UIPressesEvent?) {
