@@ -4,6 +4,10 @@ import LatticeEditor
 import SwiftUI
 import UniformTypeIdentifiers
 
+#if os(iOS)
+import PhotosUI
+#endif
+
 public struct LatticeRootView: View {
   @Bindable private var model: LatticeAppModel
   private let commandPalettePlatformCommands: @MainActor () -> [CommandPaletteCommand]
@@ -214,6 +218,10 @@ private struct NoteEditorPane: View {
   @Environment(\.latticeTheme) private var theme
   private let maximumEditorWidth: CGFloat = 920
   private let editorHorizontalPadding: CGFloat = 18
+  #if os(iOS)
+  @State private var isShowingPhotoPicker = false
+  @State private var selectedPhotoItem: PhotosPickerItem?
+  #endif
 
   @ViewBuilder
   var body: some View {
@@ -227,6 +235,14 @@ private struct NoteEditorPane: View {
     content
       .navigationTitle(model.selectedNote.map { model.displayTitle(for: $0) } ?? "New Note")
       .navigationBarTitleDisplayMode(.inline)
+      .photosPicker(
+        isPresented: $isShowingPhotoPicker,
+        selection: $selectedPhotoItem,
+        matching: .images
+      )
+      .onChange(of: selectedPhotoItem) { _, item in
+        importSelectedPhoto(item)
+      }
     #else
     content
       .navigationTitle(model.selectedNote.map { model.displayTitle(for: $0) } ?? "New Note")
@@ -364,6 +380,14 @@ private struct NoteEditorPane: View {
           markdownKeyboardAction(.link, title: "Link", systemImage: "link"),
           markdownKeyboardAction(.horizontalRule, title: "Divider", systemImage: "minus"),
           MarkdownKeyboardAccessoryAction(
+            id: "attach-photo",
+            title: "Add Attachment",
+            systemImage: "plus",
+            isEnabled: model.hasFolder
+          ) {
+            isShowingPhotoPicker = true
+          },
+          MarkdownKeyboardAccessoryAction(
             id: "settings",
             title: "Settings",
             systemImage: "gearshape"
@@ -391,6 +415,39 @@ private struct NoteEditorPane: View {
     ) {
       model.apply(command)
     }
+  }
+
+  private func importSelectedPhoto(_ item: PhotosPickerItem?) {
+    guard let item else {
+      return
+    }
+
+    Task { @MainActor in
+      defer {
+        selectedPhotoItem = nil
+      }
+
+      do {
+        guard let data = try await item.loadTransferable(type: Data.self) else {
+          return
+        }
+        let fileExtension = Self.imageFileExtension(for: item)
+        model.insertImageAttachments([
+          ImageAttachmentImport(
+            data: data,
+            suggestedFilename: "attachment.\(fileExtension)",
+            preferredExtension: fileExtension
+          )
+        ])
+      } catch {
+        model.errorMessage = error.localizedDescription
+      }
+    }
+  }
+
+  private static func imageFileExtension(for item: PhotosPickerItem) -> String {
+    let imageType = item.supportedContentTypes.first { $0.conforms(to: .image) }
+    return imageType?.preferredFilenameExtension?.lowercased() ?? "png"
   }
   #else
   private var keyboardAccessoryActions: [MarkdownKeyboardAccessoryAction] {

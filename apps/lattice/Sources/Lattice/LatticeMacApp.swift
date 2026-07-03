@@ -110,6 +110,14 @@ struct LatticeMacApp: App {
         .keyboardShortcut("s", modifiers: [.command, .option])
       }
       CommandMenu("Editor") {
+        Button("Add Attachment...") {
+          showMainWindow()
+          chooseImageAttachments()
+        }
+        .disabled(!model.hasFolder)
+
+        Divider()
+
         Button("Increase Font Size") {
           model.increaseEditorFontSize()
         }
@@ -184,6 +192,16 @@ struct LatticeMacApp: App {
   private var commandPalettePlatformCommands: [CommandPaletteCommand] {
     [
       CommandPaletteCommand(
+        id: "mac.addAttachment",
+        title: "Add Attachment",
+        subtitle: "Choose an image to attach to the current note",
+        systemImage: "plus",
+        isEnabled: model.hasFolder
+      ) {
+        showMainWindow()
+        chooseImageAttachments()
+      },
+      CommandPaletteCommand(
         id: "mac.checkForUpdates",
         title: "Check for Updates",
         subtitle: appDelegate.canCheckForUpdates
@@ -199,6 +217,20 @@ struct LatticeMacApp: App {
         }
       }
     ]
+  }
+
+  private func chooseImageAttachments() {
+    let panel = NSOpenPanel()
+    panel.allowedContentTypes = [.png, .jpeg, .gif, .heic, .tiff, .webP]
+    panel.allowsMultipleSelection = true
+    panel.canChooseDirectories = false
+    panel.canChooseFiles = true
+    panel.title = "Add Attachment"
+    panel.prompt = "Attach"
+
+    if panel.runModal() == .OK {
+      model.insertImageAttachmentFiles(panel.urls)
+    }
   }
 }
 
