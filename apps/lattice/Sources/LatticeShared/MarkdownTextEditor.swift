@@ -2333,6 +2333,14 @@ private final class MarkdownUIKitTextView: UITextView {
   weak var markdownCoordinator: MarkdownTextEditor.Coordinator?
   var theme = LatticeTheme(id: .system)
 
+  override var bounds: CGRect {
+    didSet {
+      if oldValue.origin != bounds.origin {
+        setNeedsDisplay()
+      }
+    }
+  }
+
   override var keyCommands: [UIKeyCommand]? {
     let indentCommand = UIKeyCommand(
       input: "\t",
@@ -2400,9 +2408,10 @@ private final class MarkdownUIKitTextView: UITextView {
       return
     }
 
-    let visibleBounds = bounds.inset(by: textContainerInset)
+    let visibleBounds = visibleTextContainerRect
+    let textContainerOrigin = textContainerDrawingOrigin
     let visibleGlyphRange = layoutManager.glyphRange(
-      forBoundingRect: visibleBounds.offsetBy(dx: -textContainerInset.left, dy: -textContainerInset.top),
+      forBoundingRect: visibleBounds,
       in: textContainer
     )
     let visibleCharacterRange = layoutManager.characterRange(
@@ -2423,8 +2432,8 @@ private final class MarkdownUIKitTextView: UITextView {
       let lineRect = layoutManager.lineFragmentUsedRect(forGlyphAt: glyphRange.location, effectiveRange: nil)
       let nestingIndent = textStorage.attribute(.latticeUnorderedListIndent, at: range.location, effectiveRange: nil) as? CGFloat ?? 0
       let markerRadius: CGFloat = 3.25
-      let markerX = textContainerInset.left + textContainer.lineFragmentPadding + 8 + nestingIndent
-      let markerY = textContainerInset.top + lineRect.midY
+      let markerX = textContainerOrigin.x + textContainer.lineFragmentPadding + 8 + nestingIndent
+      let markerY = textContainerOrigin.y + lineRect.midY
       let markerRect = CGRect(
         x: markerX - markerRadius,
         y: markerY - markerRadius,
@@ -2442,9 +2451,10 @@ private final class MarkdownUIKitTextView: UITextView {
       return
     }
 
-    let visibleBounds = bounds.inset(by: textContainerInset)
+    let visibleBounds = visibleTextContainerRect
+    let textContainerOrigin = textContainerDrawingOrigin
     let visibleGlyphRange = layoutManager.glyphRange(
-      forBoundingRect: visibleBounds.offsetBy(dx: -textContainerInset.left, dy: -textContainerInset.top),
+      forBoundingRect: visibleBounds,
       in: textContainer
     )
     let visibleCharacterRange = layoutManager.characterRange(
@@ -2463,8 +2473,8 @@ private final class MarkdownUIKitTextView: UITextView {
       }
 
       let lineRect = layoutManager.lineFragmentUsedRect(forGlyphAt: glyphRange.location, effectiveRange: nil)
-      let y = textContainerInset.top + lineRect.midY
-      let startX = textContainerInset.left + textContainer.lineFragmentPadding
+      let y = textContainerOrigin.y + lineRect.midY
+      let startX = textContainerOrigin.x + textContainer.lineFragmentPadding
       let endX = bounds.width - textContainerInset.right - textContainer.lineFragmentPadding
       context.setStrokeColor(theme.uiColor(.separator).withAlphaComponent(0.85).cgColor)
       context.setLineWidth(1 / UIScreen.main.scale)
@@ -2472,6 +2482,22 @@ private final class MarkdownUIKitTextView: UITextView {
       context.addLine(to: CGPoint(x: endX, y: y))
       context.strokePath()
     }
+  }
+
+  private var visibleTextContainerRect: CGRect {
+    CGRect(
+      x: contentOffset.x - textContainerInset.left,
+      y: contentOffset.y - textContainerInset.top,
+      width: bounds.width - textContainerInset.left - textContainerInset.right,
+      height: bounds.height - textContainerInset.top - textContainerInset.bottom
+    )
+  }
+
+  private var textContainerDrawingOrigin: CGPoint {
+    CGPoint(
+      x: textContainerInset.left - contentOffset.x,
+      y: textContainerInset.top - contentOffset.y
+    )
   }
 }
 #endif
