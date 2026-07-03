@@ -254,6 +254,9 @@ public struct MarkdownTextEditor: NSViewRepresentable {
     var lastRenderedImagePreviewStates: [MarkdownImageRenderState] = []
     private var isRendering = false
     private let defaultTextContainerInset = NSSize(width: 36, height: 34)
+    private let defaultCaretBottomPadding: CGFloat = 12
+    private let defaultCaretTopPadding: CGFloat = 12
+    private let defaultManualScrollBottomSlackFraction: CGFloat = 0.45
     private var pendingAnchorTask: Task<Void, Never>?
 
     init(parent: MarkdownTextEditor) {
@@ -305,6 +308,9 @@ public struct MarkdownTextEditor: NSViewRepresentable {
     }
 
     @objc private func scrollViewBoundsDidChange(_ notification: Notification) {
+      guard parent.normalizedCaretAnchorFraction != nil else {
+        return
+      }
       scheduleCaretAnchor(animated: false)
     }
 
@@ -316,9 +322,7 @@ public struct MarkdownTextEditor: NSViewRepresentable {
         if let clipView = scrollView.contentView as? MarkdownClipView {
           clipView.verticalBoundsLimits = nil
         }
-        if textView.minSize.height != 0 {
-          textView.minSize = NSSize(width: 0, height: 0)
-        }
+        ensureDefaultCaretScrollSlack(in: textView, visibleHeight: scrollView.contentView.bounds.height)
         return
       }
 
@@ -385,7 +389,15 @@ public struct MarkdownTextEditor: NSViewRepresentable {
           return
         }
         let targetSelection = selection ?? textView.selectedRange()
-        self.scrollCaretToAnchor(in: textView, selection: targetSelection, animated: animated)
+        self.scrollCaretIntoView(in: textView, selection: targetSelection, animated: animated)
+      }
+    }
+
+    func scrollCaretIntoView(in textView: NSTextView, selection: NSRange, animated: Bool) {
+      if parent.normalizedCaretAnchorFraction != nil {
+        scrollCaretToAnchor(in: textView, selection: selection, animated: animated)
+      } else {
+        scrollCaretToEditableBounds(in: textView, selection: selection, animated: animated)
       }
     }
 
@@ -438,6 +450,56 @@ public struct MarkdownTextEditor: NSViewRepresentable {
       }
     }
 
+    private func scrollCaretToEditableBounds(in textView: NSTextView, selection: NSRange, animated: Bool) {
+      guard let scrollView = scrollView ?? textView.enclosingScrollView else {
+        return
+      }
+
+      let clipView = scrollView.contentView
+      let visibleRect = clipView.bounds
+      guard visibleRect.height > 0 else {
+        return
+      }
+
+      ensureDefaultCaretScrollSlack(in: textView, visibleHeight: visibleRect.height)
+      guard let caretRect = caretRect(for: selection, in: textView) else {
+        return
+      }
+
+      let lowerVisibleY = visibleRect.minY + defaultCaretTopPadding
+      let upperVisibleY = visibleRect.maxY - defaultCaretBottomPadding
+      let maximumOriginY = max(0, textView.frame.height - visibleRect.height)
+      var targetOriginY = visibleRect.origin.y
+
+      if caretRect.maxY > upperVisibleY {
+        targetOriginY = min(maximumOriginY, caretRect.maxY + defaultCaretBottomPadding - visibleRect.height)
+      } else if caretRect.minY < lowerVisibleY {
+        targetOriginY = max(0, caretRect.minY - defaultCaretTopPadding)
+      } else {
+        return
+      }
+
+      guard abs(visibleRect.origin.y - targetOriginY) > 0.5 else {
+        return
+      }
+
+      let targetOrigin = NSPoint(x: visibleRect.origin.x, y: targetOriginY)
+      if animated, textView.window != nil {
+        NSAnimationContext.runAnimationGroup { context in
+          context.duration = 0.08
+          context.timingFunction = CAMediaTimingFunction(name: .easeInEaseOut)
+          clipView.animator().setBoundsOrigin(targetOrigin)
+        } completionHandler: {
+          Task { @MainActor in
+            scrollView.reflectScrolledClipView(clipView)
+          }
+        }
+      } else {
+        clipView.setBoundsOrigin(targetOrigin)
+        scrollView.reflectScrolledClipView(clipView)
+      }
+    }
+
     private func configureAnchorScrollLimits(
       in scrollView: NSScrollView,
       textView: NSTextView,
@@ -462,6 +524,32 @@ public struct MarkdownTextEditor: NSViewRepresentable {
       }
 
       return min(max(originY, limits.lowerBound), limits.upperBound)
+    }
+
+    private func ensureDefaultCaretScrollSlack(in textView: NSTextView, visibleHeight: CGFloat) {
+      guard visibleHeight > 0,
+            let layoutManager = textView.layoutManager,
+            let textContainer = textView.textContainer
+      else {
+        return
+      }
+
+      layoutManager.ensureLayout(for: textContainer)
+      let usedRect = layoutManager.usedRect(for: textContainer)
+      let bottomSlack = max(
+        defaultTextContainerInset.height,
+        visibleHeight * defaultManualScrollBottomSlackFraction
+      )
+      let currentWidth = max(textView.frame.width, textView.enclosingScrollView?.contentView.bounds.width ?? 0)
+      let targetHeight = max(
+        visibleHeight,
+        usedRect.maxY + textView.textContainerOrigin.y + bottomSlack
+      )
+      textView.minSize = NSSize(width: 0, height: targetHeight)
+      guard abs(textView.frame.height - targetHeight) > 1 || abs(textView.frame.width - currentWidth) > 1 else {
+        return
+      }
+      textView.setFrameSize(NSSize(width: currentWidth, height: targetHeight))
     }
 
     private func ensureBottomAnchorSlack(in textView: NSTextView, visibleHeight: CGFloat, anchor: CGFloat) {
