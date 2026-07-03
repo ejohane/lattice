@@ -1875,7 +1875,7 @@ public struct MarkdownTextEditor: UIViewRepresentable {
     private var keyboardAccessoryView: MarkdownKeyboardAccessoryView?
     private weak var accessoryTextView: UITextView?
 
-    private static let imageTypeIdentifiers = [
+    private nonisolated static let imageTypeIdentifiers = [
       UTType.image.identifier,
       UTType.png.identifier,
       UTType.jpeg.identifier,
@@ -2186,12 +2186,12 @@ public struct MarkdownTextEditor: UIViewRepresentable {
       }
     }
 
-    private static func canImportImage(from provider: NSItemProvider) -> Bool {
+    private nonisolated static func canImportImage(from provider: NSItemProvider) -> Bool {
       provider.canLoadObject(ofClass: UIImage.self)
         || imageTypeIdentifiers.contains { provider.hasItemConformingToTypeIdentifier($0) }
     }
 
-    private static func loadImageImport(
+    private nonisolated static func loadImageImport(
       from provider: NSItemProvider,
       completion: @escaping (ImageAttachmentImport?) -> Void
     ) {
@@ -2211,7 +2211,7 @@ public struct MarkdownTextEditor: UIViewRepresentable {
       loadImageObject(from: provider, completion: completion)
     }
 
-    private static func loadImageObject(
+    private nonisolated static func loadImageObject(
       from provider: NSItemProvider,
       completion: @escaping (ImageAttachmentImport?) -> Void
     ) {
@@ -2235,7 +2235,7 @@ public struct MarkdownTextEditor: UIViewRepresentable {
       }
     }
 
-    private static func imageImport(fromFileURL url: URL, suggestedFilename: String?) -> ImageAttachmentImport? {
+    private nonisolated static func imageImport(fromFileURL url: URL, suggestedFilename: String?) -> ImageAttachmentImport? {
       let supportedExtensions = Set(["png", "jpg", "jpeg", "gif", "heic", "tif", "tiff", "webp"])
       let suggestedExtension = suggestedFilename.map { URL(fileURLWithPath: $0).pathExtension.lowercased() }
       let fileExtension = url.pathExtension.lowercased()
