@@ -4,6 +4,8 @@ import LatticeEditor
 
 extension NSAttributedString.Key {
   static let latticeThematicBreak = NSAttributedString.Key("lattice.thematicBreak")
+  static let latticeUnorderedListMarker = NSAttributedString.Key("lattice.unorderedListMarker")
+  static let latticeUnorderedListIndent = NSAttributedString.Key("lattice.unorderedListIndent")
   static let latticeImagePreviewURL = NSAttributedString.Key("lattice.imagePreviewURL")
   static let latticeImagePreviewAltText = NSAttributedString.Key("lattice.imagePreviewAltText")
   static let latticeImagePreviewWidth = NSAttributedString.Key("lattice.imagePreviewWidth")
@@ -919,8 +921,39 @@ enum MarkdownAttributedRenderer {
       }
       attributed.addAttributes(attributes(for: span, fontFamily: fontFamily, theme: theme), range: span.range)
     }
+    applyBlockStyles(to: attributed, fontFamily: fontFamily, activeRanges: activeRanges, theme: theme)
     applyWikiLinkStyles(to: attributed, fontFamily: fontFamily, activeRanges: activeRanges, states: wikiLinkStates, theme: theme)
     hideLatticeMetadataComments(in: attributed, fontFamily: fontFamily, theme: theme)
+  }
+
+  private static func applyBlockStyles(
+    to attributed: NSMutableAttributedString,
+    fontFamily: EditorFontFamily,
+    activeRanges: [NSRange],
+    theme: LatticeTheme
+  ) {
+    let nsString = attributed.string as NSString
+    var location = 0
+    while location < nsString.length {
+      let lineRange = nsString.lineRange(for: NSRange(location: location, length: 0))
+      let line = nsString.substring(with: lineRange)
+      let isActiveLine = range(lineRange, containsAnyActive: activeRanges)
+
+      if let match = firstMatch("^([ \\t]*)([-*+])\\s+(?!\\[[ xX]\\]\\s)(.+)$", in: line) {
+        let nestingIndent = unorderedListNestingIndent(
+          from: nsString.substring(with: shifted(match.range(at: 1), by: lineRange.location))
+        )
+        attributed.addAttributes(unorderedListAttributes(), range: lineRange)
+        attributed.addAttributes(
+          isActiveLine
+            ? listMarkerAttributes(fontFamily: fontFamily, theme: theme)
+            : hiddenListMarkerAttributes(fontFamily: fontFamily, nestingIndent: nestingIndent),
+          range: shifted(match.range(at: 2), by: lineRange.location)
+        )
+      }
+
+      location = NSMaxRange(lineRange)
+    }
   }
 
   private static func attributes(
@@ -936,7 +969,7 @@ enum MarkdownAttributedRenderer {
     case .headingMarker:
       return [.foregroundColor: theme.uiColor(.tertiaryText), .font: UIFont.monospacedSystemFont(ofSize: 16, weight: .regular)]
     case .listMarker:
-      return [.foregroundColor: theme.uiColor(.accent), .font: bodyFont(size: 21, weight: .semibold, fontFamily: fontFamily)]
+      return listMarkerAttributes(fontFamily: fontFamily, theme: theme)
     case .taskCheckbox:
       return [.foregroundColor: theme.uiColor(.accent), .font: UIFont.monospacedSystemFont(ofSize: 18, weight: .semibold)]
     case .completedTask:
@@ -982,6 +1015,48 @@ enum MarkdownAttributedRenderer {
     let descriptor = baseFont.fontDescriptor.withSymbolicTraits(.traitItalic)
       ?? baseFont.fontDescriptor
     return UIFont(descriptor: descriptor, size: 21)
+  }
+
+  private static func listMarkerAttributes(
+    fontFamily: EditorFontFamily,
+    theme: LatticeTheme
+  ) -> [NSAttributedString.Key: Any] {
+    [
+      .foregroundColor: theme.uiColor(.accent),
+      .font: bodyFont(size: 21, weight: .semibold, fontFamily: fontFamily)
+    ]
+  }
+
+  private static func hiddenListMarkerAttributes(
+    fontFamily: EditorFontFamily,
+    nestingIndent: CGFloat
+  ) -> [NSAttributedString.Key: Any] {
+    [
+      .foregroundColor: UIColor.clear,
+      .font: bodyFont(size: 0.1, fontFamily: fontFamily),
+      .latticeUnorderedListMarker: true,
+      .latticeUnorderedListIndent: nestingIndent
+    ]
+  }
+
+  private static func unorderedListNestingIndent(from sourceIndent: String) -> CGFloat {
+    sourceIndent.reduce(CGFloat.zero) { width, character in
+      switch character {
+      case "\t":
+        return width + 28
+      default:
+        return width + 7
+      }
+    }
+  }
+
+  private static func unorderedListAttributes() -> [NSAttributedString.Key: Any] {
+    let paragraphStyle = NSMutableParagraphStyle()
+    paragraphStyle.lineSpacing = 2
+    paragraphStyle.paragraphSpacing = 6
+    paragraphStyle.headIndent = 28
+    paragraphStyle.firstLineHeadIndent = 28
+    return [.paragraphStyle: paragraphStyle]
   }
 
   private static func thematicBreakAttributes() -> [NSAttributedString.Key: Any] {
@@ -1053,6 +1128,17 @@ enum MarkdownAttributedRenderer {
 
       return activeRange.location > range.location && activeRange.location < NSMaxRange(range)
     }
+  }
+
+  private static func firstMatch(_ pattern: String, in string: String) -> NSTextCheckingResult? {
+    guard let regex = try? NSRegularExpression(pattern: pattern) else {
+      return nil
+    }
+    return regex.firstMatch(in: string, range: NSRange(location: 0, length: (string as NSString).length))
+  }
+
+  private static func shifted(_ range: NSRange, by offset: Int) -> NSRange {
+    NSRange(location: range.location + offset, length: range.length)
   }
 
   private static func linkContentRange(for range: NSRange) -> NSRange {
