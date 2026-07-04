@@ -2660,8 +2660,8 @@ private final class MarkdownUIKitTextView: UITextView {
 
   private var textContainerDrawingOrigin: CGPoint {
     CGPoint(
-      x: textContainerInset.left - contentOffset.x,
-      y: textContainerInset.top - contentOffset.y
+      x: textContainerInset.left,
+      y: textContainerInset.top
     )
   }
 }
