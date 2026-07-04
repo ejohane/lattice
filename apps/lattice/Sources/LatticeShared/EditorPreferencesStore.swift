@@ -21,7 +21,6 @@ public enum EditorFontFamily: String, CaseIterable, Identifiable, Sendable {
 public struct EditorPreferences: Equatable, Sendable {
   public var isVimModeEnabled: Bool
   public var showsRelativeLineNumbers: Bool
-  public var showsTimelineRuler: Bool
   public var themeID: LatticeThemeID
   public var fontFamily: EditorFontFamily
   public var showsStatusBar: Bool
@@ -29,14 +28,12 @@ public struct EditorPreferences: Equatable, Sendable {
   public init(
     isVimModeEnabled: Bool = false,
     showsRelativeLineNumbers: Bool = false,
-    showsTimelineRuler: Bool = true,
     themeID: LatticeThemeID = .system,
     fontFamily: EditorFontFamily = .system,
     showsStatusBar: Bool = true
   ) {
     self.isVimModeEnabled = isVimModeEnabled
     self.showsRelativeLineNumbers = showsRelativeLineNumbers
-    self.showsTimelineRuler = showsTimelineRuler
     self.themeID = themeID
     self.fontFamily = fontFamily
     self.showsStatusBar = showsStatusBar
@@ -59,7 +56,6 @@ public final class EditorPreferencesStore {
     EditorPreferences(
       isVimModeEnabled: defaults.bool(forKey: key("isVimModeEnabled")),
       showsRelativeLineNumbers: defaults.bool(forKey: key("showsRelativeLineNumbers")),
-      showsTimelineRuler: defaults.object(forKey: key("showsTimelineRuler")) as? Bool ?? true,
       themeID: LatticeThemeID(rawValue: defaults.string(forKey: key("themeID")) ?? "") ?? .system,
       fontFamily: EditorFontFamily(rawValue: defaults.string(forKey: key("fontFamily")) ?? "") ?? .system,
       showsStatusBar: bool(forKey: key("showsStatusBar"), defaultValue: true)
@@ -69,7 +65,6 @@ public final class EditorPreferencesStore {
   public func save(_ preferences: EditorPreferences) {
     defaults.set(preferences.isVimModeEnabled, forKey: key("isVimModeEnabled"))
     defaults.set(preferences.showsRelativeLineNumbers, forKey: key("showsRelativeLineNumbers"))
-    defaults.set(preferences.showsTimelineRuler, forKey: key("showsTimelineRuler"))
     defaults.set(preferences.themeID.rawValue, forKey: key("themeID"))
     defaults.set(preferences.fontFamily.rawValue, forKey: key("fontFamily"))
     defaults.set(preferences.showsStatusBar, forKey: key("showsStatusBar"))

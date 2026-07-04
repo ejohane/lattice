@@ -23,7 +23,8 @@ struct LatticeMacApp: App {
         .background(WindowConfiguration(
           width: Self.minimumWindowWidth,
           height: Self.minimumWindowHeight,
-          identifier: Self.mainWindowIdentifier
+          identifier: Self.mainWindowIdentifier,
+          isZenModeEnabled: model.isZenModeEnabled
         ))
         .task {
           model.start()
@@ -315,6 +316,7 @@ private struct WindowConfiguration: NSViewRepresentable {
   let width: CGFloat
   let height: CGFloat
   let identifier: String
+  let isZenModeEnabled: Bool
 
   func makeNSView(context: Context) -> NSView {
     let view = NSView()
@@ -329,9 +331,24 @@ private struct WindowConfiguration: NSViewRepresentable {
   private func updateWindow(for view: NSView) {
     DispatchQueue.main.async {
       let size = NSSize(width: width, height: height)
-      view.window?.identifier = NSUserInterfaceItemIdentifier(identifier)
-      view.window?.minSize = size
-      view.window?.contentMinSize = size
+      guard let window = view.window else {
+        return
+      }
+      window.identifier = NSUserInterfaceItemIdentifier(identifier)
+      window.minSize = size
+      window.contentMinSize = size
+      window.titleVisibility = isZenModeEnabled ? .hidden : .visible
+      window.titlebarAppearsTransparent = isZenModeEnabled
+      window.standardWindowButton(.closeButton)?.isHidden = isZenModeEnabled
+      window.standardWindowButton(.miniaturizeButton)?.isHidden = isZenModeEnabled
+      window.standardWindowButton(.zoomButton)?.isHidden = isZenModeEnabled
+      if isZenModeEnabled {
+        window.styleMask.insert(.fullSizeContentView)
+        window.toolbar?.isVisible = false
+      } else {
+        window.styleMask.remove(.fullSizeContentView)
+        window.toolbar?.isVisible = true
+      }
     }
   }
 }

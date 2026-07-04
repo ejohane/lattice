@@ -403,7 +403,6 @@ struct LatticeAppModelTests {
 
     #expect(!model.isVimModeEnabled)
     #expect(!model.showsRelativeLineNumbers)
-    #expect(model.showsTimelineRuler)
     #expect(model.selectedThemeID == .system)
     #expect(model.editorFontFamily == .system)
     #expect(model.showsStatusBar)
@@ -411,7 +410,6 @@ struct LatticeAppModelTests {
 
     model.setVimModeEnabled(true)
     model.setRelativeLineNumbersEnabled(true)
-    model.setTimelineRulerEnabled(false)
     model.setTheme(.solarizedDark)
     model.setEditorFontFamily(.monospaced)
     model.setStatusBarVisible(false)
@@ -424,7 +422,6 @@ struct LatticeAppModelTests {
 
     #expect(restored.isVimModeEnabled)
     #expect(restored.showsRelativeLineNumbers)
-    #expect(!restored.showsTimelineRuler)
     #expect(restored.selectedThemeID == .solarizedDark)
     #expect(restored.editorFontFamily == .monospaced)
     #expect(!restored.showsStatusBar)
@@ -456,6 +453,43 @@ struct LatticeAppModelTests {
     model.noteTextDidChange()
 
     #expect(model.vimStatusMessage == nil)
+  }
+
+  @Test("zen mode is session-only and suppresses vim while active")
+  func zenModeIsSessionOnlyAndSuppressesVimWhileActive() throws {
+    let fixture = try Fixture()
+    defer { fixture.cleanup() }
+    let model = LatticeAppModel(
+      noteLibrary: fixture.library,
+      folderAccessStore: fixture.folderAccessStore
+    )
+
+    try fixture.fileManager.createDirectory(at: fixture.root, withIntermediateDirectories: true)
+    model.chooseFolder(fixture.root)
+    model.setVimModeEnabled(true)
+
+    #expect(model.isVimModeEnabled)
+    #expect(model.effectiveIsVimModeEnabled)
+
+    model.enterZenMode()
+
+    #expect(model.isZenModeEnabled)
+    #expect(model.isVimModeEnabled)
+    #expect(!model.effectiveIsVimModeEnabled)
+
+    model.exitZenMode()
+
+    #expect(!model.isZenModeEnabled)
+    #expect(model.isVimModeEnabled)
+    #expect(model.effectiveIsVimModeEnabled)
+
+    let enterCommand = try #require(model.commandPaletteCommands().first { $0.title == "Enter Zen Mode" })
+    enterCommand.perform()
+    #expect(model.isZenModeEnabled)
+
+    let exitCommand = try #require(model.commandPaletteCommands().first { $0.title == "Exit Zen Mode" })
+    exitCommand.perform()
+    #expect(!model.isZenModeEnabled)
   }
 
   @Test("command palette only exposes update checking without a folder")
@@ -517,7 +551,7 @@ struct LatticeAppModelTests {
 
     model.commandPaletteQuery = ""
     let commandTitles = model.commandPaletteCommands().map(\.title)
-    #expect(commandTitles.contains("Timeline"))
+    #expect(commandTitles.contains("Enter Zen Mode"))
     #expect(commandTitles.contains("New Note"))
     #expect(!commandTitles.contains("Heading"))
     #expect(!commandTitles.contains("Bold"))
@@ -526,92 +560,6 @@ struct LatticeAppModelTests {
     #expect(!commandTitles.contains("Code"))
     #expect(!commandTitles.contains("Link"))
     #expect(!commandTitles.contains("Increase Font Size"))
-  }
-
-  @Test("command palette opens timeline and timeline draft persists at folder root")
-  func timelineCommandPersistsDraftAtFolderRoot() throws {
-    let fixture = try Fixture()
-    defer { fixture.cleanup() }
-    let model = LatticeAppModel(
-      noteLibrary: fixture.library,
-      folderAccessStore: fixture.folderAccessStore,
-      dateProvider: { fixture.date(hour: 14) }
-    )
-
-    try fixture.fileManager.createDirectory(at: fixture.root, withIntermediateDirectories: true)
-    model.chooseFolder(fixture.root)
-
-    let timelineCommand = try #require(model.commandPaletteCommands().first { $0.title == "Timeline" })
-    timelineCommand.perform()
-
-    #expect(model.selectedPage == .timeline)
-    #expect(model.activeTimelineEntryID == nil)
-    #expect(model.timelineEntries.isEmpty)
-
-    model.timelineText = "Outlined the onboarding flow."
-    model.flushTimelineAutosave()
-
-    #expect(model.timelineEntries.map(\.body) == ["Outlined the onboarding flow."])
-    #expect(model.activeTimelineEntryID == model.timelineEntries.first?.id)
-    #expect(fixture.fileManager.fileExists(atPath: fixture.root.appendingPathComponent("Timeline.md").path))
-    #expect(!fixture.fileManager.fileExists(atPath: fixture.root.appendingPathComponent("notes/Timeline.md").path))
-  }
-
-  @Test("timeline blank line separates entries in one continuous document")
-  func timelineBlankLineSeparatesEntries() throws {
-    let fixture = try Fixture()
-    defer { fixture.cleanup() }
-    var now = fixture.date(hour: 14)
-    let model = LatticeAppModel(
-      noteLibrary: fixture.library,
-      folderAccessStore: fixture.folderAccessStore,
-      dateProvider: { now }
-    )
-
-    try fixture.fileManager.createDirectory(at: fixture.root, withIntermediateDirectories: true)
-    model.chooseFolder(fixture.root)
-    model.showTimeline()
-    model.timelineText = "First entry.\n\n"
-    model.flushTimelineAutosave()
-
-    #expect(model.timelineEntries.map(\.body) == ["First entry."])
-    #expect(model.timelineText == "First entry.\n\n")
-    let firstEntry = try #require(model.timelineEntries.first)
-
-    now = fixture.date(hour: 15)
-    model.timelineText = "Second entry.\n\nFirst entry."
-    model.timelineSelectedRange = NSRange(location: 15, length: 0)
-    model.flushTimelineAutosave()
-
-    #expect(model.timelineEntries.map(\.body) == ["Second entry.", "First entry."])
-    #expect(model.timelineText == "Second entry.\n\nFirst entry.")
-    #expect(model.timelineEntries[0].createdAt == fixture.date(hour: 15))
-    #expect(model.timelineEntries[1].id == firstEntry.id)
-    #expect(model.timelineEntries[1].createdAt == firstEntry.createdAt)
-  }
-
-  @Test("timeline autosave preserves trailing editor newline")
-  func timelineAutosavePreservesTrailingEditorNewline() throws {
-    let fixture = try Fixture()
-    defer { fixture.cleanup() }
-    let model = LatticeAppModel(
-      noteLibrary: fixture.library,
-      folderAccessStore: fixture.folderAccessStore,
-      dateProvider: { fixture.date(hour: 14) }
-    )
-
-    try fixture.fileManager.createDirectory(at: fixture.root, withIntermediateDirectories: true)
-    model.chooseFolder(fixture.root)
-    model.showTimeline()
-    model.timelineText = "test\n"
-    model.timelineSelectedRange = NSRange(location: 5, length: 0)
-
-    model.flushTimelineAutosave()
-
-    #expect(model.timelineText == "test\n")
-    #expect(model.timelineSelectedRange.location == 5)
-    #expect(model.timelineEntries.map(\.body) == ["test"])
-    #expect(model.activeTimelineEntryID == model.timelineEntries.first?.id)
   }
 
   @Test("command palette searches indexed note bodies")

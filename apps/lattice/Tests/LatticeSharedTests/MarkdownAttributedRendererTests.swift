@@ -32,9 +32,9 @@ struct MarkdownAttributedRendererTests {
     #expect(codeFont.fontDescriptor.symbolicTraits.contains(.monoSpace))
   }
 
-  @Test("dims inactive timeline lines while preserving active line color")
-  func dimsInactiveTimelineLinesWhilePreservingActiveLineColor() {
-    let text = "Past entry\nActive line\nFuture entry"
+  @Test("dims inactive zen lines while preserving active line color")
+  func dimsInactiveZenLinesWhilePreservingActiveLineColor() {
+    let text = "Previous paragraph\nActive line\nNext paragraph"
     let string = text as NSString
     let theme = LatticeTheme(id: .graphite)
     let activeLineRange = string.lineRange(for: string.range(of: "Active line"))
@@ -47,9 +47,9 @@ struct MarkdownAttributedRendererTests {
     let expectedInactiveColor = theme.nsColor(.primaryText)
       .blended(withFraction: 0.74, of: theme.nsColor(.editorBackground))
 
-    let pastColor = attributed.attribute(.foregroundColor, at: string.range(of: "Past").location, effectiveRange: nil) as? NSColor
+    let pastColor = attributed.attribute(.foregroundColor, at: string.range(of: "Previous").location, effectiveRange: nil) as? NSColor
     let activeColor = attributed.attribute(.foregroundColor, at: string.range(of: "Active").location, effectiveRange: nil) as? NSColor
-    let futureColor = attributed.attribute(.foregroundColor, at: string.range(of: "Future").location, effectiveRange: nil) as? NSColor
+    let futureColor = attributed.attribute(.foregroundColor, at: string.range(of: "Next").location, effectiveRange: nil) as? NSColor
 
     #expect(pastColor == expectedInactiveColor)
     #expect(activeColor == theme.nsColor(.primaryText))

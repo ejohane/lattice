@@ -73,8 +73,6 @@ public struct MarkdownTextEditor: NSViewRepresentable {
   let focusToken: Int
   let isVimModeEnabled: Bool
   let showsRelativeLineNumbers: Bool
-  let showsTimelineRuler: Bool
-  let timelineEntries: [TimelineEntry]
   let dimsInactiveParagraphs: Bool
   let caretAnchorFraction: CGFloat?
   let keyboardAccessoryActions: [MarkdownKeyboardAccessoryAction]
@@ -101,8 +99,6 @@ public struct MarkdownTextEditor: NSViewRepresentable {
     focusToken: Int,
     isVimModeEnabled: Bool,
     showsRelativeLineNumbers: Bool,
-    showsTimelineRuler: Bool = false,
-    timelineEntries: [TimelineEntry] = [],
     dimsInactiveParagraphs: Bool = false,
     caretAnchorFraction: CGFloat? = nil,
     keyboardAccessoryActions: [MarkdownKeyboardAccessoryAction] = [],
@@ -128,8 +124,6 @@ public struct MarkdownTextEditor: NSViewRepresentable {
     self.focusToken = focusToken
     self.isVimModeEnabled = isVimModeEnabled
     self.showsRelativeLineNumbers = showsRelativeLineNumbers
-    self.showsTimelineRuler = showsTimelineRuler
-    self.timelineEntries = timelineEntries
     self.dimsInactiveParagraphs = dimsInactiveParagraphs
     self.caretAnchorFraction = caretAnchorFraction
     self.keyboardAccessoryActions = keyboardAccessoryActions
@@ -194,10 +188,7 @@ public struct MarkdownTextEditor: NSViewRepresentable {
 
     scrollView.documentView = textView
     context.coordinator.attachScrollView(scrollView)
-    textView.configureRuler(
-      showsRelativeLineNumbers: showsRelativeLineNumbers,
-      showsTimelineRuler: showsTimelineRuler
-    )
+    textView.configureRuler(showsRelativeLineNumbers: showsRelativeLineNumbers)
     context.coordinator.textView = textView
     return scrollView
   }
@@ -213,7 +204,6 @@ public struct MarkdownTextEditor: NSViewRepresentable {
       || context.coordinator.lastRenderedFontSize != fontSize
       || context.coordinator.lastRenderedFontFamily != fontFamily
       || context.coordinator.lastRenderedWikiLinkStates != wikiLinkStates
-      || context.coordinator.lastRenderedTimelineEntries != timelineEntries
       || context.coordinator.lastRenderedDimsInactiveParagraphs != dimsInactiveParagraphs
       || context.coordinator.lastRenderedTheme != theme
       || context.coordinator.lastRenderedImagePreviewStates != imagePreviewStates {
@@ -226,10 +216,7 @@ public struct MarkdownTextEditor: NSViewRepresentable {
     scrollView.contentView.backgroundColor = theme.nsColor(.editorBackground)
     textView.backgroundColor = theme.nsColor(.editorBackground)
     textView.insertionPointColor = theme.nsColor(.accent)
-    textView.configureRuler(
-      showsRelativeLineNumbers: showsRelativeLineNumbers,
-      showsTimelineRuler: showsTimelineRuler
-    )
+    textView.configureRuler(showsRelativeLineNumbers: showsRelativeLineNumbers)
     textView.needsDisplay = true
     if context.coordinator.lastFocusToken != focusToken {
       context.coordinator.lastFocusToken = focusToken
@@ -249,7 +236,6 @@ public struct MarkdownTextEditor: NSViewRepresentable {
     var lastRenderedFontSize: CGFloat?
     var lastRenderedFontFamily: EditorFontFamily?
     var lastRenderedWikiLinkStates: [WikiLinkRenderState] = []
-    var lastRenderedTimelineEntries: [TimelineEntry] = []
     var lastRenderedDimsInactiveParagraphs = false
     var lastRenderedTheme = LatticeTheme(id: .system)
     var lastRenderedImagePreviewStates: [MarkdownImageRenderState] = []
@@ -374,7 +360,6 @@ public struct MarkdownTextEditor: NSViewRepresentable {
       lastRenderedFontSize = parent.fontSize
       lastRenderedFontFamily = parent.fontFamily
       lastRenderedWikiLinkStates = parent.wikiLinkStates
-      lastRenderedTimelineEntries = parent.timelineEntries
       lastRenderedDimsInactiveParagraphs = parent.dimsInactiveParagraphs
       lastRenderedTheme = parent.theme
       lastRenderedImagePreviewStates = parent.imagePreviewStates
@@ -962,21 +947,12 @@ private final class MarkdownTextView: NSTextView {
     event.keyCode == 53
   }
 
-  func configureRuler(showsRelativeLineNumbers: Bool, showsTimelineRuler: Bool) {
+  func configureRuler(showsRelativeLineNumbers: Bool) {
     guard let scrollView = enclosingScrollView else {
       return
     }
 
-    if showsTimelineRuler {
-      if !(scrollView.verticalRulerView is TimelineRulerView) {
-        scrollView.verticalRulerView = TimelineRulerView(textView: self)
-      }
-      scrollView.hasHorizontalRuler = false
-      scrollView.horizontalRulerView = nil
-      scrollView.hasVerticalRuler = true
-      scrollView.rulersVisible = true
-      invalidateLineNumberRuler()
-    } else if showsRelativeLineNumbers {
+    if showsRelativeLineNumbers {
       if !(scrollView.verticalRulerView is RelativeLineNumberRulerView) {
         scrollView.verticalRulerView = RelativeLineNumberRulerView(textView: self)
       }
@@ -996,10 +972,6 @@ private final class MarkdownTextView: NSTextView {
 
   func invalidateLineNumberRuler() {
     enclosingScrollView?.verticalRulerView?.needsDisplay = true
-  }
-
-  var timelineEntriesForRuler: [TimelineEntry] {
-    coordinator?.parent.timelineEntries ?? []
   }
 
   var showsVimNormalModeIndicator: Bool {
@@ -1533,274 +1505,6 @@ private final class RelativeLineNumberRulerView: NSRulerView {
   }
 }
 
-private struct TimelineMarker {
-  let index: Int
-  let entry: TimelineEntry
-  let range: NSRange
-  let y: CGFloat
-  let hitRect: NSRect
-}
-
-private final class TimelineRulerView: NSRulerView {
-  private weak var textView: MarkdownTextView?
-  private let rulerWidth: CGFloat = 132
-  private let railX: CGFloat = 96
-  private let markerHitSize: CGFloat = 28
-
-  init(textView: MarkdownTextView) {
-    self.textView = textView
-    super.init(scrollView: textView.enclosingScrollView, orientation: .verticalRuler)
-    clientView = textView
-    ruleThickness = rulerWidth
-  }
-
-  @available(*, unavailable)
-  required init(coder: NSCoder) {
-    fatalError("init(coder:) has not been implemented")
-  }
-
-  override var requiredThickness: CGFloat {
-    rulerWidth
-  }
-
-  override func draw(_ dirtyRect: NSRect) {
-    drawHashMarksAndLabels(in: dirtyRect)
-  }
-
-  override func resetCursorRects() {
-    super.resetCursorRects()
-    for marker in timelineMarkers() {
-      addCursorRect(marker.hitRect, cursor: .pointingHand)
-    }
-  }
-
-  override func mouseDown(with event: NSEvent) {
-    let point = convert(event.locationInWindow, from: nil)
-    guard let marker = timelineMarkers().first(where: { $0.hitRect.contains(point) }),
-          let textView
-    else {
-      super.mouseDown(with: event)
-      return
-    }
-
-    let targetRange = NSRange(location: marker.range.location, length: 0)
-    textView.window?.makeFirstResponder(textView)
-    textView.setSelectedRange(targetRange)
-    textView.coordinator?.parent.selectedRange = targetRange
-    textView.coordinator?.parent.onSelectionChange()
-    textView.coordinator?.render(textView.string, in: textView, preserving: targetRange)
-  }
-
-  override func drawHashMarksAndLabels(in rect: NSRect) {
-    guard let textView else { return }
-
-    NSColor.clear.setFill()
-    rect.fill()
-
-    let nsString = textView.string as NSString
-    let blocks = TimelineTextRanges.blocks(in: nsString)
-    let entries = textView.timelineEntriesForRuler
-    let activeIndex = blocks.firstIndex { range in
-      let location = textView.selectedRange().location
-      return location >= range.location && location <= NSMaxRange(range) + 1
-    }
-    let markers = timelineMarkers(blocks: blocks, entries: entries)
-
-    let visibleRect = textView.visibleRect
-    drawRail(for: markers)
-
-    for marker in markers {
-      guard marker.y >= visibleRect.minY - 40, marker.y <= visibleRect.maxY + 40 else {
-        continue
-      }
-      drawMarkerAndTimestamp(
-        marker.entry.createdAt,
-        y: marker.y,
-        isActive: marker.index == activeIndex
-      )
-    }
-  }
-
-  private func timelineMarkers(
-    blocks: [NSRange]? = nil,
-    entries: [TimelineEntry]? = nil
-  ) -> [TimelineMarker] {
-    guard
-      let textView,
-      let layoutManager = textView.layoutManager,
-      let textContainer = textView.textContainer
-    else {
-      return []
-    }
-
-    let nsString = textView.string as NSString
-    let blocks = blocks ?? TimelineTextRanges.blocks(in: nsString)
-    let entries = entries ?? textView.timelineEntriesForRuler
-    let origin = textView.textContainerOrigin
-    layoutManager.ensureLayout(for: textContainer)
-
-    var markers: [TimelineMarker] = []
-    for (index, range) in blocks.enumerated() {
-      guard let entry = entries.safeElement(at: index) else {
-        continue
-      }
-      let glyphRange = layoutManager.glyphRange(forCharacterRange: range, actualCharacterRange: nil)
-      guard glyphRange.length > 0 else {
-        continue
-      }
-      let lineRect = layoutManager.lineFragmentRect(forGlyphAt: glyphRange.location, effectiveRange: nil)
-      let y = lineRect.minY + origin.y
-      guard y.isFinite else {
-        continue
-      }
-      let hitRect = NSRect(
-        x: railX - markerHitSize / 2,
-        y: y - markerHitSize / 2 + 6,
-        width: markerHitSize,
-        height: markerHitSize
-      )
-      markers.append(TimelineMarker(index: index, entry: entry, range: range, y: y, hitRect: hitRect))
-    }
-    return markers
-  }
-
-  private func drawRail(for markers: [TimelineMarker]) {
-    guard let firstY = markers.first?.y, let lastY = markers.last?.y else {
-      return
-    }
-
-    let path = NSBezierPath()
-    path.lineWidth = 0.75
-    path.move(to: NSPoint(x: railX, y: firstY - 32))
-    path.line(to: NSPoint(x: railX, y: lastY + 32))
-    NSColor.separatorColor.withAlphaComponent(0.24).setStroke()
-    path.stroke()
-  }
-
-  private func drawMarkerAndTimestamp(_ date: Date, y: CGFloat, isActive: Bool) {
-    let markerSize: CGFloat = isActive ? 15 : 11
-    let markerRect = NSRect(
-      x: railX - markerSize / 2,
-      y: y - 1,
-      width: markerSize,
-      height: markerSize
-    )
-    NSColor.textBackgroundColor.setFill()
-    NSBezierPath(ovalIn: markerRect.insetBy(dx: -2, dy: -2)).fill()
-    let markerPath = NSBezierPath(ovalIn: markerRect)
-    markerPath.lineWidth = isActive ? 2 : 1.5
-    (isActive ? NSColor.labelColor : NSColor.secondaryLabelColor.withAlphaComponent(0.78)).setStroke()
-    markerPath.stroke()
-    if isActive {
-      NSColor.labelColor.setFill()
-      NSBezierPath(ovalIn: markerRect.insetBy(dx: 4.5, dy: 4.5)).fill()
-    }
-
-    let label = timestampText(for: date)
-    let paragraphStyle = NSMutableParagraphStyle()
-    paragraphStyle.alignment = .right
-    paragraphStyle.lineSpacing = 3
-    let attributes: [NSAttributedString.Key: Any] = [
-      .font: NSFont.monospacedDigitSystemFont(ofSize: 11, weight: isActive ? .semibold : .regular),
-      .foregroundColor: isActive ? NSColor.labelColor : NSColor.secondaryLabelColor.withAlphaComponent(0.78),
-      .paragraphStyle: paragraphStyle
-    ]
-    let attributed = NSAttributedString(string: label, attributes: attributes)
-    attributed.draw(in: NSRect(x: 4, y: y - 3, width: railX - 18, height: 34))
-  }
-
-  private func timestampText(for date: Date) -> String {
-    let calendar = Calendar.current
-    let day: String
-    if calendar.isDateInToday(date) {
-      day = "Today"
-    } else if calendar.isDateInYesterday(date) {
-      day = "Yesterday"
-    } else if calendar.component(.year, from: date) == calendar.component(.year, from: Date()) {
-      day = Self.monthDayFormatter.string(from: date)
-    } else {
-      day = Self.monthDayYearFormatter.string(from: date)
-    }
-    return "\(day)\n\(Self.timeFormatter.string(from: date))"
-  }
-
-  private static let monthDayFormatter: DateFormatter = {
-    let formatter = DateFormatter()
-    formatter.dateFormat = "MMM d"
-    return formatter
-  }()
-
-  private static let monthDayYearFormatter: DateFormatter = {
-    let formatter = DateFormatter()
-    formatter.dateFormat = "MMM d, yyyy"
-    return formatter
-  }()
-
-  private static let timeFormatter: DateFormatter = {
-    let formatter = DateFormatter()
-    formatter.dateStyle = .none
-    formatter.timeStyle = .short
-    return formatter
-  }()
-}
-
-private enum TimelineTextRanges {
-  static func blocks(in nsString: NSString) -> [NSRange] {
-    var ranges: [NSRange] = []
-    var searchLocation = 0
-
-    while searchLocation <= nsString.length {
-      let separatorRange = nsString.range(
-        of: "\n\n",
-        options: [],
-        range: NSRange(location: searchLocation, length: nsString.length - searchLocation)
-      )
-      let rawRange: NSRange
-      if separatorRange.location == NSNotFound {
-        rawRange = NSRange(location: searchLocation, length: nsString.length - searchLocation)
-      } else {
-        rawRange = NSRange(location: searchLocation, length: separatorRange.location - searchLocation)
-      }
-
-      if let range = trimmedContentRange(rawRange, in: nsString) {
-        ranges.append(range)
-      }
-
-      guard separatorRange.location != NSNotFound else {
-        break
-      }
-      searchLocation = NSMaxRange(separatorRange)
-    }
-
-    return ranges
-  }
-
-  private static func trimmedContentRange(_ rawRange: NSRange, in nsString: NSString) -> NSRange? {
-    var start = rawRange.location
-    var end = NSMaxRange(rawRange)
-    while start < end, isWhitespace(nsString.character(at: start)) {
-      start += 1
-    }
-    while end > start, isWhitespace(nsString.character(at: end - 1)) {
-      end -= 1
-    }
-    guard end > start else {
-      return nil
-    }
-    return NSRange(location: start, length: end - start)
-  }
-
-  private static func isWhitespace(_ character: unichar) -> Bool {
-    character == 10 || character == 13 || character == 9 || character == 32
-  }
-}
-
-private extension Array {
-  func safeElement(at index: Int) -> Element? {
-    indices.contains(index) ? self[index] : nil
-  }
-}
-
 #elseif os(iOS)
 import UIKit
 
@@ -1813,8 +1517,6 @@ public struct MarkdownTextEditor: UIViewRepresentable {
   let focusToken: Int
   let isVimModeEnabled: Bool
   let showsRelativeLineNumbers: Bool
-  let showsTimelineRuler: Bool
-  let timelineEntries: [TimelineEntry]
   let dimsInactiveParagraphs: Bool
   let caretAnchorFraction: CGFloat?
   let keyboardAccessoryActions: [MarkdownKeyboardAccessoryAction]
@@ -1841,8 +1543,6 @@ public struct MarkdownTextEditor: UIViewRepresentable {
     focusToken: Int,
     isVimModeEnabled: Bool,
     showsRelativeLineNumbers: Bool,
-    showsTimelineRuler: Bool = false,
-    timelineEntries: [TimelineEntry] = [],
     dimsInactiveParagraphs: Bool = false,
     caretAnchorFraction: CGFloat? = nil,
     keyboardAccessoryActions: [MarkdownKeyboardAccessoryAction] = [],
@@ -1868,8 +1568,6 @@ public struct MarkdownTextEditor: UIViewRepresentable {
     self.focusToken = focusToken
     self.isVimModeEnabled = isVimModeEnabled
     self.showsRelativeLineNumbers = showsRelativeLineNumbers
-    self.showsTimelineRuler = showsTimelineRuler
-    self.timelineEntries = timelineEntries
     self.dimsInactiveParagraphs = dimsInactiveParagraphs
     self.caretAnchorFraction = caretAnchorFraction
     self.keyboardAccessoryActions = keyboardAccessoryActions
@@ -1919,6 +1617,7 @@ public struct MarkdownTextEditor: UIViewRepresentable {
     textView.addGestureRecognizer(tapRecognizer)
 
     context.coordinator.updateKeyboardAccessory(for: textView)
+    context.coordinator.configureCaretAnchorLayout(in: textView)
 
     return textView
   }
@@ -1927,6 +1626,7 @@ public struct MarkdownTextEditor: UIViewRepresentable {
     context.coordinator.parent = self
     (textView as? MarkdownUIKitTextView)?.markdownCoordinator = context.coordinator
     context.coordinator.updateKeyboardAccessory(for: textView)
+    context.coordinator.configureCaretAnchorLayout(in: textView)
     let clampedSelectedRange = clamped(selectedRange, length: (text as NSString).length)
     if textView.text != text
       || context.coordinator.lastRenderedFontFamily != fontFamily
@@ -1945,6 +1645,7 @@ public struct MarkdownTextEditor: UIViewRepresentable {
       context.coordinator.lastFocusToken = focusToken
       DispatchQueue.main.async {
         textView.becomeFirstResponder()
+        context.coordinator.scheduleCaretAnchor(selection: clampedSelectedRange, animated: false)
       }
     }
   }
@@ -1962,6 +1663,10 @@ public struct MarkdownTextEditor: UIViewRepresentable {
     private var activeWikiLinkRange: NSRange?
     private var keyboardAccessoryView: MarkdownKeyboardAccessoryView?
     private weak var accessoryTextView: UITextView?
+    private weak var textView: UITextView?
+    private let defaultTextContainerInset = UIEdgeInsets(top: 34, left: 22, bottom: 34, right: 22)
+    private var defaultContentInset: UIEdgeInsets?
+    private var pendingAnchorTask: Task<Void, Never>?
 
     private nonisolated static let imageTypeIdentifiers = [
       UTType.image.identifier,
@@ -1978,6 +1683,7 @@ public struct MarkdownTextEditor: UIViewRepresentable {
     }
 
     func updateKeyboardAccessory(for textView: UITextView) {
+      self.textView = textView
       accessoryTextView = textView
       guard !parent.keyboardAccessoryActions.isEmpty else {
         if textView.inputAccessoryView != nil {
@@ -2048,6 +1754,7 @@ public struct MarkdownTextEditor: UIViewRepresentable {
       parent.selectedRange = textView.selectedRange
       parent.onTextChange()
       render(textView.text, in: textView, preserving: textView.selectedRange)
+      scheduleCaretAnchor(selection: textView.selectedRange, animated: true)
     }
 
     public func textViewDidChangeSelection(_ textView: UITextView) {
@@ -2060,7 +1767,17 @@ public struct MarkdownTextEditor: UIViewRepresentable {
       let nextActiveWikiLinkRange = WikiLinkParser.link(at: clampedSelection.location, in: textView.text)?.range
       if parent.dimsInactiveParagraphs || nextActiveWikiLinkRange != activeWikiLinkRange {
         render(textView.text, in: textView, preserving: clampedSelection)
+      } else {
+        scheduleCaretAnchor(selection: clampedSelection, animated: true)
       }
+    }
+
+    public func scrollViewDidChangeAdjustedContentInset(_ scrollView: UIScrollView) {
+      guard let textView = scrollView as? UITextView else {
+        return
+      }
+      configureCaretAnchorLayout(in: textView)
+      scheduleCaretAnchor(selection: textView.selectedRange, animated: false)
     }
 
     public func textView(
@@ -2084,6 +1801,7 @@ public struct MarkdownTextEditor: UIViewRepresentable {
       parent.selectedRange = textView.selectedRange
       parent.onTextChange()
       render(textView.text, in: textView, preserving: textView.selectedRange)
+      scheduleCaretAnchor(selection: textView.selectedRange, animated: true)
       return false
     }
 
@@ -2114,6 +1832,7 @@ public struct MarkdownTextEditor: UIViewRepresentable {
       parent.selectedRange = textView.selectedRange
       parent.onTextChange()
       render(textView.text, in: textView, preserving: textView.selectedRange)
+      scheduleCaretAnchor(selection: textView.selectedRange, animated: true)
       return true
     }
 
@@ -2159,6 +1878,7 @@ public struct MarkdownTextEditor: UIViewRepresentable {
       parent.selectedRange = textView.selectedRange
       parent.onTextChange()
       render(textView.text, in: textView, preserving: textView.selectedRange)
+      scheduleCaretAnchor(selection: textView.selectedRange, animated: true)
     }
 
     func render(_ text: String, in textView: UITextView, preserving selection: NSRange) {
@@ -2193,6 +1913,157 @@ public struct MarkdownTextEditor: UIViewRepresentable {
       lastRenderedTheme = parent.theme
       lastRenderedImagePreviewStates = parent.imagePreviewStates
       isRendering = false
+      scheduleCaretAnchor(selection: clampedSelection, animated: true)
+    }
+
+    func configureCaretAnchorLayout(in textView: UITextView) {
+      self.textView = textView
+      if defaultContentInset == nil {
+        defaultContentInset = textView.contentInset
+      }
+
+      guard let anchor = parent.normalizedCaretAnchorFraction else {
+        pendingAnchorTask?.cancel()
+        applyInsets(
+          textContainerInset: defaultTextContainerInset,
+          contentInset: defaultContentInset ?? .zero,
+          to: textView
+        )
+        textView.showsVerticalScrollIndicator = true
+        return
+      }
+
+      let visibleHeight = max(0, textView.bounds.height)
+      guard visibleHeight > 0 else {
+        return
+      }
+
+      let baseContentInset = defaultContentInset ?? .zero
+      let contentInset = UIEdgeInsets(
+        top: baseContentInset.top + visibleHeight * anchor,
+        left: baseContentInset.left,
+        bottom: baseContentInset.bottom + visibleHeight * (1 - anchor),
+        right: baseContentInset.right
+      )
+      applyInsets(
+        textContainerInset: defaultTextContainerInset,
+        contentInset: contentInset,
+        to: textView
+      )
+      textView.showsVerticalScrollIndicator = false
+    }
+
+    func scheduleCaretAnchor(selection: NSRange? = nil, animated: Bool) {
+      guard parent.normalizedCaretAnchorFraction != nil else {
+        return
+      }
+
+      pendingAnchorTask?.cancel()
+      pendingAnchorTask = Task { @MainActor [weak self] in
+        await Task.yield()
+        guard !Task.isCancelled, let self, let textView = self.textView else {
+          return
+        }
+        self.configureCaretAnchorLayout(in: textView)
+        let targetSelection = selection ?? textView.selectedRange
+        self.scrollCaretToAnchor(in: textView, selection: targetSelection, animated: animated)
+      }
+    }
+
+    func scrollCaretToAnchor(in textView: UITextView, selection: NSRange, animated: Bool) {
+      guard let anchor = parent.normalizedCaretAnchorFraction else {
+        return
+      }
+
+      textView.layoutIfNeeded()
+      guard textView.bounds.height > 0,
+            let caretRect = caretRect(for: selection, in: textView)
+      else {
+        return
+      }
+
+      let targetOffsetY = caretRect.midY - textView.bounds.height * anchor
+      let minOffsetY = -textView.adjustedContentInset.top
+      let maxOffsetY = max(
+        minOffsetY,
+        textView.contentSize.height + textView.adjustedContentInset.bottom - textView.bounds.height
+      )
+      let constrainedOffsetY = min(max(targetOffsetY, minOffsetY), maxOffsetY)
+      guard abs(textView.contentOffset.y - constrainedOffsetY) > 0.5 else {
+        return
+      }
+
+      textView.setContentOffset(
+        CGPoint(x: textView.contentOffset.x, y: constrainedOffsetY),
+        animated: animated
+      )
+    }
+
+    private func caretRect(for selection: NSRange, in textView: UITextView) -> CGRect? {
+      let nsString = textView.text as NSString
+      let location = min(max(selection.location, 0), nsString.length)
+
+      if let position = textView.position(from: textView.beginningOfDocument, offset: location) {
+        let rect = textView.caretRect(for: position)
+        if rect.hasFiniteCoordinates && !rect.isNull && rect.height > 0 {
+          return rect
+        }
+      }
+
+      guard let layoutManager = textView.layoutManager as NSLayoutManager?,
+            let textContainer = textView.textContainer as NSTextContainer?
+      else {
+        return nil
+      }
+
+      layoutManager.ensureLayout(for: textContainer)
+      if nsString.length == 0 {
+        let font = MarkdownAttributedRenderer.bodyFont(fontFamily: parent.fontFamily)
+        return CGRect(
+          x: textView.textContainerInset.left,
+          y: textView.textContainerInset.top,
+          width: 1,
+          height: font.lineHeight
+        )
+      }
+
+      if location == nsString.length,
+         location > 0,
+         let scalar = Unicode.Scalar(nsString.character(at: location - 1)),
+         CharacterSet.newlines.contains(scalar) {
+        return layoutManager.extraLineFragmentRect.offsetBy(
+          dx: textView.textContainerInset.left,
+          dy: textView.textContainerInset.top
+        )
+      }
+
+      let characterLocation = min(location, nsString.length - 1)
+      let glyphRange = layoutManager.glyphRange(
+        forCharacterRange: NSRange(location: characterLocation, length: 1),
+        actualCharacterRange: nil
+      )
+      guard glyphRange.length > 0 else {
+        return nil
+      }
+
+      let lineRect = layoutManager.lineFragmentRect(forGlyphAt: glyphRange.location, effectiveRange: nil)
+      return lineRect.offsetBy(dx: textView.textContainerInset.left, dy: textView.textContainerInset.top)
+    }
+
+    private func applyInsets(
+      textContainerInset: UIEdgeInsets,
+      contentInset: UIEdgeInsets,
+      to textView: UITextView
+    ) {
+      if !textView.textContainerInset.isApproximatelyEqual(to: textContainerInset) {
+        textView.textContainerInset = textContainerInset
+      }
+      if !textView.contentInset.isApproximatelyEqual(to: contentInset) {
+        textView.contentInset = contentInset
+      }
+      if !textView.verticalScrollIndicatorInsets.isApproximatelyEqual(to: contentInset) {
+        textView.verticalScrollIndicatorInsets = contentInset
+      }
     }
 
     public func dropInteraction(_ interaction: UIDropInteraction, canHandle session: UIDropSession) -> Bool {
@@ -2346,6 +2217,13 @@ public struct MarkdownTextEditor: UIViewRepresentable {
       let location = min(max(selection.location, 0), nsString.length)
       return nsString.lineRange(for: NSRange(location: location, length: 0))
     }
+  }
+
+  private var normalizedCaretAnchorFraction: CGFloat? {
+    guard let caretAnchorFraction else {
+      return nil
+    }
+    return min(max(caretAnchorFraction, 0.05), 0.95)
   }
 }
 
@@ -2560,6 +2438,24 @@ private extension UIAction.Identifier {
   static let markdownKeyboardAccessoryMenuHaptic = UIAction.Identifier("MarkdownKeyboardAccessoryMenuHaptic")
 }
 
+private extension CGRect {
+  var hasFiniteCoordinates: Bool {
+    origin.x.isFinite
+      && origin.y.isFinite
+      && size.width.isFinite
+      && size.height.isFinite
+  }
+}
+
+private extension UIEdgeInsets {
+  func isApproximatelyEqual(to other: UIEdgeInsets) -> Bool {
+    abs(top - other.top) < 0.5
+      && abs(left - other.left) < 0.5
+      && abs(bottom - other.bottom) < 0.5
+      && abs(right - other.right) < 0.5
+  }
+}
+
 private extension UITextView {
   func characterIndex(at point: CGPoint) -> Int? {
     guard let position = closestPosition(to: point) else {
@@ -2585,6 +2481,21 @@ private final class MarkdownUIKitTextView: UITextView {
         setNeedsDisplay()
       }
     }
+  }
+
+  override func layoutSubviews() {
+    super.layoutSubviews()
+    markdownCoordinator?.configureCaretAnchorLayout(in: self)
+    markdownCoordinator?.scheduleCaretAnchor(selection: selectedRange, animated: false)
+  }
+
+  override func scrollRangeToVisible(_ range: NSRange) {
+    if markdownCoordinator?.parent.caretAnchorFraction != nil {
+      markdownCoordinator?.scheduleCaretAnchor(selection: selectedRange, animated: false)
+      return
+    }
+
+    super.scrollRangeToVisible(range)
   }
 
   override var keyCommands: [UIKeyCommand]? {

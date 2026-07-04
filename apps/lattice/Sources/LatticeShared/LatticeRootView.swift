@@ -21,81 +21,94 @@ public struct LatticeRootView: View {
   }
 
   public var body: some View {
+    rootContent
+      .fileImporter(
+        isPresented: $model.isShowingFolderImporter,
+        allowedContentTypes: [.folder],
+        allowsMultipleSelection: false
+      ) { result in
+        switch result {
+        case .success(let urls):
+          if let url = urls.first {
+            model.chooseFolder(url)
+          }
+        case .failure(let error):
+          model.errorMessage = error.localizedDescription
+        }
+      }
+      .alert("Lattice", isPresented: Binding(
+        get: { model.errorMessage != nil },
+        set: { if !$0 { model.errorMessage = nil } }
+      )) {
+        Button("OK", role: .cancel) {}
+      } message: {
+        Text(model.errorMessage ?? "")
+      }
+      .alert("Rename Note", isPresented: Binding(
+        get: { model.renamingNote != nil },
+        set: { if !$0 { model.cancelRename() } }
+      )) {
+        TextField("Filename", text: $model.renameTitle)
+        Button("Rename") {
+          model.commitRename()
+        }
+        Button("Cancel", role: .cancel) {
+          model.cancelRename()
+        }
+      } message: {
+        Text("Wiki links to this note will be updated.")
+      }
+      .sheet(isPresented: $model.isShowingCommandPalette) {
+        CommandPaletteView(
+          model: model,
+          platformCommands: commandPalettePlatformCommands()
+        )
+      }
+      .sheet(isPresented: $model.isShowingSettings) {
+        TaskSyncSettingsView(model: model)
+      }
+      .confirmationDialog(
+        "Choose Note",
+        isPresented: Binding(
+          get: { model.ambiguousWikiLink != nil },
+          set: { if !$0 { model.dismissAmbiguousWikiLinkResolution() } }
+        ),
+        titleVisibility: .visible
+      ) {
+        if let pending = model.ambiguousWikiLink {
+          ForEach(pending.candidates) { candidate in
+            Button(candidate.relativePath) {
+              model.chooseAmbiguousWikiLinkTarget(candidate)
+            }
+          }
+        }
+        Button("Cancel", role: .cancel) {
+          model.dismissAmbiguousWikiLinkResolution()
+        }
+      } message: {
+        Text("Several notes match this link.")
+      }
+      .background(model.theme.color(.appBackground))
+      .environment(\.latticeTheme, model.theme)
+      .preferredColorScheme(model.theme.preferredColorScheme)
+      .tint(model.theme.color(.accent))
+  }
+
+  @ViewBuilder
+  private var rootContent: some View {
+    if model.isZenModeEnabled && model.hasFolder {
+      ZenNoteEditorPane(model: model)
+    } else {
+      splitRoot
+    }
+  }
+
+  private var splitRoot: some View {
     NavigationSplitView(preferredCompactColumn: preferredColumnBinding) {
       NoteSidebar(model: model)
     } detail: {
       editorPane
     }
-    .fileImporter(
-      isPresented: $model.isShowingFolderImporter,
-      allowedContentTypes: [.folder],
-      allowsMultipleSelection: false
-    ) { result in
-      switch result {
-      case .success(let urls):
-        if let url = urls.first {
-          model.chooseFolder(url)
-        }
-      case .failure(let error):
-        model.errorMessage = error.localizedDescription
-      }
-    }
-    .alert("Lattice", isPresented: Binding(
-      get: { model.errorMessage != nil },
-      set: { if !$0 { model.errorMessage = nil } }
-    )) {
-      Button("OK", role: .cancel) {}
-    } message: {
-      Text(model.errorMessage ?? "")
-    }
-    .alert("Rename Note", isPresented: Binding(
-      get: { model.renamingNote != nil },
-      set: { if !$0 { model.cancelRename() } }
-    )) {
-      TextField("Filename", text: $model.renameTitle)
-      Button("Rename") {
-        model.commitRename()
-      }
-      Button("Cancel", role: .cancel) {
-        model.cancelRename()
-      }
-    } message: {
-      Text("Wiki links to this note will be updated.")
-    }
-    .sheet(isPresented: $model.isShowingCommandPalette) {
-      CommandPaletteView(
-        model: model,
-        platformCommands: commandPalettePlatformCommands()
-      )
-    }
-    .sheet(isPresented: $model.isShowingSettings) {
-      TaskSyncSettingsView(model: model)
-    }
-    .confirmationDialog(
-      "Choose Note",
-      isPresented: Binding(
-        get: { model.ambiguousWikiLink != nil },
-        set: { if !$0 { model.dismissAmbiguousWikiLinkResolution() } }
-      ),
-      titleVisibility: .visible
-    ) {
-      if let pending = model.ambiguousWikiLink {
-        ForEach(pending.candidates) { candidate in
-          Button(candidate.relativePath) {
-            model.chooseAmbiguousWikiLinkTarget(candidate)
-          }
-        }
-      }
-      Button("Cancel", role: .cancel) {
-        model.dismissAmbiguousWikiLinkResolution()
-      }
-    } message: {
-      Text("Several notes match this link.")
-    }
-    .background(model.theme.color(.appBackground))
-    .environment(\.latticeTheme, model.theme)
-    .preferredColorScheme(model.theme.preferredColorScheme)
-    .tint(model.theme.color(.accent))
   }
 
   private var preferredColumnBinding: Binding<NavigationSplitViewColumn> {
@@ -119,12 +132,7 @@ public struct LatticeRootView: View {
   @ViewBuilder
   private var editorPane: some View {
     if model.hasFolder {
-      switch model.selectedPage {
-      case .noteEditor:
-        NoteEditorPane(model: model)
-      case .timeline:
-        TimelinePane(model: model)
-      }
+      NoteEditorPane(model: model)
     } else {
       FolderSetupView(model: model)
     }
@@ -294,7 +302,7 @@ private struct NoteEditorPane: View {
         fontSize: CGFloat(model.editorFontSize),
         fontFamily: model.editorFontFamily,
         focusToken: model.editorFocusToken,
-        isVimModeEnabled: model.isVimModeEnabled,
+        isVimModeEnabled: model.effectiveIsVimModeEnabled,
         showsRelativeLineNumbers: model.showsRelativeLineNumbers,
         keyboardAccessoryActions: keyboardAccessoryActions,
         hasAutocompleteSuggestions: !model.wikiAutocompleteSuggestions.isEmpty,
@@ -355,6 +363,7 @@ private struct NoteEditorPane: View {
         title: "Commands",
         systemImage: "command",
         menuChildren: [
+          zenKeyboardAction(),
           markdownKeyboardAction(.heading, title: "Heading", systemImage: nil, displayTitle: "Aa"),
           markdownKeyboardAction(.bold, title: "Bold", systemImage: "bold"),
           markdownKeyboardAction(.italic, title: "Italic", systemImage: "italic"),
@@ -398,6 +407,19 @@ private struct NoteEditorPane: View {
         symbolPointSize: 17
       )
     ]
+  }
+
+  private func zenKeyboardAction() -> MarkdownKeyboardAccessoryAction {
+    MarkdownKeyboardAccessoryAction(
+      id: "zenMode",
+      title: model.isZenModeEnabled ? "Exit Zen Mode" : "Enter Zen Mode",
+      systemImage: model.isZenModeEnabled
+        ? "arrow.down.right.and.arrow.up.left"
+        : "arrow.up.left.and.arrow.down.right",
+      isEnabled: model.hasFolder
+    ) {
+      model.toggleZenMode()
+    }
   }
 
   private func markdownKeyboardAction(
@@ -522,7 +544,7 @@ private struct NoteEditorPane: View {
   }
 
   private var modeText: String? {
-    guard model.isVimModeEnabled else {
+    guard model.effectiveIsVimModeEnabled else {
       return nil
     }
 
@@ -552,125 +574,102 @@ private struct NoteEditorPane: View {
   }
 }
 
-private struct TimelinePane: View {
+private struct ZenNoteEditorPane: View {
   @Bindable var model: LatticeAppModel
   @Environment(\.latticeTheme) private var theme
-  private let maximumTimelineWidth: CGFloat = 980
+  private let maximumEditorWidth: CGFloat = 980
 
   var body: some View {
     editorContent
-      .frame(maxWidth: maximumTimelineWidth, maxHeight: .infinity)
+      .frame(maxWidth: maximumEditorWidth, maxHeight: .infinity)
       .padding(.horizontal, 18)
       .frame(maxWidth: .infinity, maxHeight: .infinity)
       .background(theme.color(.appBackground))
-      .navigationTitle("Timeline")
-      #if os(macOS)
-      .navigationSplitViewColumnWidth(min: 420, ideal: 760)
-      #endif
-      .toolbar {
-        ToolbarItem(placement: .primaryAction) {
-          Button {
-            model.composeNewTimelineEntry()
-          } label: {
-            Label("New Entry", systemImage: "plus")
-          }
-          .disabled(!model.hasFolder)
-        }
-      }
   }
 
   private var editorContent: some View {
-    VStack(spacing: 0) {
-      MarkdownTextEditor(
-        text: $model.timelineText,
-        selectedRange: $model.timelineSelectedRange,
-        vimState: $model.vimState,
-        fontSize: CGFloat(model.editorFontSize),
-        fontFamily: model.editorFontFamily,
-        focusToken: model.timelineFocusToken,
-        isVimModeEnabled: model.isVimModeEnabled,
-        showsRelativeLineNumbers: false,
-        showsTimelineRuler: model.showsTimelineRuler,
-        timelineEntries: model.timelineEntries,
-        dimsInactiveParagraphs: true,
-        caretAnchorFraction: 1.0 / 3.0,
-        hasAutocompleteSuggestions: false,
-        wikiLinkStates: [],
-        theme: theme,
-        imagePreviewStates: [],
-        onTextChange: {
-          model.timelineTextDidChange()
-        },
-        onSelectionChange: {
-          model.timelineSelectionDidChange()
-        },
-        onWikiLinkActivated: { _ in },
-        onMarkdownLinkActivated: { _ in },
-        onDismissAutocomplete: {},
-        onVimWrite: {
-          model.flushTimelineAutosave()
-          model.setVimStatusMessage("Saved")
-        },
-        onVimStatusChange: { message in
-          model.setVimStatusMessage(message)
-        },
-        onImageAttachmentsImported: { _ in },
-        onImageAttachmentResized: { _, _ in }
-      )
-      .ignoresSafeArea(.keyboard, edges: .bottom)
-      .frame(maxWidth: .infinity, maxHeight: .infinity)
-      .background(theme.color(.editorBackground))
-
-      if model.showsStatusBar {
-        HStack(spacing: 8) {
-          if let modeText {
-            Text(modeText)
-              .font(.caption2.weight(.bold))
-              .foregroundStyle(modeText == "NORMAL" ? theme.color(.highlightedText) : theme.color(.secondaryText))
-              .padding(.horizontal, 7)
-              .padding(.vertical, 3)
-              .background {
-                Capsule()
-                  .fill(modeText == "NORMAL" ? theme.color(.accent) : theme.color(.secondaryText).opacity(0.14))
-              }
-          }
-          Text(statusText)
-            .font(.footnote.weight(.medium))
-            .foregroundStyle(theme.color(.secondaryText))
-        }
-        .frame(maxWidth: .infinity)
-        .padding(.vertical, 10)
-        .background(theme.color(.barBackground))
+    MarkdownTextEditor(
+      text: $model.text,
+      selectedRange: $model.selectedRange,
+      vimState: $model.vimState,
+      fontSize: CGFloat(model.editorFontSize),
+      fontFamily: model.editorFontFamily,
+      focusToken: model.editorFocusToken,
+      isVimModeEnabled: model.effectiveIsVimModeEnabled,
+      showsRelativeLineNumbers: false,
+      dimsInactiveParagraphs: true,
+      caretAnchorFraction: 1.0 / 3.0,
+      keyboardAccessoryActions: zenKeyboardAccessoryActions,
+      hasAutocompleteSuggestions: false,
+      wikiLinkStates: model.wikiLinkStates,
+      theme: theme,
+      imagePreviewStates: model.imagePreviewStates,
+      onTextChange: {
+        model.noteTextDidChange()
+      },
+      onSelectionChange: {
+        model.noteSelectionDidChange()
+      },
+      onWikiLinkActivated: { characterIndex in
+        model.activateWikiLink(at: characterIndex)
+      },
+      onMarkdownLinkActivated: { characterIndex in
+        model.activateMarkdownLink(at: characterIndex)
+      },
+      onDismissAutocomplete: {
+        model.dismissWikiAutocomplete()
+      },
+      onVimWrite: {
+        model.vimWrite()
+      },
+      onVimStatusChange: { message in
+        model.setVimStatusMessage(message)
+      },
+      onImageAttachmentsImported: { imports in
+        model.insertImageAttachments(imports)
+      },
+      onImageAttachmentResized: { lineLocation, width in
+        model.resizeImageAttachment(lineLocation: lineLocation, width: width)
       }
-    }
+    )
+    .ignoresSafeArea(.keyboard, edges: .bottom)
     .frame(maxWidth: .infinity, maxHeight: .infinity)
+    .background(theme.color(.editorBackground))
   }
 
-  private var statusText: String {
-    let count = model.timelineText.count
-    let unit = count == 1 ? "character" : "characters"
-    if let message = model.vimStatusMessage, !message.isEmpty {
-      return "\(message) - \(count) \(unit)"
-    }
-    return "\(count) \(unit)"
+  #if os(iOS)
+  private var zenKeyboardAccessoryActions: [MarkdownKeyboardAccessoryAction] {
+    [
+      MarkdownKeyboardAccessoryAction(
+        id: "search",
+        title: "Search",
+        systemImage: "magnifyingglass"
+      ) {
+        model.showCommandPalette()
+      },
+      MarkdownKeyboardAccessoryAction(
+        id: "commands",
+        title: "Commands",
+        systemImage: "command",
+        menuChildren: [
+          MarkdownKeyboardAccessoryAction(
+            id: "zenMode",
+            title: "Exit Zen Mode",
+            systemImage: "arrow.down.right.and.arrow.up.left",
+            isEnabled: model.hasFolder
+          ) {
+            model.toggleZenMode()
+          }
+        ],
+        symbolPointSize: 17
+      )
+    ]
   }
-
-  private var modeText: String? {
-    guard model.isVimModeEnabled else {
-      return nil
-    }
-
-    switch model.vimState.mode {
-    case .insert:
-      return "INSERT"
-    case .normal:
-      return "NORMAL"
-    case .visual:
-      return "VISUAL"
-    case .commandLine:
-      return ":\(model.vimState.commandText)"
-    }
+  #else
+  private var zenKeyboardAccessoryActions: [MarkdownKeyboardAccessoryAction] {
+    []
   }
+  #endif
 }
 
 private struct FolderSetupView: View {
