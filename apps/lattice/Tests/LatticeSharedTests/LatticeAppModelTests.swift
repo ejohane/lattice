@@ -413,6 +413,10 @@ struct LatticeAppModelTests {
     model.setTheme(.solarizedDark)
     model.setEditorFontFamily(.monospaced)
     model.setStatusBarVisible(false)
+    model.setKeyboardShortcut(
+      LatticeKeyboardShortcut(key: "b", modifiers: [.command, .shift]),
+      for: .zenMode
+    )
 
     let restored = LatticeAppModel(
       noteLibrary: NoteLibrary(defaults: defaults),
@@ -426,6 +430,45 @@ struct LatticeAppModelTests {
     #expect(restored.editorFontFamily == .monospaced)
     #expect(!restored.showsStatusBar)
     #expect(restored.vimState.mode == .normal)
+    #expect(restored.keyboardShortcut(for: .zenMode) == LatticeKeyboardShortcut(key: "b", modifiers: [.command, .shift]))
+  }
+
+  @Test("keyboard shortcuts can override conflicts and reset to defaults")
+  func keyboardShortcutOverridesConflictsAndResets() throws {
+    let defaultsSuiteName = "keyboard-shortcuts-\(UUID().uuidString)"
+    guard let defaults = UserDefaults(suiteName: defaultsSuiteName) else {
+      throw FixtureError.defaultsUnavailable
+    }
+    defer {
+      defaults.removePersistentDomain(forName: defaultsSuiteName)
+    }
+    let model = LatticeAppModel(
+      noteLibrary: NoteLibrary(defaults: defaults),
+      folderAccessStore: FolderAccessStore(defaults: defaults),
+      editorPreferencesStore: EditorPreferencesStore(defaults: defaults)
+    )
+
+    let newNoteShortcut = try #require(model.keyboardShortcut(for: .newNote))
+    model.setKeyboardShortcut(newNoteShortcut, for: .zenMode)
+
+    #expect(model.keyboardShortcut(for: .zenMode) == newNoteShortcut)
+    #expect(model.keyboardShortcut(for: .newNote) == nil)
+
+    let restored = LatticeAppModel(
+      noteLibrary: NoteLibrary(defaults: defaults),
+      folderAccessStore: FolderAccessStore(defaults: defaults),
+      editorPreferencesStore: EditorPreferencesStore(defaults: defaults)
+    )
+
+    #expect(restored.keyboardShortcut(for: .zenMode) == newNoteShortcut)
+    #expect(restored.keyboardShortcut(for: .newNote) == nil)
+
+    restored.resetKeyboardShortcut(for: .newNote)
+    #expect(restored.keyboardShortcut(for: .newNote) == LatticeKeyboardShortcutID.newNote.defaultShortcut)
+    #expect(restored.keyboardShortcut(for: .zenMode) == nil)
+
+    restored.resetKeyboardShortcut(for: .zenMode)
+    #expect(restored.keyboardShortcut(for: .zenMode) == LatticeKeyboardShortcutID.zenMode.defaultShortcut)
   }
 
   @Test("dismisses wiki autocomplete suggestions")
@@ -560,6 +603,12 @@ struct LatticeAppModelTests {
     #expect(!commandTitles.contains("Code"))
     #expect(!commandTitles.contains("Link"))
     #expect(!commandTitles.contains("Increase Font Size"))
+
+    let commandShortcuts = Dictionary(uniqueKeysWithValues: model.commandPaletteCommands().map {
+      ($0.title, $0.keyboardShortcut)
+    })
+    #expect(commandShortcuts["Enter Zen Mode"] == "Cmd-Shift-Z")
+    #expect(commandShortcuts["New Note"] == "Cmd-N")
   }
 
   @Test("command palette searches indexed note bodies")

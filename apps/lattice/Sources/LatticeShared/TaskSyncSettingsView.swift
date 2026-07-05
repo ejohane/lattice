@@ -1,6 +1,10 @@
 import LatticeCore
 import SwiftUI
 
+#if os(macOS)
+import AppKit
+#endif
+
 public struct TaskSyncSettingsView: View {
   @Bindable private var model: LatticeAppModel
   @Environment(\.dismiss) private var dismiss
@@ -14,6 +18,9 @@ public struct TaskSyncSettingsView: View {
       Form {
         themeSection
         editorSection
+        #if os(macOS)
+        keyboardShortcutsSection
+        #endif
         providerSection
         destinationSection
         syncSection
@@ -90,6 +97,23 @@ public struct TaskSyncSettingsView: View {
       #endif
     }
   }
+
+  #if os(macOS)
+  private var keyboardShortcutsSection: some View {
+    Section("Keyboard Shortcuts") {
+      ForEach(LatticeKeyboardShortcutID.allCases) { shortcutID in
+        KeyboardShortcutSettingsRow(
+          shortcutID: shortcutID,
+          shortcut: model.keyboardShortcut(for: shortcutID)
+        ) { shortcut in
+          model.setKeyboardShortcut(shortcut, for: shortcutID)
+        } onReset: {
+          model.resetKeyboardShortcut(for: shortcutID)
+        }
+      }
+    }
+  }
+  #endif
 
   private var providerSection: some View {
     Section("Task Provider") {
@@ -244,6 +268,161 @@ public struct TaskSyncSettingsView: View {
     }
   }
 }
+
+#if os(macOS)
+private struct KeyboardShortcutSettingsRow: View {
+  let shortcutID: LatticeKeyboardShortcutID
+  let shortcut: LatticeKeyboardShortcut?
+  let onChange: (LatticeKeyboardShortcut) -> Void
+  let onReset: () -> Void
+
+  var body: some View {
+    HStack(spacing: 12) {
+      Text(shortcutID.displayName)
+      Spacer(minLength: 12)
+      KeyboardShortcutRecorder(
+        shortcut: shortcut,
+        onChange: onChange
+      )
+      .frame(width: 132)
+      Button("Reset", action: onReset)
+    }
+  }
+}
+
+private struct KeyboardShortcutRecorder: NSViewRepresentable {
+  let shortcut: LatticeKeyboardShortcut?
+  let onChange: (LatticeKeyboardShortcut) -> Void
+
+  func makeCoordinator() -> Coordinator {
+    Coordinator(parent: self)
+  }
+
+  func makeNSView(context: Context) -> ShortcutRecorderButton {
+    let button = ShortcutRecorderButton()
+    button.bezelStyle = .rounded
+    button.target = context.coordinator
+    button.action = #selector(Coordinator.beginRecording(_:))
+    button.recorder = context.coordinator
+    context.coordinator.update(button)
+    return button
+  }
+
+  func updateNSView(_ button: ShortcutRecorderButton, context: Context) {
+    context.coordinator.parent = self
+    context.coordinator.update(button)
+  }
+
+  final class Coordinator: NSObject {
+    var parent: KeyboardShortcutRecorder
+    private weak var button: ShortcutRecorderButton?
+    private var monitor: Any?
+    private var isRecording = false
+
+    init(parent: KeyboardShortcutRecorder) {
+      self.parent = parent
+    }
+
+    deinit {
+      if let monitor {
+        NSEvent.removeMonitor(monitor)
+      }
+    }
+
+    @MainActor
+    func update(_ button: ShortcutRecorderButton) {
+      self.button = button
+      guard !isRecording else {
+        button.title = "Type shortcut"
+        return
+      }
+      button.title = parent.shortcut?.displayText ?? "Unassigned"
+    }
+
+    @MainActor
+    @objc func beginRecording(_ sender: ShortcutRecorderButton) {
+      if let monitor {
+        NSEvent.removeMonitor(monitor)
+        self.monitor = nil
+      }
+      isRecording = true
+      button = sender
+      sender.title = "Type shortcut"
+      sender.window?.makeFirstResponder(sender)
+      monitor = NSEvent.addLocalMonitorForEvents(matching: .keyDown) { [weak self] event in
+        guard let self else {
+          return event
+        }
+
+        if event.keyCode == 53 {
+          MainActor.assumeIsolated {
+            self.finishRecording()
+          }
+          return nil
+        }
+
+        guard let shortcut = Self.shortcut(from: event) else {
+          MainActor.assumeIsolated {
+            NSSound.beep()
+          }
+          return nil
+        }
+
+        MainActor.assumeIsolated {
+          self.parent.onChange(shortcut)
+          self.finishRecording()
+        }
+        return nil
+      }
+    }
+
+    @MainActor
+    private func finishRecording() {
+      isRecording = false
+      if let monitor {
+        NSEvent.removeMonitor(monitor)
+        self.monitor = nil
+      }
+      if let button {
+        update(button)
+      }
+    }
+
+    private static func shortcut(from event: NSEvent) -> LatticeKeyboardShortcut? {
+      let flags = event.modifierFlags.intersection(.deviceIndependentFlagsMask)
+      var modifiers = LatticeKeyboardModifiers()
+      if flags.contains(.command) {
+        modifiers.insert(.command)
+      }
+      if flags.contains(.shift) {
+        modifiers.insert(.shift)
+      }
+      if flags.contains(.option) {
+        modifiers.insert(.option)
+      }
+      if flags.contains(.control) {
+        modifiers.insert(.control)
+      }
+      guard modifiers.contains(.command) || modifiers.contains(.option) || modifiers.contains(.control),
+            let key = event.charactersIgnoringModifiers?.lowercased().first,
+            let scalar = key.unicodeScalars.first,
+            !CharacterSet.whitespacesAndNewlines.contains(scalar)
+      else {
+        return nil
+      }
+      return LatticeKeyboardShortcut(key: String(key), modifiers: modifiers)
+    }
+  }
+}
+
+private final class ShortcutRecorderButton: NSButton {
+  weak var recorder: KeyboardShortcutRecorder.Coordinator?
+
+  override var acceptsFirstResponder: Bool {
+    true
+  }
+}
+#endif
 
 private struct ThemePreviewCard: View {
   let theme: LatticeTheme

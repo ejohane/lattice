@@ -150,8 +150,7 @@ public struct MarkdownTextEditor: NSViewRepresentable {
     let scrollView = NSScrollView()
     scrollView.drawsBackground = true
     scrollView.backgroundColor = theme.nsColor(.editorBackground)
-    scrollView.hasVerticalScroller = true
-    scrollView.autohidesScrollers = true
+    configureNativeOverlayScrollers(for: scrollView)
     scrollView.contentView = MarkdownClipView()
     scrollView.contentView.drawsBackground = true
     scrollView.contentView.backgroundColor = theme.nsColor(.editorBackground)
@@ -167,6 +166,7 @@ public struct MarkdownTextEditor: NSViewRepresentable {
     textView.isAutomaticDashSubstitutionEnabled = false
     textView.isAutomaticQuoteSubstitutionEnabled = false
     textView.isAutomaticTextReplacementEnabled = false
+    configureNativeTextChecking(for: textView)
     textView.theme = theme
     textView.drawsBackground = true
     textView.backgroundColor = theme.nsColor(.editorBackground)
@@ -212,7 +212,9 @@ public struct MarkdownTextEditor: NSViewRepresentable {
       context.coordinator.render(text, in: textView, preserving: clampedSelectedRange)
     }
     textView.theme = theme
+    configureNativeTextChecking(for: textView)
     scrollView.backgroundColor = theme.nsColor(.editorBackground)
+    configureNativeOverlayScrollers(for: scrollView)
     scrollView.contentView.backgroundColor = theme.nsColor(.editorBackground)
     textView.backgroundColor = theme.nsColor(.editorBackground)
     textView.insertionPointColor = theme.nsColor(.accent)
@@ -616,6 +618,19 @@ public struct MarkdownTextEditor: NSViewRepresentable {
       return nil
     }
     return min(max(caretAnchorFraction, 0.05), 0.95)
+  }
+
+  private func configureNativeOverlayScrollers(for scrollView: NSScrollView) {
+    scrollView.hasVerticalScroller = true
+    scrollView.hasHorizontalScroller = false
+    scrollView.autohidesScrollers = true
+    scrollView.scrollerStyle = .overlay
+    scrollView.scrollerKnobStyle = .default
+  }
+
+  private func configureNativeTextChecking(for textView: NSTextView) {
+    textView.isContinuousSpellCheckingEnabled = true
+    textView.isGrammarCheckingEnabled = true
   }
 }
 
@@ -1606,6 +1621,7 @@ public struct MarkdownTextEditor: UIViewRepresentable {
     textView.font = MarkdownAttributedRenderer.bodyFont(fontFamily: fontFamily)
     textView.adjustsFontForContentSizeCategory = true
     textView.autocorrectionType = .yes
+    textView.spellCheckingType = .yes
     textView.smartDashesType = .no
     textView.smartQuotesType = .no
     textView.accessibilityIdentifier = "noteEditor"
@@ -1625,6 +1641,8 @@ public struct MarkdownTextEditor: UIViewRepresentable {
   public func updateUIView(_ textView: UITextView, context: Context) {
     context.coordinator.parent = self
     (textView as? MarkdownUIKitTextView)?.markdownCoordinator = context.coordinator
+    textView.autocorrectionType = .yes
+    textView.spellCheckingType = .yes
     context.coordinator.updateKeyboardAccessory(for: textView)
     context.coordinator.configureCaretAnchorLayout(in: textView)
     let clampedSelectedRange = clamped(selectedRange, length: (text as NSString).length)

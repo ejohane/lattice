@@ -24,6 +24,7 @@ struct LatticeMacApp: App {
           width: Self.minimumWindowWidth,
           height: Self.minimumWindowHeight,
           identifier: Self.mainWindowIdentifier,
+          theme: model.theme,
           isZenModeEnabled: model.isZenModeEnabled
         ))
         .task {
@@ -41,7 +42,7 @@ struct LatticeMacApp: App {
           showMainWindow()
           model.createNewNote()
         }
-        .keyboardShortcut("n", modifiers: [.command])
+        .latticeKeyboardShortcut(model.keyboardShortcut(for: .newNote))
       }
       CommandGroup(replacing: .pasteboard) {
         Button("Cut") {
@@ -77,7 +78,16 @@ struct LatticeMacApp: App {
           showMainWindow()
           model.showCommandPalette()
         }
-        .keyboardShortcut("p", modifiers: [.command, .shift])
+        .latticeKeyboardShortcut(model.keyboardShortcut(for: .commandPalette))
+
+        Divider()
+
+        Button(model.isZenModeEnabled ? "Exit Zen Mode" : "Enter Zen Mode") {
+          showMainWindow()
+          model.toggleZenMode()
+        }
+        .latticeKeyboardShortcut(model.keyboardShortcut(for: .zenMode))
+        .disabled(!model.hasFolder)
 
         Divider()
 
@@ -85,23 +95,26 @@ struct LatticeMacApp: App {
           showMainWindow()
           model.showFolderImporter()
         }
-        if appDelegate.canCheckForUpdates {
-          Button("Check for Updates...") {
+        Button("Check for Updates...") {
+          if appDelegate.canCheckForUpdates {
             appDelegate.checkForUpdates()
+          } else {
+            model.errorMessage = "Update checking is available in release builds."
           }
         }
+        .latticeKeyboardShortcut(model.keyboardShortcut(for: .checkForUpdates))
       }
       CommandMenu("Navigate") {
         Button("Back") {
           model.navigateBack()
         }
-        .keyboardShortcut("[", modifiers: [.command])
+        .latticeKeyboardShortcut(model.keyboardShortcut(for: .navigateBack))
         .disabled(!model.canNavigateBack)
 
         Button("Forward") {
           model.navigateForward()
         }
-        .keyboardShortcut("]", modifiers: [.command])
+        .latticeKeyboardShortcut(model.keyboardShortcut(for: .navigateForward))
         .disabled(!model.canNavigateForward)
       }
       CommandGroup(replacing: .sidebar) {
@@ -146,7 +159,7 @@ struct LatticeMacApp: App {
         showMainWindow()
         model.createNewNote()
       }
-      .keyboardShortcut("n", modifiers: [.command])
+      .latticeKeyboardShortcut(model.keyboardShortcut(for: .newNote))
       Divider()
       Button("Choose Notes Folder...") {
         showMainWindow()
@@ -171,6 +184,7 @@ struct LatticeMacApp: App {
         Button("Check for Updates...") {
           appDelegate.checkForUpdates()
         }
+        .latticeKeyboardShortcut(model.keyboardShortcut(for: .checkForUpdates))
       }
       Divider()
       Button("Quit Lattice") {
@@ -193,23 +207,14 @@ struct LatticeMacApp: App {
   private var commandPalettePlatformCommands: [CommandPaletteCommand] {
     [
       CommandPaletteCommand(
-        id: "mac.addAttachment",
-        title: "Add Attachment",
-        subtitle: "Choose an image to attach to the current note",
-        systemImage: "plus",
-        isEnabled: model.hasFolder
-      ) {
-        showMainWindow()
-        chooseImageAttachments()
-      },
-      CommandPaletteCommand(
         id: "mac.checkForUpdates",
         title: "Check for Updates",
         subtitle: appDelegate.canCheckForUpdates
           ? "Look for a newer Lattice release"
           : "Available in release builds",
         systemImage: "arrow.triangle.2.circlepath",
-        isSetupSafe: true
+        isSetupSafe: true,
+        keyboardShortcut: model.keyboardShortcut(for: .checkForUpdates)?.displayText
       ) {
         if appDelegate.canCheckForUpdates {
           appDelegate.checkForUpdates()
@@ -237,6 +242,37 @@ struct LatticeMacApp: App {
 
 private extension LatticeMacApp {
   static let mainWindowIdentifier = "main"
+}
+
+private extension View {
+  @ViewBuilder
+  func latticeKeyboardShortcut(_ shortcut: LatticeKeyboardShortcut?) -> some View {
+    if let shortcut,
+       let key = shortcut.key.first {
+      keyboardShortcut(KeyEquivalent(key), modifiers: shortcut.eventModifiers)
+    } else {
+      self
+    }
+  }
+}
+
+private extension LatticeKeyboardShortcut {
+  var eventModifiers: EventModifiers {
+    var modifiers = EventModifiers()
+    if self.modifiers.contains(.command) {
+      modifiers.insert(.command)
+    }
+    if self.modifiers.contains(.shift) {
+      modifiers.insert(.shift)
+    }
+    if self.modifiers.contains(.option) {
+      modifiers.insert(.option)
+    }
+    if self.modifiers.contains(.control) {
+      modifiers.insert(.control)
+    }
+    return modifiers
+  }
 }
 
 private extension NSWindow {
@@ -316,6 +352,7 @@ private struct WindowConfiguration: NSViewRepresentable {
   let width: CGFloat
   let height: CGFloat
   let identifier: String
+  let theme: LatticeTheme
   let isZenModeEnabled: Bool
 
   func makeNSView(context: Context) -> NSView {
@@ -337,8 +374,10 @@ private struct WindowConfiguration: NSViewRepresentable {
       window.identifier = NSUserInterfaceItemIdentifier(identifier)
       window.minSize = size
       window.contentMinSize = size
+      window.backgroundColor = theme.nsColor(.appBackground)
       window.titleVisibility = isZenModeEnabled ? .hidden : .visible
-      window.titlebarAppearsTransparent = isZenModeEnabled
+      window.titlebarAppearsTransparent = true
+      window.toolbar?.showsBaselineSeparator = false
       window.standardWindowButton(.closeButton)?.isHidden = isZenModeEnabled
       window.standardWindowButton(.miniaturizeButton)?.isHidden = isZenModeEnabled
       window.standardWindowButton(.zoomButton)?.isHidden = isZenModeEnabled
