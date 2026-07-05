@@ -203,6 +203,15 @@ private enum CommandPaletteItem: Identifiable {
       return "doc.text"
     }
   }
+
+  var keyboardShortcut: String? {
+    switch self {
+    case .command(let command):
+      return command.keyboardShortcut
+    case .note:
+      return nil
+    }
+  }
 }
 
 private struct CommandPaletteRow: View {
@@ -231,6 +240,17 @@ private struct CommandPaletteRow: View {
         }
       }
       Spacer(minLength: 12)
+      if let keyboardShortcut = item.keyboardShortcut {
+        Text(keyboardShortcut)
+          .font(.caption.monospaced().weight(.medium))
+          .foregroundStyle(isHighlighted ? theme.color(.highlightedText).opacity(0.82) : theme.color(.tertiaryText))
+          .padding(.horizontal, 7)
+          .padding(.vertical, 3)
+          .background {
+            RoundedRectangle(cornerRadius: 5, style: .continuous)
+              .fill(isHighlighted ? theme.color(.highlightedText).opacity(0.16) : theme.color(.barBackground))
+          }
+      }
     }
     .padding(.horizontal, 10)
     .padding(.vertical, 8)

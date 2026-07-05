@@ -50,6 +50,8 @@ public final class LatticeAppModel {
   public var showsRelativeLineNumbers = false
   public var isZenModeEnabled = false
   public var selectedThemeID = LatticeThemeID.system
+  public var keyboardShortcutOverrides: [LatticeKeyboardShortcutID: LatticeKeyboardShortcut] = [:]
+  public var disabledKeyboardShortcuts: Set<LatticeKeyboardShortcutID> = []
   public var vimState = VimEditorState(mode: .insert)
   public var vimStatusMessage: String?
   public var wikiLinkStates: [WikiLinkRenderState] = []
@@ -94,6 +96,8 @@ public final class LatticeAppModel {
     self.selectedThemeID = editorPreferences.themeID
     self.editorFontFamily = editorPreferences.fontFamily
     self.showsStatusBar = editorPreferences.showsStatusBar
+    self.keyboardShortcutOverrides = editorPreferences.keyboardShortcutOverrides
+    self.disabledKeyboardShortcuts = editorPreferences.disabledKeyboardShortcuts
     self.vimState = VimEditorState(mode: editorPreferences.isVimModeEnabled ? .normal : .insert)
   }
 
@@ -804,6 +808,38 @@ public final class LatticeAppModel {
 
   public func setStatusBarVisible(_ isVisible: Bool) {
     showsStatusBar = isVisible
+    saveEditorPreferences()
+  }
+
+  public func keyboardShortcut(for id: LatticeKeyboardShortcutID) -> LatticeKeyboardShortcut? {
+    guard !disabledKeyboardShortcuts.contains(id) else {
+      return nil
+    }
+    return keyboardShortcutOverrides[id] ?? id.defaultShortcut
+  }
+
+  public func setKeyboardShortcut(_ shortcut: LatticeKeyboardShortcut, for id: LatticeKeyboardShortcutID) {
+    for otherID in LatticeKeyboardShortcutID.allCases where otherID != id {
+      if keyboardShortcut(for: otherID) == shortcut {
+        keyboardShortcutOverrides.removeValue(forKey: otherID)
+        disabledKeyboardShortcuts.insert(otherID)
+      }
+    }
+    keyboardShortcutOverrides[id] = shortcut
+    disabledKeyboardShortcuts.remove(id)
+    saveEditorPreferences()
+  }
+
+  public func resetKeyboardShortcut(for id: LatticeKeyboardShortcutID) {
+    let defaultShortcut = id.defaultShortcut
+    for otherID in LatticeKeyboardShortcutID.allCases where otherID != id {
+      if keyboardShortcut(for: otherID) == defaultShortcut {
+        keyboardShortcutOverrides.removeValue(forKey: otherID)
+        disabledKeyboardShortcuts.insert(otherID)
+      }
+    }
+    keyboardShortcutOverrides.removeValue(forKey: id)
+    disabledKeyboardShortcuts.remove(id)
     saveEditorPreferences()
   }
 
@@ -1588,7 +1624,9 @@ public final class LatticeAppModel {
       showsRelativeLineNumbers: showsRelativeLineNumbers,
       themeID: selectedThemeID,
       fontFamily: editorFontFamily,
-      showsStatusBar: showsStatusBar
+      showsStatusBar: showsStatusBar,
+      keyboardShortcutOverrides: keyboardShortcutOverrides,
+      disabledKeyboardShortcuts: disabledKeyboardShortcuts
     ))
   }
 
@@ -1604,7 +1642,8 @@ public final class LatticeAppModel {
         subtitle: isZenModeEnabled
           ? "Restore the full notes interface"
           : "Focus the current note",
-        systemImage: isZenModeEnabled ? "arrow.down.right.and.arrow.up.left" : "arrow.up.left.and.arrow.down.right"
+        systemImage: isZenModeEnabled ? "arrow.down.right.and.arrow.up.left" : "arrow.up.left.and.arrow.down.right",
+        keyboardShortcut: keyboardShortcut(for: .zenMode)?.displayText
       ) { [weak self] in
         self?.toggleZenMode()
       },
@@ -1613,7 +1652,8 @@ public final class LatticeAppModel {
         title: "Back",
         subtitle: "Return to the previous note location",
         systemImage: "chevron.left",
-        isEnabled: canNavigateBack
+        isEnabled: canNavigateBack,
+        keyboardShortcut: keyboardShortcut(for: .navigateBack)?.displayText
       ) { [weak self] in
         self?.navigateBack()
       },
@@ -1622,7 +1662,8 @@ public final class LatticeAppModel {
         title: "Forward",
         subtitle: "Go to the next note location",
         systemImage: "chevron.right",
-        isEnabled: canNavigateForward
+        isEnabled: canNavigateForward,
+        keyboardShortcut: keyboardShortcut(for: .navigateForward)?.displayText
       ) { [weak self] in
         self?.navigateForward()
       },
@@ -1630,7 +1671,8 @@ public final class LatticeAppModel {
         id: "lattice.newNote",
         title: "New Note",
         subtitle: "Start a fresh Markdown note",
-        systemImage: "square.and.pencil"
+        systemImage: "square.and.pencil",
+        keyboardShortcut: keyboardShortcut(for: .newNote)?.displayText
       ) { [weak self] in
         self?.createNewNote()
       }
@@ -1780,6 +1822,7 @@ public struct CommandPaletteCommand: Identifiable {
   public let systemImage: String
   public let isEnabled: Bool
   public let isSetupSafe: Bool
+  public let keyboardShortcut: String?
   private let action: @MainActor () -> Void
 
   public init(
@@ -1789,6 +1832,7 @@ public struct CommandPaletteCommand: Identifiable {
     systemImage: String,
     isEnabled: Bool = true,
     isSetupSafe: Bool = false,
+    keyboardShortcut: String? = nil,
     action: @escaping @MainActor () -> Void
   ) {
     self.id = id
@@ -1797,11 +1841,12 @@ public struct CommandPaletteCommand: Identifiable {
     self.systemImage = systemImage
     self.isEnabled = isEnabled
     self.isSetupSafe = isSetupSafe
+    self.keyboardShortcut = keyboardShortcut
     self.action = action
   }
 
   public var searchableText: String {
-    "\(title) \(subtitle ?? "")"
+    "\(title) \(subtitle ?? "") \(keyboardShortcut ?? "")"
   }
 
   @MainActor
