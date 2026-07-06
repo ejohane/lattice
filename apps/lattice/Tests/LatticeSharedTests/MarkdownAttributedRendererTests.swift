@@ -123,13 +123,21 @@ struct MarkdownAttributedRendererTests {
   func stylesCheckedTaskListContentAsCompleted() {
     let attributed = MarkdownAttributedRenderer.render("- [x] done\nnext", activeRanges: [NSRange(location: 11, length: 0)])
     let string = attributed.string as NSString
+    let markerRange = string.range(of: "-")
+    let checkboxRange = string.range(of: "[x]")
     let contentRange = string.range(of: "done")
 
-    let markerGlyphInfo = attributed.attribute(.glyphInfo, at: 0, effectiveRange: nil) as? NSGlyphInfo
+    let markerColor = attributed.attribute(.foregroundColor, at: markerRange.location, effectiveRange: nil) as? NSColor
+    let rendersCheckbox = attributed.attribute(.latticeTaskCheckbox, at: checkboxRange.location, effectiveRange: nil) as? Bool
+    let isChecked = attributed.attribute(.latticeTaskCheckboxChecked, at: checkboxRange.location, effectiveRange: nil) as? Bool
+    let checkboxColor = attributed.attribute(.foregroundColor, at: checkboxRange.location, effectiveRange: nil) as? NSColor
     let color = attributed.attribute(.foregroundColor, at: contentRange.location, effectiveRange: nil) as? NSColor
     let strikethrough = attributed.attribute(.strikethroughStyle, at: contentRange.location, effectiveRange: nil) as? Int
 
-    #expect(markerGlyphInfo != nil)
+    #expect(markerColor == NSColor.clear)
+    #expect(rendersCheckbox == true)
+    #expect(isChecked == true)
+    #expect(checkboxColor == NSColor.clear)
     #expect(color == NSColor.secondaryLabelColor)
     #expect(strikethrough == NSUnderlineStyle.single.rawValue)
   }
@@ -138,12 +146,15 @@ struct MarkdownAttributedRendererTests {
   func doesNotCompleteUncheckedTaskListContent() {
     let attributed = MarkdownAttributedRenderer.render("- [ ] todo\nnext", activeRanges: [NSRange(location: 11, length: 0)])
     let string = attributed.string as NSString
+    let checkboxRange = string.range(of: "[ ]")
     let contentRange = string.range(of: "todo")
 
-    let markerGlyphInfo = attributed.attribute(.glyphInfo, at: 0, effectiveRange: nil) as? NSGlyphInfo
+    let rendersCheckbox = attributed.attribute(.latticeTaskCheckbox, at: checkboxRange.location, effectiveRange: nil) as? Bool
+    let isChecked = attributed.attribute(.latticeTaskCheckboxChecked, at: checkboxRange.location, effectiveRange: nil) as? Bool
     let strikethrough = attributed.attribute(.strikethroughStyle, at: contentRange.location, effectiveRange: nil) as? Int
 
-    #expect(markerGlyphInfo != nil)
+    #expect(rendersCheckbox == true)
+    #expect(isChecked == false)
     #expect(strikethrough == nil)
   }
 
@@ -158,12 +169,14 @@ struct MarkdownAttributedRendererTests {
     let endMarkerGlyphInfo = endAttributed.attribute(.glyphInfo, at: 0, effectiveRange: nil) as? NSGlyphInfo
     let markerColor = attributed.attribute(.foregroundColor, at: 0, effectiveRange: nil) as? NSColor
     let checkboxColor = attributed.attribute(.foregroundColor, at: 2, effectiveRange: nil) as? NSColor
+    let rendersCheckbox = attributed.attribute(.latticeTaskCheckbox, at: 2, effectiveRange: nil) as? Bool
 
     #expect(startMarkerGlyphInfo == nil)
     #expect(markerGlyphInfo == nil)
     #expect(endMarkerGlyphInfo == nil)
     #expect(markerColor == NSColor.controlAccentColor)
     #expect(checkboxColor == NSColor.controlAccentColor)
+    #expect(rendersCheckbox == nil)
   }
 
   @Test("shows active empty task list markers as editable source")
