@@ -915,15 +915,203 @@ enum MarkdownAttributedRenderer {
     wikiLinkStates: [WikiLinkRenderState],
     theme: LatticeTheme
   ) {
+    let fullRange = NSRange(location: 0, length: attributed.length)
+    let codeBlocks = codeBlockRanges(in: attributed.string as NSString)
     for span in MarkdownStyler.spans(in: attributed.string) {
       guard NSMaxRange(span.range) <= attributed.length else {
         continue
       }
       attributed.addAttributes(attributes(for: span, fontFamily: fontFamily, theme: theme), range: span.range)
     }
+    applyInlineTokenStyles(to: attributed, fontFamily: fontFamily, skippedRanges: codeBlocks, activeRanges: activeRanges, theme: theme)
+    applyAutolinkStyles(to: attributed, fullRange: fullRange, skippedRanges: inlineLinkRanges(in: attributed.string, fullRange: fullRange, skippedRanges: codeBlocks), theme: theme)
     applyBlockStyles(to: attributed, fontFamily: fontFamily, activeRanges: activeRanges, theme: theme)
     applyWikiLinkStyles(to: attributed, fontFamily: fontFamily, activeRanges: activeRanges, states: wikiLinkStates, theme: theme)
-    hideLatticeMetadataComments(in: attributed, fontFamily: fontFamily, theme: theme)
+    hideLatticeMetadataComments(in: attributed, fontFamily: fontFamily, activeRanges: activeRanges, theme: theme)
+  }
+
+  private static func applyInlineTokenStyles(
+    to attributed: NSMutableAttributedString,
+    fontFamily: EditorFontFamily,
+    skippedRanges: [NSRange],
+    activeRanges: [NSRange],
+    theme: LatticeTheme
+  ) {
+    applyInlineStyle(
+      pattern: "`([^`\\n]+)`",
+      to: attributed,
+      fontFamily: fontFamily,
+      skippedRanges: skippedRanges,
+      activeRanges: activeRanges,
+      contentAttributes: inlineCodeAttributes(theme: theme),
+      tokenGroups: [0],
+      contentGroups: [1],
+      theme: theme
+    )
+    applyInlineLinkStyle(
+      pattern: "!\\[([^\\]\\n]*)\\]\\(([^)\\n]+)\\)",
+      to: attributed,
+      fontFamily: fontFamily,
+      skippedRanges: skippedRanges,
+      activeRanges: activeRanges,
+      labelGroup: 1,
+      urlGroup: 2,
+      theme: theme
+    )
+    applyInlineLinkStyle(
+      pattern: "\\[([^\\]\\n]+)\\]\\(([^)\\n]+)\\)",
+      to: attributed,
+      fontFamily: fontFamily,
+      skippedRanges: skippedRanges,
+      activeRanges: activeRanges,
+      labelGroup: 1,
+      urlGroup: 2,
+      theme: theme
+    )
+    applyInlineStyle(
+      pattern: "(\\*\\*|__)(.+?)\\1",
+      to: attributed,
+      fontFamily: fontFamily,
+      skippedRanges: skippedRanges,
+      activeRanges: activeRanges,
+      contentAttributes: [
+        .font: bodyFont(weight: .semibold, fontFamily: fontFamily),
+        .foregroundColor: theme.uiColor(.primaryText)
+      ],
+      tokenGroups: [0],
+      contentGroups: [2],
+      theme: theme
+    )
+    applyInlineStyle(
+      pattern: "(~~)(.+?)\\1",
+      to: attributed,
+      fontFamily: fontFamily,
+      skippedRanges: skippedRanges,
+      activeRanges: activeRanges,
+      contentAttributes: [
+        .foregroundColor: theme.uiColor(.primaryText),
+        .strikethroughStyle: NSUnderlineStyle.single.rawValue
+      ],
+      tokenGroups: [0],
+      contentGroups: [2],
+      theme: theme
+    )
+    applyInlineStyle(
+      pattern: "(?<!\\*)\\*(?!\\*)([^*\\n]+)(?<!\\*)\\*(?!\\*)",
+      to: attributed,
+      fontFamily: fontFamily,
+      skippedRanges: skippedRanges,
+      activeRanges: activeRanges,
+      contentAttributes: [
+        .font: italicBodyFont(fontFamily: fontFamily),
+        .foregroundColor: theme.uiColor(.primaryText)
+      ],
+      tokenGroups: [0],
+      contentGroups: [1],
+      theme: theme
+    )
+    applyInlineStyle(
+      pattern: "(?<!_)_(?!_)([^_\\n]+)(?<!_)_(?!_)",
+      to: attributed,
+      fontFamily: fontFamily,
+      skippedRanges: skippedRanges,
+      activeRanges: activeRanges,
+      contentAttributes: [
+        .font: italicBodyFont(fontFamily: fontFamily),
+        .foregroundColor: theme.uiColor(.primaryText)
+      ],
+      tokenGroups: [0],
+      contentGroups: [1],
+      theme: theme
+    )
+  }
+
+  private static func applyInlineStyle(
+    pattern: String,
+    to attributed: NSMutableAttributedString,
+    fontFamily: EditorFontFamily,
+    skippedRanges: [NSRange],
+    activeRanges: [NSRange],
+    contentAttributes: [NSAttributedString.Key: Any],
+    tokenGroups: [Int],
+    contentGroups: [Int],
+    theme: LatticeTheme
+  ) {
+    guard let regex = try? NSRegularExpression(pattern: pattern) else {
+      return
+    }
+
+    let fullRange = NSRange(location: 0, length: attributed.length)
+    for match in regex.matches(in: attributed.string, range: fullRange) where !range(match.range, intersectsAny: skippedRanges) {
+      let markdownTokenAttributes = range(match.range, containsAnyActive: activeRanges)
+        ? tokenAttributes(theme: theme)
+        : hiddenTokenAttributes(fontFamily: fontFamily)
+
+      for group in tokenGroups {
+        let tokenRange = match.range(at: group)
+        if tokenRange.location != NSNotFound {
+          attributed.addAttributes(markdownTokenAttributes, range: tokenRange)
+        }
+      }
+
+      for group in contentGroups {
+        let contentRange = match.range(at: group)
+        if contentRange.location != NSNotFound {
+          attributed.addAttributes(contentAttributes, range: contentRange)
+        }
+      }
+    }
+  }
+
+  private static func applyInlineLinkStyle(
+    pattern: String,
+    to attributed: NSMutableAttributedString,
+    fontFamily: EditorFontFamily,
+    skippedRanges: [NSRange],
+    activeRanges: [NSRange],
+    labelGroup: Int,
+    urlGroup: Int,
+    theme: LatticeTheme
+  ) {
+    guard let regex = try? NSRegularExpression(pattern: pattern) else {
+      return
+    }
+
+    let nsString = attributed.string as NSString
+    let fullRange = NSRange(location: 0, length: attributed.length)
+    for match in regex.matches(in: attributed.string, range: fullRange) where !range(match.range, intersectsAny: skippedRanges) {
+      let markdownTokenAttributes = range(match.range, containsAnyActive: activeRanges)
+        ? tokenAttributes(theme: theme)
+        : hiddenTokenAttributes(fontFamily: fontFamily)
+      attributed.addAttributes(markdownTokenAttributes, range: match.range)
+
+      let labelRange = match.range(at: labelGroup)
+      let urlRange = match.range(at: urlGroup)
+      guard labelRange.location != NSNotFound, urlRange.location != NSNotFound else {
+        continue
+      }
+
+      attributed.addAttributes(
+        linkAttributes(destination: nsString.substring(with: urlRange), theme: theme),
+        range: labelRange
+      )
+    }
+  }
+
+  private static func applyAutolinkStyles(
+    to attributed: NSMutableAttributedString,
+    fullRange: NSRange,
+    skippedRanges: [NSRange],
+    theme: LatticeTheme
+  ) {
+    guard let detector = try? NSDataDetector(types: NSTextCheckingResult.CheckingType.link.rawValue) else {
+      return
+    }
+
+    for match in detector.matches(in: attributed.string, range: fullRange)
+    where match.resultType == .link && !range(match.range, intersectsAny: skippedRanges) {
+      attributed.addAttributes(linkAttributes(destination: match.url?.absoluteString, theme: theme), range: match.range)
+    }
   }
 
   private static func applyBlockStyles(
@@ -987,7 +1175,7 @@ enum MarkdownAttributedRenderer {
     case .inlineCode:
       return [.font: UIFont.monospacedSystemFont(ofSize: 18, weight: .regular), .foregroundColor: theme.uiColor(.codeText)]
     case .bold:
-      return [.font: bodyFont(size: 21, weight: .semibold, fontFamily: fontFamily)]
+      return [.font: bodyFont(weight: .semibold, fontFamily: fontFamily)]
     case .italic:
       return [.font: italicBodyFont(fontFamily: fontFamily)]
     case .link:
@@ -1010,11 +1198,33 @@ enum MarkdownAttributedRenderer {
     return attributes
   }
 
+  private static func inlineCodeAttributes(theme: LatticeTheme) -> [NSAttributedString.Key: Any] {
+    [
+      .font: UIFont.monospacedSystemFont(ofSize: 18, weight: .regular),
+      .foregroundColor: theme.uiColor(.codeText),
+      .backgroundColor: theme.uiColor(.codeBackground)
+    ]
+  }
+
+  private static func tokenAttributes(theme: LatticeTheme) -> [NSAttributedString.Key: Any] {
+    [
+      .foregroundColor: theme.uiColor(.tertiaryText),
+      .font: UIFont.monospacedSystemFont(ofSize: 16, weight: .regular)
+    ]
+  }
+
+  private static func hiddenTokenAttributes(fontFamily: EditorFontFamily) -> [NSAttributedString.Key: Any] {
+    [
+      .foregroundColor: UIColor.clear,
+      .font: bodyFont(size: 0.1, fontFamily: fontFamily)
+    ]
+  }
+
   private static func italicBodyFont(fontFamily: EditorFontFamily) -> UIFont {
-    let baseFont = bodyFont(size: 21, fontFamily: fontFamily)
+    let baseFont = bodyFont(fontFamily: fontFamily)
     let descriptor = baseFont.fontDescriptor.withSymbolicTraits(.traitItalic)
       ?? baseFont.fontDescriptor
-    return UIFont(descriptor: descriptor, size: 21)
+    return UIFont(descriptor: descriptor, size: baseFont.pointSize)
   }
 
   private static func listMarkerAttributes(
@@ -1023,7 +1233,7 @@ enum MarkdownAttributedRenderer {
   ) -> [NSAttributedString.Key: Any] {
     [
       .foregroundColor: theme.uiColor(.accent),
-      .font: bodyFont(size: 21, weight: .semibold, fontFamily: fontFamily)
+      .font: bodyFont(weight: .semibold, fontFamily: fontFamily)
     ]
   }
 
@@ -1098,26 +1308,12 @@ enum MarkdownAttributedRenderer {
       attributed.addAttributes(wikiLinkAttributes(for: status, theme: theme), range: linkContentRange(for: link.range))
 
       let delimiterAttributes = range(link.range, containsAnyActive: activeRanges)
-        ? wikiLinkDelimiterAttributes(theme: theme)
-        : hiddenWikiLinkDelimiterAttributes(fontFamily: fontFamily)
+        ? tokenAttributes(theme: theme)
+        : hiddenTokenAttributes(fontFamily: fontFamily)
       for delimiterRange in linkDelimiterRanges(for: link.range) {
         attributed.addAttributes(delimiterAttributes, range: delimiterRange)
       }
     }
-  }
-
-  private static func wikiLinkDelimiterAttributes(theme: LatticeTheme) -> [NSAttributedString.Key: Any] {
-    [
-      .foregroundColor: theme.uiColor(.tertiaryText),
-      .font: UIFont.monospacedSystemFont(ofSize: 16, weight: .regular)
-    ]
-  }
-
-  private static func hiddenWikiLinkDelimiterAttributes(fontFamily: EditorFontFamily) -> [NSAttributedString.Key: Any] {
-    [
-      .foregroundColor: UIColor.clear,
-      .font: bodyFont(size: 0.1, fontFamily: fontFamily)
-    ]
   }
 
   private static func range(_ range: NSRange, containsAnyActive activeRanges: [NSRange]) -> Bool {
@@ -1130,11 +1326,68 @@ enum MarkdownAttributedRenderer {
     }
   }
 
+  private static func range(_ range: NSRange, intersectsAny ranges: [NSRange]) -> Bool {
+    ranges.contains { NSIntersectionRange(range, $0).length > 0 }
+  }
+
   private static func firstMatch(_ pattern: String, in string: String) -> NSTextCheckingResult? {
     guard let regex = try? NSRegularExpression(pattern: pattern) else {
       return nil
     }
     return regex.firstMatch(in: string, range: NSRange(location: 0, length: (string as NSString).length))
+  }
+
+  private static func codeBlockRanges(in nsString: NSString) -> [NSRange] {
+    var ranges: [NSRange] = []
+    var blockStart: Int?
+    var location = 0
+
+    while location < nsString.length {
+      let lineRange = nsString.lineRange(for: NSRange(location: location, length: 0))
+      let line = nsString.substring(with: lineRange)
+
+      if firstMatch("^\\s*(```|~~~)", in: line) != nil {
+        if let start = blockStart {
+          ranges.append(NSRange(location: start, length: NSMaxRange(lineRange) - start))
+          blockStart = nil
+        } else {
+          blockStart = lineRange.location
+        }
+      }
+
+      location = NSMaxRange(lineRange)
+    }
+
+    if let start = blockStart {
+      ranges.append(NSRange(location: start, length: nsString.length - start))
+    }
+
+    return ranges
+  }
+
+  private static func inlineLinkRanges(
+    in string: String,
+    fullRange: NSRange,
+    skippedRanges: [NSRange]
+  ) -> [NSRange] {
+    skippedRanges
+      + rangesMatching(pattern: "`([^`\\n]+)`", in: string, fullRange: fullRange, skippedRanges: skippedRanges)
+      + rangesMatching(pattern: "!?\\[[^\\]\\n]+\\]\\([^)\\n]+\\)", in: string, fullRange: fullRange, skippedRanges: skippedRanges)
+  }
+
+  private static func rangesMatching(
+    pattern: String,
+    in string: String,
+    fullRange: NSRange,
+    skippedRanges: [NSRange]
+  ) -> [NSRange] {
+    guard let regex = try? NSRegularExpression(pattern: pattern) else {
+      return []
+    }
+
+    return regex.matches(in: string, range: fullRange)
+      .filter { !range($0.range, intersectsAny: skippedRanges) }
+      .map(\.range)
   }
 
   private static func shifted(_ range: NSRange, by offset: Int) -> NSRange {
@@ -1161,17 +1414,18 @@ enum MarkdownAttributedRenderer {
   private static func hideLatticeMetadataComments(
     in attributed: NSMutableAttributedString,
     fontFamily: EditorFontFamily,
-    theme _: LatticeTheme
+    activeRanges: [NSRange],
+    theme: LatticeTheme
   ) {
     guard let regex = try? NSRegularExpression(pattern: #"<!--\s*lattice:[^>]*-->"#) else {
       return
     }
     let fullRange = NSRange(location: 0, length: attributed.length)
     for match in regex.matches(in: attributed.string, range: fullRange) {
-      attributed.addAttributes([
-        .foregroundColor: UIColor.clear,
-        .font: bodyFont(size: 0.1, fontFamily: fontFamily)
-      ], range: match.range)
+      let attributes = range(match.range, containsAnyActive: activeRanges)
+        ? tokenAttributes(theme: theme)
+        : hiddenTokenAttributes(fontFamily: fontFamily)
+      attributed.addAttributes(attributes, range: match.range)
     }
   }
 

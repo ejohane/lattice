@@ -1633,7 +1633,9 @@ public struct MarkdownTextEditor: UIViewRepresentable {
     textView.addGestureRecognizer(tapRecognizer)
 
     context.coordinator.updateKeyboardAccessory(for: textView)
+    context.coordinator.startKeyboardObserving()
     context.coordinator.configureCaretAnchorLayout(in: textView)
+    context.coordinator.applyHostBackground(for: textView)
 
     return textView
   }
@@ -1674,17 +1676,19 @@ public struct MarkdownTextEditor: UIViewRepresentable {
         context.coordinator.render(text, in: textView, preserving: clampedSelectedRange)
       } else {
         textView.selectedRange = clampedSelectedRange
-        context.coordinator.scheduleCaretAnchor(selection: clampedSelectedRange, animated: false)
+        context.coordinator.scheduleCaretVisibility(selection: clampedSelectedRange, animated: false)
       }
     }
     (textView as? MarkdownUIKitTextView)?.theme = theme
     textView.backgroundColor = theme.uiColor(.editorBackground)
     textView.tintColor = theme.uiColor(.accent)
+    context.coordinator.applyHostBackground(for: textView)
     if context.coordinator.lastFocusToken != focusToken {
       context.coordinator.lastFocusToken = focusToken
       DispatchQueue.main.async {
         textView.becomeFirstResponder()
-        context.coordinator.scheduleCaretAnchor(selection: clampedSelectedRange, animated: false)
+        context.coordinator.applyHostBackground(for: textView)
+        context.coordinator.scheduleCaretVisibility(selection: clampedSelectedRange, animated: false)
       }
     }
   }
@@ -1708,8 +1712,11 @@ public struct MarkdownTextEditor: UIViewRepresentable {
     private var defaultContentInset: UIEdgeInsets?
     private var pendingAnchorTask: Task<Void, Never>?
     private var pendingViewportFreezeTask: Task<Void, Never>?
+    private var pendingKeyboardRevealTask: Task<Void, Never>?
+    private var keyboardFrameInScreen: CGRect?
     private var frozenTypingContentOffsetY: CGFloat?
     private var isApplyingProgrammaticContentOffset = false
+    private var isObservingKeyboard = false
 
     private nonisolated static let imageTypeIdentifiers = [
       UTType.image.identifier,
@@ -1723,6 +1730,58 @@ public struct MarkdownTextEditor: UIViewRepresentable {
 
     init(parent: MarkdownTextEditor) {
       self.parent = parent
+    }
+
+    deinit {
+      pendingAnchorTask?.cancel()
+      pendingViewportFreezeTask?.cancel()
+      pendingKeyboardRevealTask?.cancel()
+      NotificationCenter.default.removeObserver(self)
+    }
+
+    func startKeyboardObserving() {
+      guard !isObservingKeyboard else {
+        return
+      }
+
+      let center = NotificationCenter.default
+      center.addObserver(
+        self,
+        selector: #selector(keyboardFrameDidChange(_:)),
+        name: UIResponder.keyboardWillChangeFrameNotification,
+        object: nil
+      )
+      center.addObserver(
+        self,
+        selector: #selector(keyboardFrameDidChange(_:)),
+        name: UIResponder.keyboardDidChangeFrameNotification,
+        object: nil
+      )
+      center.addObserver(
+        self,
+        selector: #selector(keyboardFrameDidChange(_:)),
+        name: UIResponder.keyboardWillHideNotification,
+        object: nil
+      )
+      isObservingKeyboard = true
+    }
+
+    @objc private func keyboardFrameDidChange(_ notification: Notification) {
+      keyboardFrameInScreen = notification.userInfo?[UIResponder.keyboardFrameEndUserInfoKey] as? CGRect
+      guard let textView else {
+        return
+      }
+
+      applyHostBackground(for: textView)
+      configureCaretAnchorLayout(in: textView)
+      scheduleCaretVisibility(selection: textView.selectedRange, animated: false)
+    }
+
+    func applyHostBackground(for textView: UITextView) {
+      let color = parent.theme.uiColor(.editorBackground)
+      textView.backgroundColor = color
+      textView.superview?.backgroundColor = color
+      textView.window?.backgroundColor = color
     }
 
     func updateKeyboardAccessory(for textView: UITextView) {
@@ -1818,7 +1877,7 @@ public struct MarkdownTextEditor: UIViewRepresentable {
       if needsSelectionRender(selection: clampedSelection, text: textView.text, wikiLinkRange: nextActiveWikiLinkRange) {
         render(textView.text, in: textView, preserving: clampedSelection)
       } else if !parent.dimsInactiveParagraphs {
-        scheduleCaretAnchor(selection: clampedSelection, animated: false)
+        scheduleCaretVisibility(selection: clampedSelection, animated: false)
       }
     }
 
@@ -1827,7 +1886,7 @@ public struct MarkdownTextEditor: UIViewRepresentable {
         return
       }
       configureCaretAnchorLayout(in: textView)
-      scheduleCaretAnchor(selection: textView.selectedRange, animated: false)
+      scheduleCaretVisibility(selection: textView.selectedRange, animated: false)
     }
 
     public func scrollViewDidScroll(_ scrollView: UIScrollView) {
@@ -1982,7 +2041,7 @@ public struct MarkdownTextEditor: UIViewRepresentable {
       lastRenderedImagePreviewStates = parent.imagePreviewStates
       lastRenderedActiveRanges = activeRanges
       isRendering = false
-      scheduleCaretAnchor(selection: clampedSelection, animated: false)
+      scheduleCaretVisibility(selection: clampedSelection, animated: false)
     }
 
     private func applyAnchoredZenReplacement(
@@ -2214,11 +2273,19 @@ public struct MarkdownTextEditor: UIViewRepresentable {
         defaultContentInset = textView.contentInset
       }
 
+      let keyboardBottomInset = keyboardOcclusionHeight(in: textView)
+      let baseContentInset = defaultContentInset ?? .zero
       guard let anchor = parent.normalizedCaretAnchorFraction else {
         pendingAnchorTask?.cancel()
+        let contentInset = UIEdgeInsets(
+          top: baseContentInset.top,
+          left: baseContentInset.left,
+          bottom: baseContentInset.bottom + keyboardBottomInset,
+          right: baseContentInset.right
+        )
         applyInsets(
           textContainerInset: defaultTextContainerInset,
-          contentInset: defaultContentInset ?? .zero,
+          contentInset: contentInset,
           to: textView
         )
         textView.showsVerticalScrollIndicator = true
@@ -2230,11 +2297,10 @@ public struct MarkdownTextEditor: UIViewRepresentable {
         return
       }
 
-      let baseContentInset = defaultContentInset ?? .zero
       let contentInset = UIEdgeInsets(
         top: baseContentInset.top + visibleHeight * anchor,
         left: baseContentInset.left,
-        bottom: baseContentInset.bottom + visibleHeight * (1 - anchor),
+        bottom: baseContentInset.bottom + keyboardBottomInset + visibleHeight * (1 - anchor),
         right: baseContentInset.right
       )
       applyInsets(
@@ -2243,6 +2309,14 @@ public struct MarkdownTextEditor: UIViewRepresentable {
         to: textView
       )
       textView.showsVerticalScrollIndicator = false
+    }
+
+    func scheduleCaretVisibility(selection: NSRange? = nil, animated: Bool) {
+      if parent.normalizedCaretAnchorFraction != nil {
+        scheduleCaretAnchor(selection: selection, animated: animated)
+      } else {
+        scheduleKeyboardCaretReveal(selection: selection, animated: animated)
+      }
     }
 
     func scheduleCaretAnchor(selection: NSRange? = nil, animated: Bool) {
@@ -2259,6 +2333,22 @@ public struct MarkdownTextEditor: UIViewRepresentable {
         self.configureCaretAnchorLayout(in: textView)
         let targetSelection = selection ?? textView.selectedRange
         self.scrollCaretToAnchor(in: textView, selection: targetSelection, animated: animated)
+      }
+    }
+
+    func scheduleKeyboardCaretReveal(selection: NSRange? = nil, animated: Bool) {
+      pendingKeyboardRevealTask?.cancel()
+      pendingKeyboardRevealTask = Task { @MainActor [weak self] in
+        await Task.yield()
+        guard !Task.isCancelled, let self, let textView = self.textView else {
+          return
+        }
+        self.configureCaretAnchorLayout(in: textView)
+        guard self.keyboardOcclusionHeight(in: textView) > 0 else {
+          return
+        }
+        let targetSelection = selection ?? textView.selectedRange
+        self.scrollCaretAboveKeyboard(in: textView, selection: targetSelection, animated: animated)
       }
     }
 
@@ -2289,6 +2379,71 @@ public struct MarkdownTextEditor: UIViewRepresentable {
           textView.layoutIfNeeded()
         }
       }
+    }
+
+    func scrollCaretAboveKeyboard(in textView: UITextView, selection: NSRange, animated: Bool) {
+      textView.layoutIfNeeded()
+      guard textView.bounds.height > 0,
+            let caretRect = caretRect(for: selection, in: textView)
+      else {
+        return
+      }
+
+      let verticalMargin = max(8, caretRect.height)
+      let visibleTop = textView.contentOffset.y + textView.adjustedContentInset.top
+      let visibleBottom = textView.contentOffset.y + textView.bounds.height - textView.adjustedContentInset.bottom
+      var targetOffsetY = textView.contentOffset.y
+
+      if caretRect.maxY + verticalMargin > visibleBottom {
+        targetOffsetY += caretRect.maxY + verticalMargin - visibleBottom
+      } else if caretRect.minY - verticalMargin < visibleTop {
+        targetOffsetY -= visibleTop - (caretRect.minY - verticalMargin)
+      } else {
+        return
+      }
+
+      let constrainedOffsetY = constrainedContentOffsetY(targetOffsetY, in: textView)
+      guard abs(textView.contentOffset.y - constrainedOffsetY) > 0.5 else {
+        return
+      }
+
+      let offset = CGPoint(x: textView.contentOffset.x, y: constrainedOffsetY)
+      if animated {
+        textView.setContentOffset(offset, animated: true)
+      } else {
+        performProgrammaticContentOffsetChange {
+          textView.setContentOffset(offset, animated: false)
+          textView.layoutIfNeeded()
+        }
+      }
+    }
+
+    private func keyboardOcclusionHeight(in textView: UITextView) -> CGFloat {
+      guard textView.isFirstResponder else {
+        return 0
+      }
+
+      let guideFrame = textView.keyboardLayoutGuide.layoutFrame
+      if guideFrame.hasFiniteCoordinates,
+         !guideFrame.isNull,
+         guideFrame.minY < textView.bounds.maxY {
+        return max(0, textView.bounds.maxY - max(textView.bounds.minY, guideFrame.minY))
+      }
+
+      guard
+        let keyboardFrameInScreen,
+        let window = textView.window
+      else {
+        return 0
+      }
+
+      let keyboardFrameInWindow = window.convert(keyboardFrameInScreen, from: nil)
+      let keyboardFrameInTextView = textView.convert(keyboardFrameInWindow, from: window)
+      guard keyboardFrameInTextView.hasFiniteCoordinates else {
+        return 0
+      }
+
+      return max(0, textView.bounds.intersection(keyboardFrameInTextView).height)
     }
 
     private func caretRect(for selection: NSRange, in textView: UITextView) -> CGRect? {
@@ -2519,17 +2674,20 @@ public struct MarkdownTextEditor: UIViewRepresentable {
   }
 }
 
-private final class MarkdownKeyboardAccessoryView: UIInputView {
+private final class MarkdownKeyboardAccessoryView: UIView {
+  private let backgroundView = UIView()
+  private let leadingKeyboardCornerUnderlay = UIView()
+  private let trailingKeyboardCornerUnderlay = UIView()
   private let effectView = UIVisualEffectView(effect: UIBlurEffect(style: .systemMaterial))
   private let leftButton = MarkdownKeyboardAccessoryButton(type: .system)
   private let dismissButton = UIButton(type: .system)
   private let rightButton = MarkdownKeyboardAccessoryButton(type: .system)
 
   init() {
-    super.init(frame: CGRect(x: 0, y: 0, width: 0, height: 64), inputViewStyle: .keyboard)
-    allowsSelfSizing = true
+    super.init(frame: CGRect(x: 0, y: 0, width: 0, height: 64))
     autoresizingMask = [.flexibleWidth]
-    backgroundColor = .clear
+    clipsToBounds = false
+    isOpaque = true
     setupView()
   }
 
@@ -2549,6 +2707,7 @@ private final class MarkdownKeyboardAccessoryView: UIInputView {
     action: Selector,
     dismissAction: Selector
   ) {
+    applyBackground(theme: theme)
     configureActionButton(
       leftButton,
       action: actions.first,
@@ -2569,8 +2728,17 @@ private final class MarkdownKeyboardAccessoryView: UIInputView {
   }
 
   private func setupView() {
+    addSubview(leadingKeyboardCornerUnderlay)
+    addSubview(trailingKeyboardCornerUnderlay)
+    addSubview(backgroundView)
     addSubview(effectView)
+    leadingKeyboardCornerUnderlay.translatesAutoresizingMaskIntoConstraints = false
+    trailingKeyboardCornerUnderlay.translatesAutoresizingMaskIntoConstraints = false
+    backgroundView.translatesAutoresizingMaskIntoConstraints = false
     effectView.translatesAutoresizingMaskIntoConstraints = false
+    leadingKeyboardCornerUnderlay.isOpaque = true
+    trailingKeyboardCornerUnderlay.isOpaque = true
+    backgroundView.isOpaque = true
     effectView.clipsToBounds = true
     effectView.layer.cornerRadius = 24
     effectView.layer.borderWidth = 1 / UIScreen.main.scale
@@ -2586,6 +2754,21 @@ private final class MarkdownKeyboardAccessoryView: UIInputView {
     dismissButton.accessibilityLabel = "Dismiss Keyboard"
 
     NSLayoutConstraint.activate([
+      leadingKeyboardCornerUnderlay.leadingAnchor.constraint(equalTo: leadingAnchor),
+      leadingKeyboardCornerUnderlay.topAnchor.constraint(equalTo: bottomAnchor, constant: -1),
+      leadingKeyboardCornerUnderlay.widthAnchor.constraint(equalToConstant: 44),
+      leadingKeyboardCornerUnderlay.heightAnchor.constraint(equalToConstant: 32),
+
+      trailingKeyboardCornerUnderlay.trailingAnchor.constraint(equalTo: trailingAnchor),
+      trailingKeyboardCornerUnderlay.topAnchor.constraint(equalTo: bottomAnchor, constant: -1),
+      trailingKeyboardCornerUnderlay.widthAnchor.constraint(equalToConstant: 44),
+      trailingKeyboardCornerUnderlay.heightAnchor.constraint(equalToConstant: 32),
+
+      backgroundView.leadingAnchor.constraint(equalTo: leadingAnchor),
+      backgroundView.trailingAnchor.constraint(equalTo: trailingAnchor),
+      backgroundView.topAnchor.constraint(equalTo: topAnchor),
+      backgroundView.bottomAnchor.constraint(equalTo: bottomAnchor),
+
       effectView.leadingAnchor.constraint(equalTo: leadingAnchor, constant: 12),
       effectView.trailingAnchor.constraint(equalTo: trailingAnchor, constant: -12),
       effectView.topAnchor.constraint(equalTo: topAnchor, constant: 8),
@@ -2606,6 +2789,14 @@ private final class MarkdownKeyboardAccessoryView: UIInputView {
       rightButton.widthAnchor.constraint(equalToConstant: 48),
       rightButton.heightAnchor.constraint(equalToConstant: 44)
     ])
+  }
+
+  private func applyBackground(theme: LatticeTheme) {
+    let color = theme.uiColor(.editorBackground)
+    backgroundColor = color
+    backgroundView.backgroundColor = color
+    leadingKeyboardCornerUnderlay.backgroundColor = color
+    trailingKeyboardCornerUnderlay.backgroundColor = color
   }
 
   private func configureActionButton(
