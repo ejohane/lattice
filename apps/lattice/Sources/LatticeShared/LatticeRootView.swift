@@ -6,6 +6,7 @@ import UniformTypeIdentifiers
 
 #if os(iOS)
 import PhotosUI
+import UIKit
 #endif
 
 public struct LatticeRootView: View {
@@ -221,11 +222,98 @@ private struct NoteSidebar: View {
   }
 }
 
+#if os(iOS)
+private struct ThemedWindowBackground: UIViewRepresentable {
+  let color: UIColor
+
+  func makeUIView(context: Context) -> UIView {
+    let view = UIView(frame: .zero)
+    view.isUserInteractionEnabled = false
+    view.backgroundColor = color
+    return view
+  }
+
+  func updateUIView(_ view: UIView, context: Context) {
+    view.backgroundColor = color
+    DispatchQueue.main.async {
+      view.window?.backgroundColor = color
+      var ancestor: UIView? = view
+      while let current = ancestor {
+        if current.backgroundColor == nil || current.backgroundColor == .clear {
+          current.backgroundColor = color
+        }
+        ancestor = current.superview
+      }
+    }
+  }
+}
+
+private struct LeftEdgeBackSwipeView: UIViewRepresentable {
+  let action: @MainActor () -> Void
+
+  func makeUIView(context: Context) -> UIView {
+    let view = UIView(frame: .zero)
+    view.backgroundColor = .clear
+    view.isOpaque = false
+
+    let recognizer = UIPanGestureRecognizer(target: context.coordinator, action: #selector(Coordinator.handlePan(_:)))
+    recognizer.delegate = context.coordinator
+    recognizer.cancelsTouchesInView = false
+    view.addGestureRecognizer(recognizer)
+    return view
+  }
+
+  func updateUIView(_ view: UIView, context: Context) {
+    context.coordinator.action = action
+  }
+
+  func makeCoordinator() -> Coordinator {
+    Coordinator(action: action)
+  }
+
+  final class Coordinator: NSObject, UIGestureRecognizerDelegate {
+    var action: @MainActor () -> Void
+
+    init(action: @escaping @MainActor () -> Void) {
+      self.action = action
+    }
+
+    func gestureRecognizerShouldBegin(_ gestureRecognizer: UIGestureRecognizer) -> Bool {
+      guard let pan = gestureRecognizer as? UIPanGestureRecognizer,
+            let view = pan.view
+      else {
+        return false
+      }
+
+      let translation = pan.translation(in: view)
+      let velocity = pan.velocity(in: view)
+      return velocity.x > 0 && abs(velocity.x) > abs(velocity.y) && translation.x >= 0
+    }
+
+    @objc func handlePan(_ recognizer: UIPanGestureRecognizer) {
+      guard recognizer.state == .ended,
+            let view = recognizer.view
+      else {
+        return
+      }
+
+      let translation = recognizer.translation(in: view)
+      let velocity = recognizer.velocity(in: view)
+      if translation.x > 44 || velocity.x > 450 {
+        Task { @MainActor in
+          action()
+        }
+      }
+    }
+  }
+}
+#endif
+
 private struct NoteEditorPane: View {
   @Bindable var model: LatticeAppModel
   @Environment(\.latticeTheme) private var theme
   private let maximumEditorWidth: CGFloat = 920
-  private let editorHorizontalPadding: CGFloat = 18
+  private let editorHorizontalPadding: CGFloat = 12
   #if os(iOS)
   @State private var isShowingPhotoPicker = false
   @State private var selectedPhotoItem: PhotosPickerItem?
@@ -241,8 +329,15 @@ private struct NoteEditorPane: View {
 
     #if os(iOS)
     content
-      .navigationTitle(model.selectedNote.map { model.displayTitle(for: $0) } ?? "New Note")
-      .navigationBarTitleDisplayMode(.inline)
+      .toolbar(.hidden, for: .navigationBar)
+      .background(ThemedWindowBackground(color: theme.uiColor(.editorBackground)))
+      .overlay(alignment: .leading) {
+        LeftEdgeBackSwipeView {
+          model.preferredCompactColumn = .sidebar
+        }
+        .frame(width: 32)
+        .ignoresSafeArea(.container, edges: .vertical)
+      }
       .photosPicker(
         isPresented: $isShowingPhotoPicker,
         selection: $selectedPhotoItem,
@@ -253,43 +348,7 @@ private struct NoteEditorPane: View {
       }
     #else
     content
-      .navigationTitle(model.selectedNote.map { model.displayTitle(for: $0) } ?? "New Note")
       .navigationSplitViewColumnWidth(min: 260, ideal: 720)
-      .toolbar {
-        ToolbarItemGroup(placement: .primaryAction) {
-          Button {
-            model.navigateBack()
-          } label: {
-            Label("Back", systemImage: "chevron.left")
-          }
-          .help("Back")
-          .disabled(!model.canNavigateBack)
-
-          Button {
-            model.navigateForward()
-          } label: {
-            Label("Forward", systemImage: "chevron.right")
-          }
-          .help("Forward")
-          .disabled(!model.canNavigateForward)
-        }
-
-        ToolbarItem(placement: .primaryAction) {
-          Menu {
-            markdownButton(.heading, title: "Heading", systemImage: "textformat.size")
-            markdownButton(.bold, title: "Bold", systemImage: "bold")
-            markdownButton(.italic, title: "Italic", systemImage: "italic")
-            markdownButton(.horizontalRule, title: "Horizontal Rule", systemImage: "minus")
-            markdownButton(.bulletList, title: "List", systemImage: "list.bullet")
-            markdownButton(.taskList, title: "Checkbox", systemImage: "checklist")
-            markdownButton(.code, title: "Code", systemImage: "chevron.left.forwardslash.chevron.right")
-            markdownButton(.link, title: "Link", systemImage: "link")
-          } label: {
-            Label("Format", systemImage: "textformat")
-          }
-          .disabled(!model.hasFolder)
-        }
-      }
     #endif
   }
 
@@ -560,18 +619,6 @@ private struct NoteEditorPane: View {
     }
   }
 
-  private func markdownButton(
-    _ command: MarkdownCommand,
-    title: String,
-    systemImage: String
-  ) -> some View {
-    Button {
-      model.apply(command)
-    } label: {
-      Label(title, systemImage: systemImage)
-    }
-    .disabled(!model.hasFolder)
-  }
 }
 
 private struct ZenNoteEditorPane: View {
@@ -582,7 +629,7 @@ private struct ZenNoteEditorPane: View {
   var body: some View {
     editorContent
       .frame(maxWidth: maximumEditorWidth, maxHeight: .infinity)
-      .padding(.horizontal, 18)
+      .padding(.horizontal, 12)
       .frame(maxWidth: .infinity, maxHeight: .infinity)
       .background(theme.color(.appBackground))
   }
