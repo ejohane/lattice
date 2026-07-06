@@ -17,6 +17,7 @@ public final class LatticeAppModel {
   private let dateProvider: () -> Date
   private let session: NoteEditingSession
   private var autosaveWorkItem: DispatchWorkItem?
+  private var editorDecorationWorkItem: DispatchWorkItem?
   private var taskSyncPollTask: Task<Void, Never>?
   private var scopedFolderURL: URL?
   private var backStack: [NavigationHistoryEntry] = []
@@ -719,9 +720,8 @@ public final class LatticeAppModel {
   public func noteTextDidChange() {
     vimStatusMessage = nil
     scheduleAutosave()
-    refreshWikiLinkStates()
-    refreshImagePreviewStates()
-    updateWikiAutocomplete()
+    updateWikiAutocompleteIfNeeded()
+    scheduleEditorDecorationRefresh()
   }
 
   public func insertImageAttachments(_ imports: [ImageAttachmentImport]) {
@@ -780,7 +780,7 @@ public final class LatticeAppModel {
   }
 
   public func noteSelectionDidChange() {
-    updateWikiAutocomplete()
+    updateWikiAutocompleteIfNeeded()
   }
 
   public func setVimModeEnabled(_ isEnabled: Bool) {
@@ -875,6 +875,17 @@ public final class LatticeAppModel {
     DispatchQueue.main.asyncAfter(deadline: .now() + 0.8, execute: workItem)
   }
 
+  private func scheduleEditorDecorationRefresh() {
+    editorDecorationWorkItem?.cancel()
+    let workItem = DispatchWorkItem { [weak self] in
+      Task { @MainActor in
+        self?.refreshEditorDecorations()
+      }
+    }
+    editorDecorationWorkItem = workItem
+    DispatchQueue.main.asyncAfter(deadline: .now() + 0.15, execute: workItem)
+  }
+
   public func flushAutosave() {
     flushAutosave(syncSavedNote: true)
   }
@@ -882,6 +893,9 @@ public final class LatticeAppModel {
   private func flushAutosave(syncSavedNote: Bool) {
     autosaveWorkItem?.cancel()
     autosaveWorkItem = nil
+    editorDecorationWorkItem?.cancel()
+    editorDecorationWorkItem = nil
+    refreshEditorDecorations()
     autosave(showStatus: false, syncSavedNote: syncSavedNote)
   }
 
@@ -1155,6 +1169,25 @@ public final class LatticeAppModel {
       }
       return MarkdownImageRenderState(link: link, url: url)
     }
+  }
+
+  private func refreshEditorDecorations() {
+    editorDecorationWorkItem?.cancel()
+    editorDecorationWorkItem = nil
+    refreshWikiLinkStates()
+    refreshImagePreviewStates()
+    updateWikiAutocompleteIfNeeded()
+  }
+
+  private func updateWikiAutocompleteIfNeeded() {
+    guard WikiLinkParser.autocompleteContext(in: text, selection: selectedRange) != nil else {
+      if !wikiAutocompleteSuggestions.isEmpty {
+        wikiAutocompleteSuggestions = []
+      }
+      return
+    }
+
+    updateWikiAutocomplete()
   }
 
   private func rewriteHeadingLinksIfNeeded(for note: SavedNote, previousBody: String, nextBody: String) {
