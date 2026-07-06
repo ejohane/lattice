@@ -209,7 +209,8 @@ public struct MarkdownTextEditor: NSViewRepresentable {
       || context.coordinator.lastRenderedImagePreviewStates != imagePreviewStates {
       context.coordinator.render(text, in: textView, preserving: clampedSelectedRange)
     } else if textView.selectedRange() != clampedSelectedRange {
-      context.coordinator.render(text, in: textView, preserving: clampedSelectedRange)
+      textView.setSelectedRange(clampedSelectedRange)
+      context.coordinator.scheduleDeferredRender(in: textView, preserving: clampedSelectedRange)
     }
     textView.theme = theme
     configureNativeTextChecking(for: textView)
@@ -246,6 +247,8 @@ public struct MarkdownTextEditor: NSViewRepresentable {
     private let defaultCaretBottomPadding: CGFloat = 12
     private let defaultCaretTopPadding: CGFloat = 12
     private let defaultManualScrollBottomSlackFraction: CGFloat = 0.45
+    private let deferredRenderDelayNanoseconds: UInt64 = 75_000_000
+    private var pendingRenderTask: Task<Void, Never>?
     private var pendingAnchorTask: Task<Void, Never>?
 
     init(parent: MarkdownTextEditor) {
@@ -281,18 +284,21 @@ public struct MarkdownTextEditor: NSViewRepresentable {
       parent.text = textView.string
       parent.selectedRange = textView.selectedRange()
       parent.onTextChange()
-      render(textView.string, in: textView, preserving: textView.selectedRange())
+      applyBaseTypingAttributes(to: textView)
+      (textView as? MarkdownTextView)?.invalidateLineNumberRuler()
+      textView.needsDisplay = true
+      scheduleDeferredRender(in: textView, preserving: textView.selectedRange())
       scheduleCaretAnchor(animated: true)
     }
 
     public func textViewDidChangeSelection(_ notification: Notification) {
-      guard let textView = notification.object as? NSTextView else {
+      guard let textView = notification.object as? NSTextView, !isRendering else {
         return
       }
       let selection = textView.selectedRange()
       parent.selectedRange = selection
       parent.onSelectionChange()
-      render(textView.string, in: textView, preserving: selection)
+      scheduleDeferredRender(in: textView, preserving: selection)
       scheduleCaretAnchor(animated: true)
     }
 
@@ -336,6 +342,8 @@ public struct MarkdownTextEditor: NSViewRepresentable {
       guard !isRendering else {
         return
       }
+      pendingRenderTask?.cancel()
+      pendingRenderTask = nil
       isRendering = true
       let activeRanges = parent.dimsInactiveParagraphs
         ? [Self.lineRange(containing: selection, in: text)]
@@ -367,6 +375,25 @@ public struct MarkdownTextEditor: NSViewRepresentable {
       lastRenderedImagePreviewStates = parent.imagePreviewStates
       isRendering = false
       scheduleCaretAnchor(selection: selection, animated: true)
+    }
+
+    func scheduleDeferredRender(in textView: NSTextView, preserving selection: NSRange) {
+      pendingRenderTask?.cancel()
+      pendingRenderTask = Task { @MainActor [weak self, weak textView] in
+        try? await Task.sleep(nanoseconds: self?.deferredRenderDelayNanoseconds ?? 75_000_000)
+        guard !Task.isCancelled, let self, let textView, !self.isRendering else {
+          return
+        }
+        self.render(textView.string, in: textView, preserving: textView.selectedRange())
+      }
+    }
+
+    private func applyBaseTypingAttributes(to textView: NSTextView) {
+      textView.typingAttributes = MarkdownAttributedRenderer.baseTypingAttributes(
+        fontSize: parent.fontSize,
+        fontFamily: parent.fontFamily,
+        theme: parent.theme
+      )
     }
 
     func scheduleCaretAnchor(selection: NSRange? = nil, animated: Bool) {
