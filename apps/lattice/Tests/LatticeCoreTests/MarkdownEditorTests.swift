@@ -588,6 +588,14 @@ struct MarkdownStylerTests {
     #expect(kinds.contains(.codeBlock))
   }
 
+  @Test("styles empty ordered list markers")
+  func stylesEmptyOrderedListMarkers() throws {
+    let spans = MarkdownStyler.spans(in: "1. ")
+
+    let marker = try #require(spans.first { $0.kind == .listMarker })
+    #expect(marker.range == NSRange(location: 0, length: 2))
+  }
+
   @Test("detects bare URLs without restyling markdown destinations")
   func detectsBareURLsWithoutRestylingMarkdownDestinations() {
     let text = """
