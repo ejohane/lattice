@@ -498,6 +498,30 @@ struct LatticeAppModelTests {
     #expect(model.vimStatusMessage == nil)
   }
 
+  @Test("skips synchronous editor decoration refresh while typing")
+  func skipsSynchronousEditorDecorationRefreshWhileTyping() throws {
+    let fixture = try Fixture()
+    defer { fixture.cleanup() }
+    let noteIndex = CountingNoteIndex()
+    let model = LatticeAppModel(
+      noteLibrary: fixture.library,
+      folderAccessStore: fixture.folderAccessStore,
+      noteIndex: noteIndex
+    )
+
+    try fixture.fileManager.createDirectory(at: fixture.root, withIntermediateDirectories: true)
+    model.chooseFolder(fixture.root)
+    noteIndex.wikiLinkRenderStateCallCount = 0
+    model.text = "Draft body"
+    model.selectedRange = NSRange(location: (model.text as NSString).length, length: 0)
+
+    model.noteTextDidChange()
+
+    #expect(noteIndex.wikiLinkRenderStateCallCount == 0)
+    model.flushAutosave()
+    #expect(noteIndex.wikiLinkRenderStateCallCount > 0)
+  }
+
   @Test("zen mode is session-only and suppresses vim while active")
   func zenModeIsSessionOnlyAndSuppressesVimWhileActive() throws {
     let fixture = try Fixture()
@@ -946,6 +970,54 @@ private struct Fixture {
 
 private enum FixtureError: Error {
   case defaultsUnavailable
+}
+
+private final class CountingNoteIndex: NoteIndexing {
+  var wikiLinkRenderStateCallCount = 0
+
+  func rebuild(notesFolderURL: URL) throws {}
+
+  func refresh(note: SavedNote, notesFolderURL: URL) throws {}
+
+  func recentNotes(notesFolderURL: URL, limit: Int) throws -> [SavedNote] {
+    []
+  }
+
+  func searchNotes(query: String, notesFolderURL: URL, limit: Int) throws -> [SavedNote] {
+    []
+  }
+
+  func indexedNotes(notesFolderURL: URL, limit: Int) throws -> [IndexedNote] {
+    []
+  }
+
+  func wikiNoteCandidates(stem: String, notesFolderURL: URL, limit: Int) throws -> [WikiNoteCandidate] {
+    []
+  }
+
+  func wikiHeadingCandidates(
+    noteID: String?,
+    stem: String?,
+    prefix: String,
+    currentNote: SavedNote?,
+    notesFolderURL: URL,
+    limit: Int
+  ) throws -> [WikiHeadingCandidate] {
+    []
+  }
+
+  func wikiBacklinks(to noteID: String, notesFolderURL: URL, limit: Int) throws -> [WikiBacklink] {
+    []
+  }
+
+  func wikiLinkRenderStates(
+    body: String,
+    currentNote: SavedNote?,
+    notesFolderURL: URL
+  ) throws -> [WikiLinkRenderState] {
+    wikiLinkRenderStateCallCount += 1
+    return []
+  }
 }
 
 private final class FailingNoteIndex: NoteIndexing {

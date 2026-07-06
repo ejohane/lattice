@@ -1646,15 +1646,36 @@ public struct MarkdownTextEditor: UIViewRepresentable {
     context.coordinator.updateKeyboardAccessory(for: textView)
     context.coordinator.configureCaretAnchorLayout(in: textView)
     let clampedSelectedRange = clamped(selectedRange, length: (text as NSString).length)
-    if textView.text != text
+    let needsTextOrLayoutRender = textView.text != text
       || context.coordinator.lastRenderedFontFamily != fontFamily
-      || context.coordinator.lastRenderedWikiLinkStates != wikiLinkStates
       || context.coordinator.lastRenderedDimsInactiveParagraphs != dimsInactiveParagraphs
       || context.coordinator.lastRenderedTheme != theme
-      || context.coordinator.lastRenderedImagePreviewStates != imagePreviewStates {
+    let needsDecorationRender = context.coordinator.lastRenderedWikiLinkStates != wikiLinkStates
+      || context.coordinator.lastRenderedImagePreviewStates != imagePreviewStates
+    if needsTextOrLayoutRender {
       context.coordinator.render(text, in: textView, preserving: clampedSelectedRange)
+    } else if needsDecorationRender {
+      if context.coordinator.canSkipFocusedSameLineDecorationRender(
+        in: textView,
+        text: text,
+        selection: clampedSelectedRange
+      ) {
+        context.coordinator.acknowledgeDecorationInputs()
+      } else {
+        context.coordinator.render(text, in: textView, preserving: clampedSelectedRange)
+      }
     } else if textView.selectedRange != clampedSelectedRange {
-      context.coordinator.render(text, in: textView, preserving: clampedSelectedRange)
+      let wikiLinkRange = WikiLinkParser.link(at: clampedSelectedRange.location, in: text)?.range
+      if context.coordinator.needsSelectionRender(
+        selection: clampedSelectedRange,
+        text: text,
+        wikiLinkRange: wikiLinkRange
+      ) {
+        context.coordinator.render(text, in: textView, preserving: clampedSelectedRange)
+      } else {
+        textView.selectedRange = clampedSelectedRange
+        context.coordinator.scheduleCaretAnchor(selection: clampedSelectedRange, animated: false)
+      }
     }
     (textView as? MarkdownUIKitTextView)?.theme = theme
     textView.backgroundColor = theme.uiColor(.editorBackground)
@@ -1677,6 +1698,7 @@ public struct MarkdownTextEditor: UIViewRepresentable {
     var lastRenderedDimsInactiveParagraphs = false
     var lastRenderedTheme = LatticeTheme(id: .system)
     var lastRenderedImagePreviewStates: [MarkdownImageRenderState] = []
+    private var lastRenderedActiveRanges: [NSRange] = []
     private var isRendering = false
     private var activeWikiLinkRange: NSRange?
     private var keyboardAccessoryView: MarkdownKeyboardAccessoryView?
@@ -1685,6 +1707,9 @@ public struct MarkdownTextEditor: UIViewRepresentable {
     private let defaultTextContainerInset = UIEdgeInsets(top: 34, left: 22, bottom: 34, right: 22)
     private var defaultContentInset: UIEdgeInsets?
     private var pendingAnchorTask: Task<Void, Never>?
+    private var pendingViewportFreezeTask: Task<Void, Never>?
+    private var frozenTypingContentOffsetY: CGFloat?
+    private var isApplyingProgrammaticContentOffset = false
 
     private nonisolated static let imageTypeIdentifiers = [
       UTType.image.identifier,
@@ -1771,8 +1796,15 @@ public struct MarkdownTextEditor: UIViewRepresentable {
       parent.text = textView.text
       parent.selectedRange = textView.selectedRange
       parent.onTextChange()
+      guard !parent.dimsInactiveParagraphs else {
+        let activeLineLocation = Self.lineRange(containing: textView.selectedRange, in: textView.text).location
+        let didChangeActiveLine = activeLineLocation != lastRenderedActiveRanges.first?.location
+        if didChangeActiveLine {
+          render(textView.text, in: textView, preserving: textView.selectedRange)
+        }
+        return
+      }
       render(textView.text, in: textView, preserving: textView.selectedRange)
-      scheduleCaretAnchor(selection: textView.selectedRange, animated: true)
     }
 
     public func textViewDidChangeSelection(_ textView: UITextView) {
@@ -1783,10 +1815,10 @@ public struct MarkdownTextEditor: UIViewRepresentable {
       parent.onSelectionChange()
       let clampedSelection = clamped(textView.selectedRange, length: (textView.text as NSString).length)
       let nextActiveWikiLinkRange = WikiLinkParser.link(at: clampedSelection.location, in: textView.text)?.range
-      if parent.dimsInactiveParagraphs || nextActiveWikiLinkRange != activeWikiLinkRange {
+      if needsSelectionRender(selection: clampedSelection, text: textView.text, wikiLinkRange: nextActiveWikiLinkRange) {
         render(textView.text, in: textView, preserving: clampedSelection)
-      } else {
-        scheduleCaretAnchor(selection: clampedSelection, animated: true)
+      } else if !parent.dimsInactiveParagraphs {
+        scheduleCaretAnchor(selection: clampedSelection, animated: false)
       }
     }
 
@@ -1796,6 +1828,13 @@ public struct MarkdownTextEditor: UIViewRepresentable {
       }
       configureCaretAnchorLayout(in: textView)
       scheduleCaretAnchor(selection: textView.selectedRange, animated: false)
+    }
+
+    public func scrollViewDidScroll(_ scrollView: UIScrollView) {
+      guard let textView = scrollView as? UITextView else {
+        return
+      }
+      restoreFrozenViewportIfNeeded(in: textView)
     }
 
     public func textView(
@@ -1810,6 +1849,9 @@ public struct MarkdownTextEditor: UIViewRepresentable {
       guard text == "\n",
             let result = MarkdownListContinuation.applyReturn(to: textView.text, selection: range)
       else {
+        if applyAnchoredZenReplacement(in: textView, range: range, replacementText: text) {
+          return false
+        }
         return true
       }
 
@@ -1819,7 +1861,6 @@ public struct MarkdownTextEditor: UIViewRepresentable {
       parent.selectedRange = textView.selectedRange
       parent.onTextChange()
       render(textView.text, in: textView, preserving: textView.selectedRange)
-      scheduleCaretAnchor(selection: textView.selectedRange, animated: true)
       return false
     }
 
@@ -1850,7 +1891,6 @@ public struct MarkdownTextEditor: UIViewRepresentable {
       parent.selectedRange = textView.selectedRange
       parent.onTextChange()
       render(textView.text, in: textView, preserving: textView.selectedRange)
-      scheduleCaretAnchor(selection: textView.selectedRange, animated: true)
       return true
     }
 
@@ -1896,7 +1936,6 @@ public struct MarkdownTextEditor: UIViewRepresentable {
       parent.selectedRange = textView.selectedRange
       parent.onTextChange()
       render(textView.text, in: textView, preserving: textView.selectedRange)
-      scheduleCaretAnchor(selection: textView.selectedRange, animated: true)
     }
 
     func render(_ text: String, in textView: UITextView, preserving selection: NSRange) {
@@ -1906,11 +1945,9 @@ public struct MarkdownTextEditor: UIViewRepresentable {
       isRendering = true
       let clampedSelection = clamped(selection, length: (text as NSString).length)
       activeWikiLinkRange = WikiLinkParser.link(at: clampedSelection.location, in: text)?.range
-      let activeRanges = parent.dimsInactiveParagraphs
-        ? [Self.lineRange(containing: clampedSelection, in: text)]
-        : [clampedSelection]
+      let activeRanges = activeRanges(for: clampedSelection, in: text)
       textView.textColor = parent.theme.uiColor(.primaryText)
-      textView.attributedText = MarkdownAttributedRenderer.render(
+      let renderedText = MarkdownAttributedRenderer.render(
         text,
         fontFamily: parent.fontFamily,
         activeRanges: activeRanges,
@@ -1919,19 +1956,256 @@ public struct MarkdownTextEditor: UIViewRepresentable {
         theme: parent.theme,
         imagePreviewStates: parent.imagePreviewStates
       )
-      textView.selectedRange = clampedSelection
-      textView.typingAttributes = MarkdownAttributedRenderer.baseTypingAttributes(
+      let typingAttributes = MarkdownAttributedRenderer.baseTypingAttributes(
         fontFamily: parent.fontFamily,
         theme: parent.theme
       )
+      if parent.normalizedCaretAnchorFraction != nil {
+        let currentOffset = textView.contentOffset
+        performProgrammaticContentOffsetChange {
+          textView.textStorage.setAttributedString(renderedText)
+          textView.selectedRange = clampedSelection
+          textView.typingAttributes = typingAttributes
+          textView.setContentOffset(currentOffset, animated: false)
+          textView.layoutIfNeeded()
+        }
+      } else {
+        textView.textStorage.setAttributedString(renderedText)
+        textView.selectedRange = clampedSelection
+        textView.typingAttributes = typingAttributes
+      }
       textView.setNeedsDisplay()
       lastRenderedFontFamily = parent.fontFamily
       lastRenderedWikiLinkStates = parent.wikiLinkStates
       lastRenderedDimsInactiveParagraphs = parent.dimsInactiveParagraphs
       lastRenderedTheme = parent.theme
       lastRenderedImagePreviewStates = parent.imagePreviewStates
+      lastRenderedActiveRanges = activeRanges
       isRendering = false
-      scheduleCaretAnchor(selection: clampedSelection, animated: true)
+      scheduleCaretAnchor(selection: clampedSelection, animated: false)
+    }
+
+    private func applyAnchoredZenReplacement(
+      in textView: UITextView,
+      range: NSRange,
+      replacementText: String
+    ) -> Bool {
+      guard
+        parent.normalizedCaretAnchorFraction != nil,
+        parent.dimsInactiveParagraphs,
+        textView.markedTextRange == nil
+      else {
+        return false
+      }
+
+      let textLength = (textView.text as NSString).length
+      let clampedRange = clamped(range, length: textLength)
+      let previousActiveLineLocation = lastRenderedActiveRanges.first?.location
+        ?? Self.lineRange(containing: clampedRange, in: textView.text).location
+      let originalContentOffsetY = textView.contentOffset.y
+      let replacementLength = (replacementText as NSString).length
+      let nextSelection = NSRange(location: clampedRange.location + replacementLength, length: 0)
+      let typingAttributes = MarkdownAttributedRenderer.baseTypingAttributes(
+        fontFamily: parent.fontFamily,
+        theme: parent.theme
+      )
+
+      freezeViewport(at: originalContentOffsetY)
+      performProgrammaticContentOffsetChange {
+        textView.textStorage.replaceCharacters(in: clampedRange, with: replacementText)
+        if replacementLength > 0 {
+          textView.textStorage.addAttributes(
+            typingAttributes,
+            range: NSRange(location: clampedRange.location, length: replacementLength)
+          )
+        }
+        textView.selectedRange = clamped(nextSelection, length: (textView.text as NSString).length)
+        textView.typingAttributes = typingAttributes
+        textView.setContentOffset(
+          CGPoint(x: textView.contentOffset.x, y: originalContentOffsetY),
+          animated: false
+        )
+        textView.layoutIfNeeded()
+        textView.setContentOffset(
+          CGPoint(x: textView.contentOffset.x, y: originalContentOffsetY),
+          animated: false
+        )
+      }
+
+      let targetOffsetY = anchoredContentOffsetY(in: textView, selection: textView.selectedRange)
+      if let targetOffsetY {
+        freezeViewport(at: targetOffsetY)
+        performProgrammaticContentOffsetChange {
+          textView.setContentOffset(
+            CGPoint(x: textView.contentOffset.x, y: targetOffsetY),
+            animated: false
+          )
+          textView.layoutIfNeeded()
+        }
+      }
+
+      parent.text = textView.text
+      parent.selectedRange = textView.selectedRange
+      parent.onTextChange()
+
+      let activeLineRange = Self.lineRange(containing: textView.selectedRange, in: textView.text)
+      if activeLineRange.location != previousActiveLineLocation {
+        clearFrozenViewport()
+        render(textView.text, in: textView, preserving: textView.selectedRange)
+      } else {
+        lastRenderedActiveRanges = [activeLineRange]
+        textView.setNeedsDisplay()
+        clearFrozenViewportAfterLayout()
+      }
+
+      return true
+    }
+
+    private func freezeViewport(at offsetY: CGFloat) {
+      guard parent.normalizedCaretAnchorFraction != nil, parent.dimsInactiveParagraphs else {
+        return
+      }
+
+      pendingViewportFreezeTask?.cancel()
+      frozenTypingContentOffsetY = offsetY
+    }
+
+    private func clearFrozenViewportAfterLayout() {
+      pendingViewportFreezeTask?.cancel()
+      pendingViewportFreezeTask = Task { @MainActor [weak self] in
+        await Task.yield()
+        await Task.yield()
+        guard !Task.isCancelled else {
+          return
+        }
+        self?.frozenTypingContentOffsetY = nil
+        self?.pendingViewportFreezeTask = nil
+      }
+    }
+
+    private func anchoredContentOffsetY(in textView: UITextView, selection: NSRange) -> CGFloat? {
+      guard let anchor = parent.normalizedCaretAnchorFraction else {
+        return nil
+      }
+
+      textView.layoutIfNeeded()
+      guard textView.bounds.height > 0,
+            let caretRect = caretRect(for: selection, in: textView)
+      else {
+        return nil
+      }
+
+      let targetOffsetY = caretRect.midY - textView.bounds.height * anchor
+      return constrainedContentOffsetY(targetOffsetY, in: textView)
+    }
+
+    private func constrainedContentOffsetY(_ offsetY: CGFloat, in textView: UITextView) -> CGFloat {
+      let minOffsetY = -textView.adjustedContentInset.top
+      let maxOffsetY = max(
+        minOffsetY,
+        textView.contentSize.height + textView.adjustedContentInset.bottom - textView.bounds.height
+      )
+      return min(max(offsetY, minOffsetY), maxOffsetY)
+    }
+
+    private func clearFrozenViewport() {
+      pendingViewportFreezeTask?.cancel()
+      pendingViewportFreezeTask = nil
+      frozenTypingContentOffsetY = nil
+    }
+
+    @discardableResult
+    func restoreFrozenViewportIfNeeded(in textView: UITextView) -> Bool {
+      guard
+        !isApplyingProgrammaticContentOffset,
+        parent.normalizedCaretAnchorFraction != nil,
+        parent.dimsInactiveParagraphs,
+        let frozenTypingContentOffsetY,
+        textView.isFirstResponder,
+        !textView.isTracking,
+        !textView.isDragging,
+        !textView.isDecelerating,
+        abs(textView.contentOffset.y - frozenTypingContentOffsetY) > 0.5
+      else {
+        return false
+      }
+
+      performProgrammaticContentOffsetChange {
+        textView.setContentOffset(
+          CGPoint(x: textView.contentOffset.x, y: frozenTypingContentOffsetY),
+          animated: false
+        )
+        textView.layoutIfNeeded()
+      }
+      return true
+    }
+
+    func protectedContentOffset(for textView: UITextView, proposed offset: CGPoint) -> CGPoint? {
+      guard
+        !isApplyingProgrammaticContentOffset,
+        parent.normalizedCaretAnchorFraction != nil,
+        parent.dimsInactiveParagraphs,
+        let frozenTypingContentOffsetY,
+        textView.isFirstResponder,
+        !textView.isTracking,
+        !textView.isDragging,
+        !textView.isDecelerating,
+        abs(offset.y - frozenTypingContentOffsetY) > 0.5
+      else {
+        return nil
+      }
+
+      return CGPoint(x: offset.x, y: frozenTypingContentOffsetY)
+    }
+
+    private func performProgrammaticContentOffsetChange(_ body: () -> Void) {
+      isApplyingProgrammaticContentOffset = true
+      defer {
+        isApplyingProgrammaticContentOffset = false
+      }
+      UIView.performWithoutAnimation {
+        body()
+      }
+    }
+
+    private func activeRanges(for selection: NSRange, in text: String) -> [NSRange] {
+      parent.dimsInactiveParagraphs
+        ? [Self.lineRange(containing: selection, in: text)]
+        : [selection]
+    }
+
+    func canSkipFocusedSameLineDecorationRender(
+      in textView: UITextView,
+      text: String,
+      selection: NSRange
+    ) -> Bool {
+      guard
+        parent.normalizedCaretAnchorFraction != nil,
+        parent.dimsInactiveParagraphs,
+        textView.isFirstResponder,
+        textView.text == text
+      else {
+        return false
+      }
+
+      return Self.lineRange(containing: selection, in: text).location == lastRenderedActiveRanges.first?.location
+    }
+
+    func acknowledgeDecorationInputs() {
+      lastRenderedWikiLinkStates = parent.wikiLinkStates
+      lastRenderedImagePreviewStates = parent.imagePreviewStates
+    }
+
+    func needsSelectionRender(selection: NSRange, text: String, wikiLinkRange: NSRange?) -> Bool {
+      if wikiLinkRange != activeWikiLinkRange {
+        return true
+      }
+
+      guard parent.dimsInactiveParagraphs else {
+        return false
+      }
+
+      return Self.lineRange(containing: selection, in: text).location != lastRenderedActiveRanges.first?.location
     }
 
     func configureCaretAnchorLayout(in textView: UITextView) {
@@ -2001,20 +2275,20 @@ public struct MarkdownTextEditor: UIViewRepresentable {
       }
 
       let targetOffsetY = caretRect.midY - textView.bounds.height * anchor
-      let minOffsetY = -textView.adjustedContentInset.top
-      let maxOffsetY = max(
-        minOffsetY,
-        textView.contentSize.height + textView.adjustedContentInset.bottom - textView.bounds.height
-      )
-      let constrainedOffsetY = min(max(targetOffsetY, minOffsetY), maxOffsetY)
+      let constrainedOffsetY = constrainedContentOffsetY(targetOffsetY, in: textView)
       guard abs(textView.contentOffset.y - constrainedOffsetY) > 0.5 else {
         return
       }
 
-      textView.setContentOffset(
-        CGPoint(x: textView.contentOffset.x, y: constrainedOffsetY),
-        animated: animated
-      )
+      let offset = CGPoint(x: textView.contentOffset.x, y: constrainedOffsetY)
+      if animated {
+        textView.setContentOffset(offset, animated: true)
+      } else {
+        performProgrammaticContentOffsetChange {
+          textView.setContentOffset(offset, animated: false)
+          textView.layoutIfNeeded()
+        }
+      }
     }
 
     private func caretRect(for selection: NSRange, in textView: UITextView) -> CGRect? {
@@ -2496,6 +2770,9 @@ private final class MarkdownUIKitTextView: UITextView {
   override var bounds: CGRect {
     didSet {
       if oldValue.origin != bounds.origin {
+        if markdownCoordinator?.restoreFrozenViewportIfNeeded(in: self) == true {
+          return
+        }
         setNeedsDisplay()
       }
     }
@@ -2504,16 +2781,23 @@ private final class MarkdownUIKitTextView: UITextView {
   override func layoutSubviews() {
     super.layoutSubviews()
     markdownCoordinator?.configureCaretAnchorLayout(in: self)
-    markdownCoordinator?.scheduleCaretAnchor(selection: selectedRange, animated: false)
   }
 
   override func scrollRangeToVisible(_ range: NSRange) {
     if markdownCoordinator?.parent.caretAnchorFraction != nil {
-      markdownCoordinator?.scheduleCaretAnchor(selection: selectedRange, animated: false)
       return
     }
 
     super.scrollRangeToVisible(range)
+  }
+
+  override func setContentOffset(_ contentOffset: CGPoint, animated: Bool) {
+    if let protectedOffset = markdownCoordinator?.protectedContentOffset(for: self, proposed: contentOffset) {
+      super.setContentOffset(protectedOffset, animated: false)
+      return
+    }
+
+    super.setContentOffset(contentOffset, animated: animated)
   }
 
   override var keyCommands: [UIKeyCommand]? {
