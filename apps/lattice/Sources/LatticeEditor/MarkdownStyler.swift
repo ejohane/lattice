@@ -106,7 +106,7 @@ public enum MarkdownStyler {
           kind: .listMarker,
           range: shifted(match.range(at: 1), by: lineRange.location)
         ))
-      } else if let match = MarkdownTextRange.firstRegexMatch("^\\s*(\\d+[.)])\\s+(.+)$", in: line) {
+      } else if let match = MarkdownTextRange.firstRegexMatch("^\\s*(\\d+[.)])\\s+(.*)$", in: line) {
         spans.append(MarkdownStyleSpan(
           kind: .listMarker,
           range: shifted(match.range(at: 1), by: lineRange.location)

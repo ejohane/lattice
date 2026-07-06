@@ -155,7 +155,7 @@ enum MarkdownAttributedRenderer {
       } else if let match = firstMatch("^\\s*(\\d+[.)])\\s+(.*)$", in: line) {
         attributed.addAttributes(listAttributes(fontSize: fontSize), range: lineRange)
         attributed.addAttributes(
-          isActiveLine ? bulletAttributes(fontSize: fontSize, fontFamily: fontFamily, theme: theme) : hiddenTokenAttributes(fontSize: fontSize, fontFamily: fontFamily),
+          bulletAttributes(fontSize: fontSize, fontFamily: fontFamily, theme: theme),
           range: shifted(match.range(at: 1), by: lineRange.location)
         )
       } else if firstMatch("^\\s{0,3}(([-*_])\\s*){3,}$", in: line) != nil {

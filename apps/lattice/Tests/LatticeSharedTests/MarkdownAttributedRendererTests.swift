@@ -94,6 +94,31 @@ struct MarkdownAttributedRendererTests {
     #expect(markerColor == NSColor.controlAccentColor)
   }
 
+  @Test("keeps inactive ordered list markers visible")
+  func keepsInactiveOrderedListMarkersVisible() {
+    let attributed = MarkdownAttributedRenderer.render("1. Define PRD\n2. test", activeRanges: [NSRange(location: 17, length: 0)])
+    let markerFont = attributed.attribute(.font, at: 0, effectiveRange: nil) as? NSFont
+    let markerColor = attributed.attribute(.foregroundColor, at: 0, effectiveRange: nil) as? NSColor
+    let paragraphStyle = attributed.attribute(.paragraphStyle, at: 0, effectiveRange: nil) as? NSParagraphStyle
+
+    #expect(markerFont?.pointSize == 14)
+    #expect(markerColor == NSColor.controlAccentColor)
+    #expect(paragraphStyle?.headIndent == 28)
+  }
+
+  @Test("shows active empty ordered list markers as editable source")
+  func showsActiveEmptyOrderedListMarkersAsEditableSource() {
+    let attributed = MarkdownAttributedRenderer.render("1. Define PRD\n2. ", activeRanges: [NSRange(location: 17, length: 0)])
+    let secondMarkerLocation = ("1. Define PRD\n" as NSString).length
+    let markerFont = attributed.attribute(.font, at: secondMarkerLocation, effectiveRange: nil) as? NSFont
+    let markerColor = attributed.attribute(.foregroundColor, at: secondMarkerLocation, effectiveRange: nil) as? NSColor
+    let paragraphStyle = attributed.attribute(.paragraphStyle, at: secondMarkerLocation, effectiveRange: nil) as? NSParagraphStyle
+
+    #expect(markerFont?.pointSize == 14)
+    #expect(markerColor == NSColor.controlAccentColor)
+    #expect(paragraphStyle?.headIndent == 28)
+  }
+
   @Test("styles checked task list content as completed")
   func stylesCheckedTaskListContentAsCompleted() {
     let attributed = MarkdownAttributedRenderer.render("- [x] done\nnext", activeRanges: [NSRange(location: 11, length: 0)])
