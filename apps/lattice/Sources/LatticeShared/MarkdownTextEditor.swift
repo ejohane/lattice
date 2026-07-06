@@ -342,6 +342,10 @@ public struct MarkdownTextEditor: NSViewRepresentable {
       guard !isRendering else {
         return
       }
+      guard !textView.hasMarkedText() else {
+        scheduleDeferredRender(in: textView, preserving: textView.selectedRange())
+        return
+      }
       pendingRenderTask?.cancel()
       pendingRenderTask = nil
       isRendering = true
@@ -382,6 +386,10 @@ public struct MarkdownTextEditor: NSViewRepresentable {
       pendingRenderTask = Task { @MainActor [weak self, weak textView] in
         try? await Task.sleep(nanoseconds: self?.deferredRenderDelayNanoseconds ?? 75_000_000)
         guard !Task.isCancelled, let self, let textView, !self.isRendering else {
+          return
+        }
+        guard !textView.hasMarkedText() else {
+          self.scheduleDeferredRender(in: textView, preserving: textView.selectedRange())
           return
         }
         self.render(textView.string, in: textView, preserving: textView.selectedRange())
@@ -658,6 +666,8 @@ public struct MarkdownTextEditor: NSViewRepresentable {
   private func configureNativeTextChecking(for textView: NSTextView) {
     textView.isContinuousSpellCheckingEnabled = true
     textView.isGrammarCheckingEnabled = true
+    textView.isAutomaticSpellingCorrectionEnabled = false
+    textView.isAutomaticTextCompletionEnabled = false
   }
 }
 
