@@ -371,10 +371,11 @@ private struct WindowConfiguration: NSViewRepresentable {
       guard let window = view.window else {
         return
       }
+      let backgroundColor = theme.nsColor(.appBackground)
       window.identifier = NSUserInterfaceItemIdentifier(identifier)
       window.minSize = size
       window.contentMinSize = size
-      window.backgroundColor = theme.nsColor(.appBackground)
+      window.backgroundColor = backgroundColor
       window.titleVisibility = isZenModeEnabled ? .hidden : .visible
       window.titlebarAppearsTransparent = true
       window.toolbar?.showsBaselineSeparator = false
@@ -388,7 +389,14 @@ private struct WindowConfiguration: NSViewRepresentable {
         window.styleMask.remove(.fullSizeContentView)
         window.toolbar?.isVisible = true
       }
+      applyBackground(backgroundColor, to: window)
     }
+  }
+
+  private func applyBackground(_ color: NSColor, to window: NSWindow) {
+    window.backgroundColor = color
+    window.contentView?.superview?.wantsLayer = true
+    window.contentView?.superview?.layer?.backgroundColor = color.cgColor
   }
 }
 
