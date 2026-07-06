@@ -664,10 +664,11 @@ public struct MarkdownTextEditor: NSViewRepresentable {
   }
 
   private func configureNativeTextChecking(for textView: NSTextView) {
-    textView.isContinuousSpellCheckingEnabled = true
-    textView.isGrammarCheckingEnabled = true
+    textView.isContinuousSpellCheckingEnabled = false
+    textView.isGrammarCheckingEnabled = false
     textView.isAutomaticSpellingCorrectionEnabled = false
     textView.isAutomaticTextCompletionEnabled = false
+    textView.enabledTextCheckingTypes = 0
   }
 }
 
@@ -723,6 +724,17 @@ private final class MarkdownTextView: NSTextView {
       state: coordinator.parent.vimState
     )
     applyVimResult(result)
+  }
+
+  override func complete(_ sender: Any?) {
+  }
+
+  override func completions(
+    forPartialWordRange charRange: NSRange,
+    indexOfSelectedItem index: UnsafeMutablePointer<Int>?
+  ) -> [String]? {
+    index?.pointee = -1
+    return []
   }
 
   override func draw(_ dirtyRect: NSRect) {

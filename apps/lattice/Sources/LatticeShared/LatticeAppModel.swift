@@ -620,6 +620,10 @@ public final class LatticeAppModel {
   }
 
   public func updateWikiAutocomplete() {
+    #if os(macOS)
+    wikiAutocompleteSuggestions = []
+    return
+    #else
     guard let folderURL, let context = WikiLinkParser.autocompleteContext(in: text, selection: selectedRange) else {
       wikiAutocompleteSuggestions = []
       return
@@ -674,6 +678,7 @@ public final class LatticeAppModel {
     } catch {
       wikiAutocompleteSuggestions = []
     }
+    #endif
   }
 
   public func apply(_ command: MarkdownCommand) {
