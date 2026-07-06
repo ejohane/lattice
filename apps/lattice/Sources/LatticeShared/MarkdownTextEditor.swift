@@ -727,6 +727,7 @@ private final class MarkdownTextView: NSTextView {
 
   override func draw(_ dirtyRect: NSRect) {
     super.draw(dirtyRect)
+    drawTaskCheckboxes()
     drawThematicBreaks()
     drawImagePreviews()
   }
@@ -1240,6 +1241,60 @@ private final class MarkdownTextView: NSTextView {
       path.line(to: NSPoint(x: textContainerOrigin.x + ruleWidth, y: pixelAlignedY))
       theme.nsColor(.separator).withAlphaComponent(0.85).setStroke()
       path.stroke()
+    }
+  }
+
+  private func drawTaskCheckboxes() {
+    guard let layoutManager, let textContainer, let textStorage else {
+      return
+    }
+
+    let visibleGlyphRange = layoutManager.glyphRange(
+      forBoundingRect: visibleRect.offsetBy(dx: -textContainerOrigin.x, dy: -textContainerOrigin.y),
+      in: textContainer
+    )
+    let visibleCharacterRange = layoutManager.characterRange(
+      forGlyphRange: visibleGlyphRange,
+      actualGlyphRange: nil
+    )
+
+    textStorage.enumerateAttribute(.latticeTaskCheckbox, in: visibleCharacterRange) { value, range, _ in
+      guard value as? Bool == true else {
+        return
+      }
+
+      let glyphRange = layoutManager.glyphRange(forCharacterRange: range, actualCharacterRange: nil)
+      guard glyphRange.length > 0 else {
+        return
+      }
+
+      let lineRect = layoutManager.lineFragmentUsedRect(forGlyphAt: glyphRange.location, effectiveRange: nil)
+      let checkboxBounds = layoutManager.boundingRect(forGlyphRange: glyphRange, in: textContainer)
+      let isChecked = textStorage.attribute(.latticeTaskCheckboxChecked, at: range.location, effectiveRange: nil) as? Bool == true
+      let size = min(15, max(10, lineRect.height - 5))
+      let origin = NSPoint(
+        x: textContainerOrigin.x + checkboxBounds.minX,
+        y: textContainerOrigin.y + lineRect.midY - size / 2
+      )
+      let rect = NSRect(origin: origin, size: NSSize(width: size, height: size)).integral
+      let path = NSBezierPath(roundedRect: rect, xRadius: 3, yRadius: 3)
+      path.lineWidth = 1.4
+      theme.nsColor(.accent).setStroke()
+      path.stroke()
+
+      guard isChecked else {
+        return
+      }
+
+      let check = NSBezierPath()
+      check.lineWidth = 1.8
+      check.lineCapStyle = .round
+      check.lineJoinStyle = .round
+      check.move(to: NSPoint(x: rect.minX + size * 0.25, y: rect.midY))
+      check.line(to: NSPoint(x: rect.minX + size * 0.43, y: rect.maxY - size * 0.28))
+      check.line(to: NSPoint(x: rect.maxX - size * 0.2, y: rect.minY + size * 0.28))
+      theme.nsColor(.accent).setStroke()
+      check.stroke()
     }
   }
 
@@ -3094,8 +3149,67 @@ private final class MarkdownUIKitTextView: UITextView {
     theme.uiColor(.editorBackground).setFill()
     UIRectFill(rect)
     super.draw(rect)
+    drawTaskCheckboxes()
     drawUnorderedListMarkers()
     drawThematicBreaks()
+  }
+
+  private func drawTaskCheckboxes() {
+    guard let context = UIGraphicsGetCurrentContext() else {
+      return
+    }
+
+    let visibleBounds = visibleTextContainerRect
+    let textContainerOrigin = textContainerDrawingOrigin
+    let visibleGlyphRange = layoutManager.glyphRange(
+      forBoundingRect: visibleBounds,
+      in: textContainer
+    )
+    let visibleCharacterRange = layoutManager.characterRange(
+      forGlyphRange: visibleGlyphRange,
+      actualGlyphRange: nil
+    )
+
+    textStorage.enumerateAttribute(.latticeTaskCheckbox, in: visibleCharacterRange) { value, range, _ in
+      guard value as? Bool == true else {
+        return
+      }
+
+      let glyphRange = layoutManager.glyphRange(forCharacterRange: range, actualCharacterRange: nil)
+      guard glyphRange.length > 0 else {
+        return
+      }
+
+      let lineRect = layoutManager.lineFragmentUsedRect(forGlyphAt: glyphRange.location, effectiveRange: nil)
+      let checkboxBounds = layoutManager.boundingRect(forGlyphRange: glyphRange, in: textContainer)
+      let isChecked = textStorage.attribute(.latticeTaskCheckboxChecked, at: range.location, effectiveRange: nil) as? Bool == true
+      let size = min(CGFloat(17), max(CGFloat(11), lineRect.height - 6))
+      let checkboxRect = CGRect(
+        x: textContainerOrigin.x + checkboxBounds.minX,
+        y: textContainerOrigin.y + lineRect.midY - size / 2,
+        width: size,
+        height: size
+      ).integral
+
+      context.saveGState()
+      context.setStrokeColor(theme.uiColor(.accent).cgColor)
+      context.setLineWidth(1.5)
+      UIBezierPath(roundedRect: checkboxRect, cornerRadius: 3).stroke()
+
+      guard isChecked else {
+        context.restoreGState()
+        return
+      }
+
+      context.setLineWidth(2)
+      context.setLineCap(.round)
+      context.setLineJoin(.round)
+      context.move(to: CGPoint(x: checkboxRect.minX + size * 0.25, y: checkboxRect.midY))
+      context.addLine(to: CGPoint(x: checkboxRect.minX + size * 0.43, y: checkboxRect.maxY - size * 0.28))
+      context.addLine(to: CGPoint(x: checkboxRect.maxX - size * 0.2, y: checkboxRect.minY + size * 0.28))
+      context.strokePath()
+      context.restoreGState()
+    }
   }
 
   private func drawUnorderedListMarkers() {

@@ -6,6 +6,8 @@ extension NSAttributedString.Key {
   static let latticeThematicBreak = NSAttributedString.Key("lattice.thematicBreak")
   static let latticeUnorderedListMarker = NSAttributedString.Key("lattice.unorderedListMarker")
   static let latticeUnorderedListIndent = NSAttributedString.Key("lattice.unorderedListIndent")
+  static let latticeTaskCheckbox = NSAttributedString.Key("lattice.taskCheckbox")
+  static let latticeTaskCheckboxChecked = NSAttributedString.Key("lattice.taskCheckboxChecked")
   static let latticeImagePreviewURL = NSAttributedString.Key("lattice.imagePreviewURL")
   static let latticeImagePreviewAltText = NSAttributedString.Key("lattice.imagePreviewAltText")
   static let latticeImagePreviewWidth = NSAttributedString.Key("lattice.imagePreviewWidth")
@@ -136,10 +138,13 @@ enum MarkdownAttributedRenderer {
 
         attributed.addAttributes(listAttributes(fontSize: fontSize), range: lineRange)
         attributed.addAttributes(
-          shouldRenderMarker ? renderedTaskCheckboxAttributes(isChecked: isChecked, fontSize: fontSize, fontFamily: fontFamily, theme: theme) : bulletAttributes(fontSize: fontSize, fontFamily: fontFamily, theme: theme),
+          shouldRenderMarker ? hiddenTokenAttributes(fontSize: fontSize, fontFamily: fontFamily) : bulletAttributes(fontSize: fontSize, fontFamily: fontFamily, theme: theme),
           range: markerRange
         )
-        attributed.addAttributes(isActiveLine ? bulletAttributes(fontSize: fontSize, fontFamily: fontFamily, theme: theme) : hiddenTokenAttributes(fontSize: fontSize, fontFamily: fontFamily), range: checkboxRange)
+        attributed.addAttributes(
+          isActiveLine ? bulletAttributes(fontSize: fontSize, fontFamily: fontFamily, theme: theme) : renderedTaskCheckboxAttributes(isChecked: isChecked, fontSize: fontSize, fontFamily: fontFamily),
+          range: checkboxRange
+        )
         if isChecked {
           attributed.addAttributes(completedTaskAttributes(theme: theme), range: contentRange)
         }
@@ -447,21 +452,14 @@ enum MarkdownAttributedRenderer {
   private static func renderedTaskCheckboxAttributes(
     isChecked: Bool,
     fontSize: CGFloat,
-    fontFamily: EditorFontFamily,
-    theme: LatticeTheme
+    fontFamily: EditorFontFamily
   ) -> [NSAttributedString.Key: Any] {
-    let font = bodyFont(size: 15 * fontSize / bodyFontSize, weight: .semibold, family: fontFamily)
-    var attributes: [NSAttributedString.Key: Any] = [
-      .foregroundColor: theme.nsColor(.accent),
-      .font: font
+    [
+      .foregroundColor: NSColor.clear,
+      .font: bodyFont(size: max(0.1, 0.1 * fontSize / bodyFontSize), weight: .regular, family: fontFamily),
+      .latticeTaskCheckbox: true,
+      .latticeTaskCheckboxChecked: isChecked
     ]
-
-    let glyphName = isChecked ? "uni2611" : "uni25A1"
-    if let glyphInfo = NSGlyphInfo(glyphName: glyphName, for: font, baseString: "-") {
-      attributes[.glyphInfo] = glyphInfo
-    }
-
-    return attributes
   }
 
   private static func listAttributes(fontSize: CGFloat) -> [NSAttributedString.Key: Any] {
@@ -1127,7 +1125,18 @@ enum MarkdownAttributedRenderer {
       let line = nsString.substring(with: lineRange)
       let isActiveLine = range(lineRange, containsAnyActive: activeRanges)
 
-      if let match = firstMatch("^([ \\t]*)([-*+])\\s+(?!\\[[ xX]\\]\\s)(.+)$", in: line) {
+      if let match = firstMatch("^([ \\t]*)([-*+])\\s+(\\[([ xX])\\])\\s+(.*)$", in: line) {
+        let isChecked = (line as NSString).substring(with: match.range(at: 4)).lowercased() == "x"
+        attributed.addAttributes(unorderedListAttributes(), range: lineRange)
+        attributed.addAttributes(
+          isActiveLine ? listMarkerAttributes(fontFamily: fontFamily, theme: theme) : hiddenTokenAttributes(fontFamily: fontFamily),
+          range: shifted(match.range(at: 2), by: lineRange.location)
+        )
+        attributed.addAttributes(
+          isActiveLine ? listMarkerAttributes(fontFamily: fontFamily, theme: theme) : renderedTaskCheckboxAttributes(isChecked: isChecked, fontFamily: fontFamily),
+          range: shifted(match.range(at: 3), by: lineRange.location)
+        )
+      } else if let match = firstMatch("^([ \\t]*)([-*+])\\s+(?!\\[[ xX]\\]\\s)(.+)$", in: line) {
         let nestingIndent = unorderedListNestingIndent(
           from: nsString.substring(with: shifted(match.range(at: 1), by: lineRange.location))
         )
@@ -1246,6 +1255,18 @@ enum MarkdownAttributedRenderer {
       .font: bodyFont(size: 0.1, fontFamily: fontFamily),
       .latticeUnorderedListMarker: true,
       .latticeUnorderedListIndent: nestingIndent
+    ]
+  }
+
+  private static func renderedTaskCheckboxAttributes(
+    isChecked: Bool,
+    fontFamily: EditorFontFamily
+  ) -> [NSAttributedString.Key: Any] {
+    [
+      .foregroundColor: UIColor.clear,
+      .font: bodyFont(size: 0.1, fontFamily: fontFamily),
+      .latticeTaskCheckbox: true,
+      .latticeTaskCheckboxChecked: isChecked
     ]
   }
 
