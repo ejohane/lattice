@@ -1,5 +1,6 @@
 import AppKit
 import LatticeShared
+import Observation
 import Sparkle
 import SwiftUI
 
@@ -15,6 +16,7 @@ struct LatticeMacApp: App {
   @Environment(\.openSettings) private var openSettings
   @Environment(\.scenePhase) private var scenePhase
   @State private var model = LatticeAppModel()
+  @State private var updateState = MacUpdateState()
 
   var body: some Scene {
     WindowGroup(id: "main") {
@@ -22,6 +24,19 @@ struct LatticeMacApp: App {
         model: model,
         commandPalettePlatformCommands: { commandPalettePlatformCommands }
       )
+        .toolbar {
+          if updateState.isUpdateAvailable {
+            ToolbarItem(placement: .primaryAction) {
+              Button {
+                appDelegate.checkForUpdates()
+              } label: {
+                Label(updateState.indicatorTitle, systemImage: "arrow.down.circle.fill")
+              }
+              .help(updateState.indicatorHelp)
+              .disabled(!appDelegate.canCheckForUpdates)
+            }
+          }
+        }
         .frame(minWidth: Self.minimumWindowWidth, minHeight: Self.minimumWindowHeight)
         .background(WindowConfiguration(
           width: Self.minimumWindowWidth,
@@ -31,6 +46,7 @@ struct LatticeMacApp: App {
           isZenModeEnabled: model.isZenModeEnabled
         ))
         .task {
+          appDelegate.attachUpdateState(updateState)
           model.start()
         }
         .onChange(of: scenePhase) { _, newPhase in
@@ -165,7 +181,7 @@ struct LatticeMacApp: App {
       }
     }
 
-    MenuBarExtra("Lattice", systemImage: "square.and.pencil") {
+    MenuBarExtra {
       Button("Show Lattice") {
         showMainWindow()
       }
@@ -192,12 +208,21 @@ struct LatticeMacApp: App {
           NSWorkspace.shared.activateFileViewerSelecting([noteURL])
         }
       }
-      if appDelegate.canCheckForUpdates {
+      if updateState.isUpdateAvailable {
+        Divider()
+        Button(updateState.menuItemTitle) {
+          showMainWindow()
+          appDelegate.checkForUpdates()
+        }
+        .disabled(!appDelegate.canCheckForUpdates)
+      }
+      if updateState.isUpdaterConfigured {
         Divider()
         Button("Check for Updates...") {
           appDelegate.checkForUpdates()
         }
         .latticeKeyboardShortcut(model.keyboardShortcut(for: .checkForUpdates))
+        .disabled(!appDelegate.canCheckForUpdates)
       }
       Divider()
       Button("Quit Lattice") {
@@ -205,6 +230,8 @@ struct LatticeMacApp: App {
         NSApp.terminate(nil)
       }
       .keyboardShortcut("q", modifiers: [.command])
+    } label: {
+      Label("Lattice", systemImage: updateState.menuBarSystemImage)
     }
 
     Settings {
@@ -254,11 +281,9 @@ struct LatticeMacApp: App {
       },
       CommandPaletteCommand(
         id: "mac.checkForUpdates",
-        title: "Check for Updates",
-        subtitle: appDelegate.canCheckForUpdates
-          ? "Look for a newer Lattice release"
-          : "Available in release builds",
-        systemImage: "arrow.triangle.2.circlepath",
+        title: updateState.isUpdateAvailable ? "Update Available" : "Check for Updates",
+        subtitle: updateCommandSubtitle,
+        systemImage: updateState.isUpdateAvailable ? "arrow.down.circle.fill" : "arrow.triangle.2.circlepath",
         isSetupSafe: true,
         keyboardShortcut: model.keyboardShortcut(for: .checkForUpdates)?.displayText
       ) {
@@ -269,6 +294,16 @@ struct LatticeMacApp: App {
         }
       }
     ]
+  }
+
+  private var updateCommandSubtitle: String {
+    if updateState.isUpdateAvailable {
+      return updateState.indicatorHelp
+    }
+    if updateState.isUpdaterConfigured {
+      return "Look for a newer Lattice release"
+    }
+    return "Available in release builds"
   }
 
   private func chooseImageAttachments() {
@@ -283,6 +318,56 @@ struct LatticeMacApp: App {
     if panel.runModal() == .OK {
       model.insertImageAttachmentFiles(panel.urls)
     }
+  }
+}
+
+@MainActor
+@Observable
+private final class MacUpdateState {
+  var isUpdaterConfigured = false
+  var isUpdateAvailable = false
+  var updateVersion: String?
+  var updateTitle: String?
+
+  var indicatorTitle: String {
+    if let updateVersion {
+      return "Update \(updateVersion) Available"
+    }
+    return "Update Available"
+  }
+
+  var indicatorHelp: String {
+    if let updateTitle, let updateVersion {
+      return "\(updateTitle) \(updateVersion) is available"
+    }
+    if let updateVersion {
+      return "Lattice \(updateVersion) is available"
+    }
+    return "A new Lattice update is available"
+  }
+
+  var menuItemTitle: String {
+    "\(indicatorTitle)..."
+  }
+
+  var menuBarSystemImage: String {
+    isUpdateAvailable ? "arrow.down.circle.fill" : "square.and.pencil"
+  }
+
+  func markUpdaterConfigured(_ isConfigured: Bool) {
+    isUpdaterConfigured = isConfigured
+  }
+
+  func markUpdateAvailable(_ item: SUAppcastItem) {
+    isUpdateAvailable = true
+    updateVersion = item.displayVersionString
+    updateTitle = item.title
+  }
+
+  func clearUpdateAvailable() {
+    isUpdateAvailable = false
+    updateVersion = nil
+    updateTitle = nil
   }
 }
 
@@ -494,12 +579,22 @@ private struct SettingsWindowConfiguration: NSViewRepresentable {
 }
 
 @MainActor
-final class MacAppDelegate: NSObject, NSApplicationDelegate {
+final class MacAppDelegate: NSObject, NSApplicationDelegate, SPUUpdaterDelegate, @preconcurrency SPUStandardUserDriverDelegate {
   private var updaterController: SPUStandardUpdaterController?
   private var sidebarShortcutMonitor: Any?
+  private weak var updateState: MacUpdateState?
 
   var canCheckForUpdates: Bool {
-    updaterController != nil
+    updaterController?.updater.canCheckForUpdates ?? false
+  }
+
+  var supportsGentleScheduledUpdateReminders: Bool {
+    true
+  }
+
+  fileprivate func attachUpdateState(_ state: MacUpdateState) {
+    updateState = state
+    publishUpdaterConfiguration()
   }
 
   func applicationDidFinishLaunching(_ notification: Notification) {
@@ -525,7 +620,44 @@ final class MacAppDelegate: NSObject, NSApplicationDelegate {
   }
 
   func checkForUpdates() {
-    updaterController?.checkForUpdates(nil)
+    updaterController?.updater.checkForUpdates()
+  }
+
+  func updater(_ updater: SPUUpdater, didFindValidUpdate item: SUAppcastItem) {
+    updateState?.markUpdateAvailable(item)
+  }
+
+  func updaterDidNotFindUpdate(_ updater: SPUUpdater, error: any Error) {
+    updateState?.clearUpdateAvailable()
+  }
+
+  func updater(_ updater: SPUUpdater, didDownloadUpdate item: SUAppcastItem) {
+    updateState?.markUpdateAvailable(item)
+  }
+
+  func updater(
+    _ updater: SPUUpdater,
+    willInstallUpdateOnQuit item: SUAppcastItem,
+    immediateInstallationBlock immediateInstallHandler: @escaping () -> Void
+  ) -> Bool {
+    updateState?.markUpdateAvailable(item)
+    return false
+  }
+
+  func standardUserDriverShouldHandleShowingScheduledUpdate(
+    _ update: SUAppcastItem,
+    andInImmediateFocus immediateFocus: Bool
+  ) -> Bool {
+    updateState?.markUpdateAvailable(update)
+    return immediateFocus
+  }
+
+  func standardUserDriverWillHandleShowingUpdate(
+    _ handleShowingUpdate: Bool,
+    forUpdate update: SUAppcastItem,
+    state: SPUUserUpdateState
+  ) {
+    updateState?.markUpdateAvailable(update)
   }
 
   func toggleSidebar() {
@@ -558,9 +690,14 @@ final class MacAppDelegate: NSObject, NSApplicationDelegate {
 
     updaterController = SPUStandardUpdaterController(
       startingUpdater: true,
-      updaterDelegate: nil,
-      userDriverDelegate: nil
+      updaterDelegate: self,
+      userDriverDelegate: self
     )
+    publishUpdaterConfiguration()
+  }
+
+  private func publishUpdaterConfiguration() {
+    updateState?.markUpdaterConfigured(updaterController != nil)
   }
 
   private func resetStaleSidebarPersistenceIfNeeded() {
