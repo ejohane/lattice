@@ -739,6 +739,7 @@ private final class MarkdownTextView: NSTextView {
 
   override func draw(_ dirtyRect: NSRect) {
     super.draw(dirtyRect)
+    drawMarkdownTables()
     drawTaskCheckboxes()
     drawThematicBreaks()
     drawImagePreviews()
@@ -1217,6 +1218,127 @@ private final class MarkdownTextView: NSTextView {
 
     let characterIndex = layoutManager.characterIndexForGlyph(at: glyphIndex)
     return characterIndex < string.utf16.count ? characterIndex : nil
+  }
+
+  private func drawMarkdownTables() {
+    guard let layoutManager, let textContainer, let textStorage else {
+      return
+    }
+
+    let visibleGlyphRange = layoutManager.glyphRange(
+      forBoundingRect: visibleRect.offsetBy(dx: -textContainerOrigin.x, dy: -textContainerOrigin.y),
+      in: textContainer
+    )
+    let visibleCharacterRange = layoutManager.characterRange(
+      forGlyphRange: visibleGlyphRange,
+      actualGlyphRange: nil
+    )
+
+    var drawnTableLocations: Set<Int> = []
+    textStorage.enumerateAttribute(.latticeMarkdownTable, in: visibleCharacterRange) { value, range, _ in
+      guard
+        value as? Bool == true,
+        let table = MarkdownTableParser.table(containing: range, in: textStorage.string),
+        !drawnTableLocations.contains(table.range.location)
+      else {
+        return
+      }
+
+      drawnTableLocations.insert(table.range.location)
+      drawMarkdownTable(table, layoutManager: layoutManager)
+    }
+  }
+
+  private func drawMarkdownTable(_ table: MarkdownTableBlock, layoutManager: NSLayoutManager) {
+    let rowLineRanges = [table.headerLineRange] + table.bodyLineRanges
+    guard rowLineRanges.count == table.rows.count else {
+      return
+    }
+
+    let maxWidth = max(0, bounds.width - textContainerInset.width - 2)
+    let columnWidths = markdownTableColumnWidths(for: table, maxWidth: maxWidth)
+    let tableWidth = columnWidths.reduce(0, +)
+    let separatorColor = theme.nsColor(.separator).withAlphaComponent(0.9)
+    let rowBackground = theme.nsColor(.editorBackground)
+    let headerBackground = theme.nsColor(.surfaceBackground).withAlphaComponent(0.8)
+
+    for (rowIndex, row) in table.rows.enumerated() {
+      let lineRange = rowLineRanges[rowIndex]
+      let glyphRange = layoutManager.glyphRange(forCharacterRange: lineRange, actualCharacterRange: nil)
+      guard glyphRange.length > 0 else {
+        continue
+      }
+
+      let lineRect = layoutManager.lineFragmentUsedRect(forGlyphAt: glyphRange.location, effectiveRange: nil)
+      let rowRect = NSRect(
+        x: textContainerOrigin.x,
+        y: textContainerOrigin.y + lineRect.minY,
+        width: tableWidth,
+        height: lineRect.height
+      )
+      (row.isHeader ? headerBackground : rowBackground).setFill()
+      rowRect.fill()
+
+      var cellX = rowRect.minX
+      for columnIndex in 0..<table.columnCount {
+        let width = columnWidths[columnIndex]
+        let cellRect = NSRect(x: cellX, y: rowRect.minY, width: width, height: rowRect.height)
+        separatorColor.setStroke()
+        NSBezierPath(rect: cellRect).stroke()
+
+        let value = columnIndex < row.cells.count ? row.cells[columnIndex] : ""
+        let attributes = markdownTableTextAttributes(isHeader: row.isHeader)
+        let textSize = (value as NSString).size(withAttributes: attributes)
+        let textRect = NSRect(
+          x: cellRect.minX + 10,
+          y: cellRect.midY - min(textSize.height, cellRect.height - 8) / 2,
+          width: max(0, cellRect.width - 20),
+          height: max(0, cellRect.height - 8)
+        )
+        (value as NSString).draw(in: textRect, withAttributes: attributes)
+        cellX += width
+      }
+    }
+  }
+
+  private func markdownTableColumnWidths(for table: MarkdownTableBlock, maxWidth: CGFloat) -> [CGFloat] {
+    let minimumWidth: CGFloat = 64
+    let padding: CGFloat = 24
+    let headerFont = NSFont.systemFont(ofSize: 13, weight: .semibold)
+    let bodyFont = NSFont.systemFont(ofSize: 13, weight: .regular)
+    var widths = Array(repeating: minimumWidth, count: table.columnCount)
+
+    for row in table.rows {
+      let attributes: [NSAttributedString.Key: Any] = [.font: row.isHeader ? headerFont : bodyFont]
+      for columnIndex in 0..<table.columnCount {
+        let value = columnIndex < row.cells.count ? row.cells[columnIndex] : ""
+        widths[columnIndex] = max(widths[columnIndex], (value as NSString).size(withAttributes: attributes).width + padding)
+      }
+    }
+
+    let totalWidth = widths.reduce(0, +)
+    guard totalWidth > maxWidth, maxWidth > 0 else {
+      return widths
+    }
+
+    let minimumTotal = minimumWidth * CGFloat(table.columnCount)
+    if maxWidth <= minimumTotal {
+      return Array(repeating: maxWidth / CGFloat(table.columnCount), count: table.columnCount)
+    }
+
+    let extraWidth = maxWidth - minimumTotal
+    let currentExtra = totalWidth - minimumTotal
+    return widths.map { minimumWidth + (($0 - minimumWidth) / currentExtra * extraWidth) }
+  }
+
+  private func markdownTableTextAttributes(isHeader: Bool) -> [NSAttributedString.Key: Any] {
+    let paragraphStyle = NSMutableParagraphStyle()
+    paragraphStyle.lineBreakMode = .byTruncatingTail
+    return [
+      .font: NSFont.systemFont(ofSize: 13, weight: isHeader ? .semibold : .regular),
+      .foregroundColor: theme.nsColor(.primaryText),
+      .paragraphStyle: paragraphStyle
+    ]
   }
 
   private func drawThematicBreaks() {
@@ -3161,6 +3283,7 @@ private final class MarkdownUIKitTextView: UITextView {
     theme.uiColor(.editorBackground).setFill()
     UIRectFill(rect)
     super.draw(rect)
+    drawMarkdownTables()
     drawTaskCheckboxes()
     drawUnorderedListMarkers()
     drawThematicBreaks()
@@ -3222,6 +3345,134 @@ private final class MarkdownUIKitTextView: UITextView {
       context.strokePath()
       context.restoreGState()
     }
+  }
+
+  private func drawMarkdownTables() {
+    guard let context = UIGraphicsGetCurrentContext() else {
+      return
+    }
+
+    let visibleBounds = visibleTextContainerRect
+    let textContainerOrigin = textContainerDrawingOrigin
+    let visibleGlyphRange = layoutManager.glyphRange(
+      forBoundingRect: visibleBounds,
+      in: textContainer
+    )
+    let visibleCharacterRange = layoutManager.characterRange(
+      forGlyphRange: visibleGlyphRange,
+      actualGlyphRange: nil
+    )
+
+    var drawnTableLocations: Set<Int> = []
+    textStorage.enumerateAttribute(.latticeMarkdownTable, in: visibleCharacterRange) { value, range, _ in
+      guard
+        value as? Bool == true,
+        let table = MarkdownTableParser.table(containing: range, in: textStorage.string),
+        !drawnTableLocations.contains(table.range.location)
+      else {
+        return
+      }
+
+      drawnTableLocations.insert(table.range.location)
+      drawMarkdownTable(table, context: context, textContainerOrigin: textContainerOrigin)
+    }
+  }
+
+  private func drawMarkdownTable(
+    _ table: MarkdownTableBlock,
+    context: CGContext,
+    textContainerOrigin: CGPoint
+  ) {
+    let rowLineRanges = [table.headerLineRange] + table.bodyLineRanges
+    guard rowLineRanges.count == table.rows.count else {
+      return
+    }
+
+    let maxWidth = max(0, bounds.width - textContainerInset.left - textContainerInset.right - textContainer.lineFragmentPadding * 2)
+    let columnWidths = markdownTableColumnWidths(for: table, maxWidth: maxWidth)
+    let tableWidth = columnWidths.reduce(0, +)
+    let separatorColor = theme.uiColor(.separator).withAlphaComponent(0.9)
+    let rowBackground = theme.uiColor(.editorBackground)
+    let headerBackground = theme.uiColor(.surfaceBackground).withAlphaComponent(0.8)
+
+    for (rowIndex, row) in table.rows.enumerated() {
+      let lineRange = rowLineRanges[rowIndex]
+      let glyphRange = layoutManager.glyphRange(forCharacterRange: lineRange, actualCharacterRange: nil)
+      guard glyphRange.length > 0 else {
+        continue
+      }
+
+      let lineRect = layoutManager.lineFragmentUsedRect(forGlyphAt: glyphRange.location, effectiveRange: nil)
+      let rowRect = CGRect(
+        x: textContainerOrigin.x + textContainer.lineFragmentPadding,
+        y: textContainerOrigin.y + lineRect.minY,
+        width: tableWidth,
+        height: lineRect.height
+      )
+      context.setFillColor((row.isHeader ? headerBackground : rowBackground).cgColor)
+      context.fill(rowRect)
+
+      var cellX = rowRect.minX
+      for columnIndex in 0..<table.columnCount {
+        let width = columnWidths[columnIndex]
+        let cellRect = CGRect(x: cellX, y: rowRect.minY, width: width, height: rowRect.height)
+        context.setStrokeColor(separatorColor.cgColor)
+        context.setLineWidth(1 / UIScreen.main.scale)
+        context.stroke(cellRect)
+
+        let value = columnIndex < row.cells.count ? row.cells[columnIndex] : ""
+        let attributes = markdownTableTextAttributes(isHeader: row.isHeader)
+        let textSize = (value as NSString).size(withAttributes: attributes)
+        let textRect = CGRect(
+          x: cellRect.minX + 10,
+          y: cellRect.midY - min(textSize.height, cellRect.height - 8) / 2,
+          width: max(0, cellRect.width - 20),
+          height: max(0, cellRect.height - 8)
+        )
+        (value as NSString).draw(in: textRect, withAttributes: attributes)
+        cellX += width
+      }
+    }
+  }
+
+  private func markdownTableColumnWidths(for table: MarkdownTableBlock, maxWidth: CGFloat) -> [CGFloat] {
+    let minimumWidth: CGFloat = 68
+    let padding: CGFloat = 24
+    let headerFont = UIFont.systemFont(ofSize: 15, weight: .semibold)
+    let bodyFont = UIFont.systemFont(ofSize: 15, weight: .regular)
+    var widths = Array(repeating: minimumWidth, count: table.columnCount)
+
+    for row in table.rows {
+      let attributes: [NSAttributedString.Key: Any] = [.font: row.isHeader ? headerFont : bodyFont]
+      for columnIndex in 0..<table.columnCount {
+        let value = columnIndex < row.cells.count ? row.cells[columnIndex] : ""
+        widths[columnIndex] = max(widths[columnIndex], (value as NSString).size(withAttributes: attributes).width + padding)
+      }
+    }
+
+    let totalWidth = widths.reduce(0, +)
+    guard totalWidth > maxWidth, maxWidth > 0 else {
+      return widths
+    }
+
+    let minimumTotal = minimumWidth * CGFloat(table.columnCount)
+    if maxWidth <= minimumTotal {
+      return Array(repeating: maxWidth / CGFloat(table.columnCount), count: table.columnCount)
+    }
+
+    let extraWidth = maxWidth - minimumTotal
+    let currentExtra = totalWidth - minimumTotal
+    return widths.map { minimumWidth + (($0 - minimumWidth) / currentExtra * extraWidth) }
+  }
+
+  private func markdownTableTextAttributes(isHeader: Bool) -> [NSAttributedString.Key: Any] {
+    let paragraphStyle = NSMutableParagraphStyle()
+    paragraphStyle.lineBreakMode = .byTruncatingTail
+    return [
+      .font: UIFont.systemFont(ofSize: 15, weight: isHeader ? .semibold : .regular),
+      .foregroundColor: theme.uiColor(.primaryText),
+      .paragraphStyle: paragraphStyle
+    ]
   }
 
   private func drawUnorderedListMarkers() {

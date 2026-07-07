@@ -61,6 +61,36 @@ struct LatticeAppModelTests {
     #expect((model.text as NSString).substring(with: model.selectedRange) == "Child")
   }
 
+  @Test("formats markdown table columns when selection leaves the table")
+  func formatsMarkdownTablesWhenSelectionLeavesTable() throws {
+    let fixture = try Fixture()
+    defer { fixture.cleanup() }
+    let model = LatticeAppModel(
+      noteLibrary: fixture.library,
+      folderAccessStore: fixture.folderAccessStore
+    )
+
+    model.text = """
+    | Project | Status |
+    | --- | --- |
+    | Lattice | Ship |
+
+    After
+    """
+    model.selectedRange = NSRange(location: (model.text as NSString).range(of: "After").location, length: 0)
+
+    model.noteSelectionDidChange()
+
+    #expect(model.text == """
+    | Project | Status |
+    | ------- | ------ |
+    | Lattice | Ship   |
+
+    After
+    """)
+    #expect((model.text as NSString).substring(from: model.selectedRange.location).hasPrefix("After"))
+  }
+
   @Test("inserts image attachments into a new note and autosaves matching paths")
   func insertsImageAttachmentIntoNewNote() throws {
     let fixture = try Fixture()

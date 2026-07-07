@@ -649,3 +649,95 @@ struct MarkdownStylerTests {
     #expect((text as NSString).substring(with: italicSpans[0].range) == "rendering")
   }
 }
+
+@Suite("MarkdownTableParser")
+struct MarkdownTableParserTests {
+  @Test("parses pipe tables into header and body rows")
+  func parsesPipeTables() throws {
+    let text = """
+    Intro
+    | Project | Status |
+    | --- | --- |
+    | Lattice | Shipping |
+    | Tables | Rendered |
+    Outro
+    """
+
+    let table = try #require(MarkdownTableParser.tables(in: text).first)
+
+    #expect(table.columnCount == 2)
+    #expect(table.rows == [
+      MarkdownTableRow(cells: ["Project", "Status"], isHeader: true),
+      MarkdownTableRow(cells: ["Lattice", "Shipping"], isHeader: false),
+      MarkdownTableRow(cells: ["Tables", "Rendered"], isHeader: false)
+    ])
+  }
+
+  @Test("ignores table syntax inside fenced code blocks")
+  func ignoresTablesInsideFencedCodeBlocks() {
+    let text = """
+    ```
+    | Project | Status |
+    | --- | --- |
+    ```
+    """
+
+    #expect(MarkdownTableParser.tables(in: text).isEmpty)
+  }
+}
+
+@Suite("MarkdownTableFormatter")
+struct MarkdownTableFormatterTests {
+  @Test("formats table columns to consistent widths")
+  func formatsTableColumns() throws {
+    let text = """
+    | Project | Status | Notes |
+    | --- | --- | --- |
+    | Lattice | Ship | Preserved |
+    | Markdown tables | Rendered | Easier to read |
+
+    After
+    """
+    let result = try #require(MarkdownTableFormatter.formatTables(
+      in: text,
+      selection: NSRange(location: (text as NSString).range(of: "After").location, length: 0)
+    ))
+
+    #expect(result.body == """
+    | Project         | Status   | Notes          |
+    | --------------- | -------- | -------------- |
+    | Lattice         | Ship     | Preserved      |
+    | Markdown tables | Rendered | Easier to read |
+
+    After
+    """)
+  }
+
+  @Test("skips the active table while editing")
+  func skipsActiveTable() {
+    let text = """
+    | Project | Status |
+    | --- | --- |
+    | Lattice | Ship |
+    """
+    let selection = NSRange(location: (text as NSString).range(of: "Status").location, length: 0)
+
+    #expect(MarkdownTableFormatter.formatTables(in: text, selection: selection) == nil)
+  }
+
+  @Test("keeps selection stable after formatting earlier tables")
+  func keepsSelectionStable() throws {
+    let text = """
+    | A | Longer |
+    | --- | --- |
+    | x | y |
+
+    After
+    """
+    let selection = NSRange(location: (text as NSString).range(of: "After").location, length: 0)
+    let result = try #require(MarkdownTableFormatter.formatTables(in: text, selection: selection))
+
+    #expect((result.body as NSString).substring(with: result.selection) == "")
+    #expect((result.body as NSString).substring(from: result.selection.location).hasPrefix("After"))
+  }
+}

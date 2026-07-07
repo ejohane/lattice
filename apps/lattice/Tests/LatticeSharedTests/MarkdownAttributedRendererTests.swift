@@ -420,6 +420,57 @@ struct MarkdownAttributedRendererTests {
     #expect(color == NSColor.tertiaryLabelColor)
   }
 
+  @Test("marks inactive markdown tables for grid rendering")
+  func marksInactiveMarkdownTablesForGridRendering() throws {
+    let text = """
+    Before
+    | Project | Status |
+    | --- | --- |
+    | Lattice | Shipping |
+    After
+    """
+    let string = text as NSString
+    let headerRange = string.range(of: "| Project | Status |")
+    let separatorRange = string.range(of: "| --- | --- |")
+    let attributed = MarkdownAttributedRenderer.render(
+      text,
+      activeRanges: [NSRange(location: string.length, length: 0)]
+    )
+
+    let hasTableAttribute = try #require(attributed.attribute(.latticeMarkdownTable, at: headerRange.location, effectiveRange: nil) as? Bool)
+    let headerColor = attributed.attribute(.foregroundColor, at: headerRange.location, effectiveRange: nil) as? NSColor
+    let headerParagraphStyle = attributed.attribute(.paragraphStyle, at: headerRange.location, effectiveRange: nil) as? NSParagraphStyle
+    let separatorParagraphStyle = attributed.attribute(.paragraphStyle, at: separatorRange.location, effectiveRange: nil) as? NSParagraphStyle
+
+    #expect(hasTableAttribute)
+    #expect(headerColor == NSColor.clear)
+    #expect(headerParagraphStyle?.minimumLineHeight == 38)
+    #expect(separatorParagraphStyle?.minimumLineHeight == 2)
+  }
+
+  @Test("shows active markdown table source")
+  func showsActiveMarkdownTableSource() {
+    let text = """
+    | Project | Status |
+    | --- | --- |
+    | Lattice | Shipping |
+    """
+    let string = text as NSString
+    let activeRange = string.range(of: "Status")
+    let attributed = MarkdownAttributedRenderer.render(
+      text,
+      activeRanges: [NSRange(location: activeRange.location, length: 0)]
+    )
+
+    let hasTableAttribute = attributed.attribute(.latticeMarkdownTable, at: 0, effectiveRange: nil) as? Bool
+    let color = attributed.attribute(.foregroundColor, at: 0, effectiveRange: nil) as? NSColor
+    let font = attributed.attribute(.font, at: 0, effectiveRange: nil) as? NSFont
+
+    #expect(hasTableAttribute == nil)
+    #expect(color == NSColor.labelColor)
+    #expect(font?.fontDescriptor.symbolicTraits.contains(.monoSpace) == true)
+  }
+
   @Test("shows active inline tokens as editable source")
   func showsActiveInlineTokensAsEditableSource() {
     let attributed = MarkdownAttributedRenderer.render(
