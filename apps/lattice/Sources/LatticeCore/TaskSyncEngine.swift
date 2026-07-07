@@ -146,12 +146,15 @@ public final class TaskSyncEngine {
           shouldPushCompletion = true
         }
 
-        shouldPushTitle = task.title != existingLink.syncedTitle
+        let externalTitle = externalTitle(for: task)
+        let externalStillHasLastLatticeTitle = external.title == existingLink.syncedTitle
+        let existingExternalTitleNeedsRendering = externalStillHasLastLatticeTitle && external.title != externalTitle
+        shouldPushTitle = task.title != existingLink.syncedTitle || existingExternalTitleNeedsRendering
 
         if shouldPushTitle || shouldPushCompletion {
           let updated = try await provider.upsertTask(
             externalID: existingLink.externalID,
-            title: task.title,
+            title: externalTitle,
             isCompleted: effectiveCompleted,
             destinationID: existingLink.destinationID
           )
@@ -177,7 +180,7 @@ public final class TaskSyncEngine {
       } else {
         let created = try await provider.upsertTask(
           externalID: link?.externalID,
-          title: task.title,
+          title: externalTitle(for: task),
           isCompleted: effectiveCompleted,
           destinationID: link?.destinationID ?? destinationID
         )
@@ -287,6 +290,11 @@ public final class TaskSyncEngine {
       syncedTitle: task.title,
       syncedCompleted: providerTask.isCompleted
     )
+  }
+
+  private func externalTitle(for task: MarkdownTask) -> String {
+    let rendered = MarkdownPlainTextRenderer.lineText(from: task.title)
+    return rendered.isEmpty ? task.title : rendered
   }
 
   private func applyCompletionUpdates(

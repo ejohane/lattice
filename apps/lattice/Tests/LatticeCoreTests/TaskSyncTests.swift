@@ -106,6 +106,19 @@ struct TaskSyncEngineTests {
     #expect(fixture.provider.tasks.values.map(\.title) == ["Buy milk"])
   }
 
+  @Test("renders markdown task titles before syncing them to reminders")
+  func rendersMarkdownTaskTitlesBeforeSyncingThemToReminders() async throws {
+    let fixture = try TaskSyncFixture()
+    defer { fixture.cleanup() }
+    try fixture.enableSync()
+    try fixture.writeNote(body: "- [ ] Follow up with [Project Plan](../2026-06-24/project-plan.md) and [[Daily Note#Tasks|Tasks]]")
+
+    let summary = try await fixture.engine.syncAll(notesFolderURL: fixture.root)
+
+    #expect(summary.createdExternalTasks == 1)
+    #expect(fixture.provider.tasks.values.map(\.title) == ["Follow up with Project Plan and Tasks"])
+  }
+
   @Test("pushes lattice title changes outward")
   func pushesLatticeTitleChangesOutward() async throws {
     let fixture = try TaskSyncFixture()
@@ -120,6 +133,43 @@ struct TaskSyncEngineTests {
 
     #expect(summary.updatedExternalTasks == 1)
     #expect(fixture.provider.tasks[externalID]?.title == "Buy oat milk")
+  }
+
+  @Test("pushes rendered markdown title changes outward")
+  func pushesRenderedMarkdownTitleChangesOutward() async throws {
+    let fixture = try TaskSyncFixture()
+    defer { fixture.cleanup() }
+    try fixture.enableSync()
+    let noteURL = try fixture.writeNote(body: "- [ ] Review [Project Plan](../2026-06-24/project-plan.md)")
+    _ = try await fixture.engine.syncAll(notesFolderURL: fixture.root)
+    let externalID = try #require(fixture.provider.tasks.values.first?.externalID)
+
+    try "- [ ] Review [Project Plan v2](../2026-06-24/project-plan.md)\n".write(to: noteURL, atomically: true, encoding: .utf8)
+    let summary = try await fixture.engine.syncAll(notesFolderURL: fixture.root)
+
+    #expect(summary.updatedExternalTasks == 1)
+    #expect(fixture.provider.tasks[externalID]?.title == "Review Project Plan v2")
+  }
+
+  @Test("rerenders existing raw markdown reminder titles")
+  func rerendersExistingRawMarkdownReminderTitles() async throws {
+    let fixture = try TaskSyncFixture()
+    defer { fixture.cleanup() }
+    try fixture.enableSync()
+    try fixture.writeNote(body: "- [ ] Review [Project Plan](../2026-06-24/project-plan.md)")
+    _ = try await fixture.engine.syncAll(notesFolderURL: fixture.root)
+    let externalID = try #require(fixture.provider.tasks.values.first?.externalID)
+    fixture.provider.tasks[externalID] = TaskProviderTask(
+      externalID: externalID,
+      title: "Review [Project Plan](../2026-06-24/project-plan.md)",
+      isCompleted: false,
+      destinationID: "reminders"
+    )
+
+    let summary = try await fixture.engine.syncAll(notesFolderURL: fixture.root)
+
+    #expect(summary.updatedExternalTasks == 1)
+    #expect(fixture.provider.tasks[externalID]?.title == "Review Project Plan")
   }
 
   @Test("pulls external completion into markdown")
