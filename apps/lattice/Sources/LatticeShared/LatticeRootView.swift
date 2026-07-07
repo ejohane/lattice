@@ -312,6 +312,7 @@ private struct LeftEdgeBackSwipeView: UIViewRepresentable {
 private struct NoteEditorPane: View {
   @Bindable var model: LatticeAppModel
   @Environment(\.latticeTheme) private var theme
+  @State private var wikiAutocompleteAnchor: CGRect?
   private let maximumEditorWidth: CGFloat = 920
   private let editorHorizontalPadding: CGFloat = 12
   #if os(iOS)
@@ -354,52 +355,63 @@ private struct NoteEditorPane: View {
 
   private var editorContent: some View {
     VStack(spacing: 0) {
-      MarkdownTextEditor(
-        text: $model.text,
-        selectedRange: $model.selectedRange,
-        vimState: $model.vimState,
-        fontSize: CGFloat(model.editorFontSize),
-        fontFamily: model.editorFontFamily,
-        focusToken: model.editorFocusToken,
-        isVimModeEnabled: model.effectiveIsVimModeEnabled,
-        showsRelativeLineNumbers: model.showsRelativeLineNumbers,
-        keyboardAccessoryActions: keyboardAccessoryActions,
-        hasAutocompleteSuggestions: !model.wikiAutocompleteSuggestions.isEmpty,
-        wikiLinkStates: model.wikiLinkStates,
-        theme: theme,
-        imagePreviewStates: model.imagePreviewStates,
-        onTextChange: {
-          model.noteTextDidChange()
-        },
-        onSelectionChange: {
-          model.noteSelectionDidChange()
-        },
-        onWikiLinkActivated: { characterIndex in
-          model.activateWikiLink(at: characterIndex)
-        },
-        onMarkdownLinkActivated: { characterIndex in
-          model.activateMarkdownLink(at: characterIndex)
-        },
-        onDismissAutocomplete: {
-          model.dismissWikiAutocomplete()
-        },
-        onVimWrite: {
-          model.vimWrite()
-        },
-        onVimStatusChange: { message in
-          model.setVimStatusMessage(message)
-        },
-        onImageAttachmentsImported: { imports in
-          model.insertImageAttachments(imports)
-        },
-        onImageAttachmentResized: { lineLocation, width in
-          model.resizeImageAttachment(lineLocation: lineLocation, width: width)
-        }
-      )
-      .ignoresSafeArea(.keyboard, edges: .bottom)
+      ZStack(alignment: .topLeading) {
+        MarkdownTextEditor(
+          text: $model.text,
+          selectedRange: $model.selectedRange,
+          vimState: $model.vimState,
+          fontSize: CGFloat(model.editorFontSize),
+          fontFamily: model.editorFontFamily,
+          focusToken: model.editorFocusToken,
+          isVimModeEnabled: model.effectiveIsVimModeEnabled,
+          showsRelativeLineNumbers: model.showsRelativeLineNumbers,
+          autocompleteAnchor: $wikiAutocompleteAnchor,
+          keyboardAccessoryActions: keyboardAccessoryActions,
+          hasAutocompleteSuggestions: !model.wikiAutocompleteSuggestions.isEmpty,
+          wikiLinkStates: model.wikiLinkStates,
+          theme: theme,
+          imagePreviewStates: model.imagePreviewStates,
+          onTextChange: {
+            model.noteTextDidChange()
+          },
+          onSelectionChange: {
+            model.noteSelectionDidChange()
+          },
+          onWikiLinkActivated: { characterIndex in
+            model.activateWikiLink(at: characterIndex)
+          },
+          onMarkdownLinkActivated: { characterIndex in
+            model.activateMarkdownLink(at: characterIndex)
+          },
+          onDismissAutocomplete: {
+            model.dismissWikiAutocomplete()
+          },
+          onMoveAutocompleteSelection: { delta in
+            model.moveWikiAutocompleteSelection(by: delta)
+          },
+          onCommitAutocomplete: {
+            model.commitSelectedWikiAutocompleteSuggestion()
+          },
+          onVimWrite: {
+            model.vimWrite()
+          },
+          onVimStatusChange: { message in
+            model.setVimStatusMessage(message)
+          },
+          onImageAttachmentsImported: { imports in
+            model.insertImageAttachments(imports)
+          },
+          onImageAttachmentResized: { lineLocation, width in
+            model.resizeImageAttachment(lineLocation: lineLocation, width: width)
+          }
+        )
+        .ignoresSafeArea(.keyboard, edges: .bottom)
+        .frame(maxWidth: .infinity, maxHeight: .infinity)
+        .background(theme.color(.editorBackground))
+
+        wikiAutocompleteOverlay
+      }
       .frame(maxWidth: .infinity, maxHeight: .infinity)
-      .background(theme.color(.editorBackground))
-      autocompleteBar
       if model.showsStatusBar {
         statusBar
       }
@@ -560,33 +572,54 @@ private struct NoteEditorPane: View {
   }
 
   @ViewBuilder
-  private var autocompleteBar: some View {
-    if !model.wikiAutocompleteSuggestions.isEmpty {
-      ScrollView(.horizontal, showsIndicators: false) {
-        HStack(spacing: 8) {
-          ForEach(model.wikiAutocompleteSuggestions) { suggestion in
-            Button {
-              model.selectWikiAutocompleteSuggestion(suggestion)
-            } label: {
-              VStack(alignment: .leading, spacing: 2) {
-                Text(suggestion.title)
-                  .font(.callout.weight(.medium))
-                  .lineLimit(1)
-                Text(suggestion.subtitle)
-                  .font(.caption)
-                  .foregroundStyle(theme.color(.secondaryText))
-                  .lineLimit(1)
-              }
-              .frame(minWidth: 120, alignment: .leading)
-            }
-            .buttonStyle(.bordered)
-          }
+  private var wikiAutocompleteOverlay: some View {
+    if let wikiAutocompleteAnchor, !model.wikiAutocompleteSuggestions.isEmpty {
+      GeometryReader { proxy in
+        let visibleRange = wikiAutocompleteVisibleRange(
+          suggestionCount: model.wikiAutocompleteSuggestions.count,
+          selectedIndex: model.wikiAutocompleteSelectionIndex,
+          maxVisibleCount: 5
+        )
+        let suggestions = Array(model.wikiAutocompleteSuggestions[visibleRange])
+        let selectedIndex = max(0, model.wikiAutocompleteSelectionIndex - visibleRange.lowerBound)
+        let width = min(640, max(0, proxy.size.width - 24))
+        let rowHeight: CGFloat = 48
+        let panelHeight = CGFloat(suggestions.count) * rowHeight + 12
+        let x = min(max(12, wikiAutocompleteAnchor.minX), max(12, proxy.size.width - width - 12))
+        let preferredY = wikiAutocompleteAnchor.maxY + 8
+        let y = preferredY + panelHeight <= proxy.size.height - 12
+          ? preferredY
+          : max(12, wikiAutocompleteAnchor.minY - panelHeight - 8)
+
+        WikiAutocompletePanel(
+          suggestions: suggestions,
+          selectedIndex: selectedIndex,
+          theme: theme
+        ) { suggestion in
+          model.selectWikiAutocompleteSuggestion(suggestion)
         }
-        .padding(.horizontal, 12)
-        .padding(.vertical, 8)
+        .frame(width: width, height: panelHeight, alignment: .top)
+        .position(x: x + width / 2, y: y + panelHeight / 2)
+        .transition(.opacity.combined(with: .scale(scale: 0.98, anchor: .topLeading)))
       }
-      .background(theme.color(.barBackground))
+      .allowsHitTesting(true)
     }
+  }
+
+  private func wikiAutocompleteVisibleRange(
+    suggestionCount: Int,
+    selectedIndex: Int,
+    maxVisibleCount: Int
+  ) -> Range<Int> {
+    guard suggestionCount > 0, maxVisibleCount > 0 else {
+      return 0..<0
+    }
+
+    let visibleCount = min(suggestionCount, maxVisibleCount)
+    let clampedSelection = min(max(selectedIndex, 0), suggestionCount - 1)
+    let maximumStart = suggestionCount - visibleCount
+    let start = min(max(0, clampedSelection - visibleCount + 1), maximumStart)
+    return start..<(start + visibleCount)
   }
 
   private var statusText: String {
@@ -619,6 +652,61 @@ private struct NoteEditorPane: View {
     }
   }
 
+}
+
+private struct WikiAutocompletePanel: View {
+  let suggestions: [WikiAutocompleteSuggestion]
+  let selectedIndex: Int
+  let theme: LatticeTheme
+  let onSelect: (WikiAutocompleteSuggestion) -> Void
+
+  var body: some View {
+    VStack(spacing: 0) {
+      ForEach(Array(suggestions.enumerated()), id: \.element.id) { index, suggestion in
+        let isSelected = index == selectedIndex
+        Button {
+          onSelect(suggestion)
+        } label: {
+          HStack(spacing: 12) {
+            Image(systemName: "doc.text")
+              .font(.system(size: 22, weight: .regular))
+              .symbolRenderingMode(.hierarchical)
+              .foregroundStyle(isSelected ? theme.color(.accent) : theme.color(.secondaryText))
+              .frame(width: 28)
+
+            Text(suggestion.title)
+              .font(.title3.weight(isSelected ? .semibold : .regular))
+              .foregroundStyle(theme.color(.primaryText))
+              .lineLimit(1)
+              .truncationMode(.tail)
+
+            Spacer(minLength: 0)
+          }
+          .frame(height: 48)
+          .padding(.horizontal, 14)
+          .background {
+            if isSelected {
+              RoundedRectangle(cornerRadius: 12, style: .continuous)
+                .fill(theme.color(.secondaryText).opacity(0.18))
+            }
+          }
+          .contentShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
+        }
+        .buttonStyle(.plain)
+        .accessibilityLabel(suggestion.subtitle.isEmpty ? suggestion.title : "\(suggestion.title), \(suggestion.subtitle)")
+      }
+    }
+    .padding(6)
+    .background {
+      RoundedRectangle(cornerRadius: 22, style: .continuous)
+        .fill(theme.color(.barBackground).opacity(0.96))
+        .shadow(color: .black.opacity(0.24), radius: 18, x: 0, y: 10)
+    }
+    .overlay {
+      RoundedRectangle(cornerRadius: 22, style: .continuous)
+        .stroke(theme.color(.separator).opacity(0.68), lineWidth: 1)
+    }
+  }
 }
 
 private struct ZenNoteEditorPane: View {
