@@ -382,11 +382,10 @@ private struct WindowConfiguration: NSViewRepresentable {
       window.standardWindowButton(.closeButton)?.isHidden = isZenModeEnabled
       window.standardWindowButton(.miniaturizeButton)?.isHidden = isZenModeEnabled
       window.standardWindowButton(.zoomButton)?.isHidden = isZenModeEnabled
+      window.styleMask.insert(.fullSizeContentView)
       if isZenModeEnabled {
-        window.styleMask.insert(.fullSizeContentView)
         window.toolbar?.isVisible = false
       } else {
-        window.styleMask.remove(.fullSizeContentView)
         window.toolbar?.isVisible = true
       }
       applyBackground(backgroundColor, to: window)
@@ -395,8 +394,19 @@ private struct WindowConfiguration: NSViewRepresentable {
 
   private func applyBackground(_ color: NSColor, to window: NSWindow) {
     window.backgroundColor = color
+    let layerColor = resolvedLayerColor(color, for: window)
+    window.contentView?.wantsLayer = true
+    window.contentView?.layer?.backgroundColor = layerColor
     window.contentView?.superview?.wantsLayer = true
-    window.contentView?.superview?.layer?.backgroundColor = color.cgColor
+    window.contentView?.superview?.layer?.backgroundColor = layerColor
+  }
+
+  private func resolvedLayerColor(_ color: NSColor, for window: NSWindow) -> CGColor {
+    var layerColor = color.cgColor
+    window.effectiveAppearance.performAsCurrentDrawingAppearance {
+      layerColor = color.cgColor
+    }
+    return layerColor
   }
 }
 
