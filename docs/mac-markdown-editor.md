@@ -18,6 +18,10 @@ private document model.
 - Clicking or tapping a task-list checkbox prefix toggles `[ ]` and `[x]`.
 - Inline bold, italic, code, and links style their content while hiding inactive
   syntax tokens.
+- Pipe tables render as bordered tables when inactive, and show the Markdown
+  source when the insertion point moves into the table.
+- Complete pipe tables are normalized to evenly padded Markdown source columns
+  after the insertion point leaves the table.
 - Fenced code blocks do not receive inline Markdown styling.
 - Return continues unordered, ordered, and task lists.
 - Return on an empty list item exits the list.

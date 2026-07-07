@@ -785,6 +785,7 @@ public final class LatticeAppModel {
   }
 
   public func noteSelectionDidChange() {
+    formatInactiveMarkdownTables()
     updateWikiAutocompleteIfNeeded()
   }
 
@@ -1006,6 +1007,7 @@ public final class LatticeAppModel {
     autosaveWorkItem?.cancel()
     autosaveWorkItem = nil
     do {
+      formatInactiveMarkdownTables()
       let saveDate = now ?? dateProvider()
       let previousBody = session.savedBody
       let wasExistingNote = session.currentNote != nil
@@ -1039,6 +1041,18 @@ public final class LatticeAppModel {
     } catch {
       errorMessage = error.localizedDescription
     }
+  }
+
+  private func formatInactiveMarkdownTables() {
+    guard let result = MarkdownTableFormatter.formatTables(in: text, selection: selectedRange) else {
+      return
+    }
+
+    text = result.body
+    selectedRange = clampedRange(result.selection, in: text)
+    refreshWikiLinkStates()
+    refreshImagePreviewStates()
+    updateWikiAutocomplete()
   }
 
   private func commandPaletteIndexedNotes(limit: Int) -> [SavedNote]? {

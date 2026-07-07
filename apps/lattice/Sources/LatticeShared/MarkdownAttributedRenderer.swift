@@ -11,6 +11,7 @@ extension NSAttributedString.Key {
   static let latticeImagePreviewURL = NSAttributedString.Key("lattice.imagePreviewURL")
   static let latticeImagePreviewAltText = NSAttributedString.Key("lattice.imagePreviewAltText")
   static let latticeImagePreviewWidth = NSAttributedString.Key("lattice.imagePreviewWidth")
+  static let latticeMarkdownTable = NSAttributedString.Key("lattice.markdownTable")
 }
 
 #if os(macOS)
@@ -92,10 +93,15 @@ enum MarkdownAttributedRenderer {
   ) {
     let nsString = attributed.string as NSString
     let codeBlocks = codeBlockRanges(in: nsString)
+    let tables = MarkdownTableParser.tables(in: attributed.string)
+    let inactiveTableRanges = tables
+      .filter { !tableRangeIsActive($0.range, activeRanges: activeRanges) }
+      .map(\.range)
     applyBlockStyles(to: attributed, fontSize: fontSize, fontFamily: fontFamily, codeBlocks: codeBlocks, activeRanges: activeRanges, theme: theme)
-    applyInlineStyles(to: attributed, fontSize: fontSize, fontFamily: fontFamily, skippedRanges: codeBlocks, activeRanges: activeRanges, theme: theme)
+    applyInlineStyles(to: attributed, fontSize: fontSize, fontFamily: fontFamily, skippedRanges: codeBlocks + inactiveTableRanges, activeRanges: activeRanges, theme: theme)
     applyWikiLinkStyles(to: attributed, fontSize: fontSize, fontFamily: fontFamily, states: wikiLinkStates, activeRanges: activeRanges, theme: theme)
     hideLatticeMetadataComments(in: attributed, fontSize: fontSize, fontFamily: fontFamily, activeRanges: activeRanges, theme: theme)
+    applyMarkdownTableStyles(to: attributed, fontSize: fontSize, fontFamily: fontFamily, tables: tables, activeRanges: activeRanges, theme: theme)
     applyImagePreviewStyles(to: attributed, fontSize: fontSize, fontFamily: fontFamily, states: imagePreviewStates, activeRanges: activeRanges)
   }
 
@@ -697,6 +703,81 @@ enum MarkdownAttributedRenderer {
     return max(96 * fontSize / bodyFontSize, scaledHeight + verticalPadding)
   }
 
+  private static func applyMarkdownTableStyles(
+    to attributed: NSMutableAttributedString,
+    fontSize: CGFloat,
+    fontFamily: EditorFontFamily,
+    tables: [MarkdownTableBlock],
+    activeRanges: [NSRange],
+    theme: LatticeTheme
+  ) {
+    for table in tables where NSMaxRange(table.range) <= attributed.length {
+      if tableRangeIsActive(table.range, activeRanges: activeRanges) {
+        attributed.addAttributes(tableSourceAttributes(fontSize: fontSize, theme: theme), range: table.range)
+        continue
+      }
+
+      attributed.addAttributes(tableHiddenSourceAttributes(fontSize: fontSize, fontFamily: fontFamily), range: table.range)
+      attributed.addAttribute(.latticeMarkdownTable, value: true, range: table.range)
+      attributed.addAttributes(tableRowPlaceholderAttributes(fontSize: fontSize, fontFamily: fontFamily, isHeader: true), range: table.headerLineRange)
+      attributed.addAttributes(tableSeparatorPlaceholderAttributes(fontSize: fontSize, fontFamily: fontFamily), range: table.separatorLineRange)
+      for lineRange in table.bodyLineRanges {
+        attributed.addAttributes(tableRowPlaceholderAttributes(fontSize: fontSize, fontFamily: fontFamily, isHeader: false), range: lineRange)
+      }
+    }
+  }
+
+  private static func tableSourceAttributes(fontSize: CGFloat, theme: LatticeTheme) -> [NSAttributedString.Key: Any] {
+    [
+      .foregroundColor: theme.nsColor(.primaryText),
+      .font: NSFont.monospacedSystemFont(ofSize: fontSize, weight: .regular)
+    ]
+  }
+
+  private static func tableHiddenSourceAttributes(
+    fontSize: CGFloat,
+    fontFamily: EditorFontFamily
+  ) -> [NSAttributedString.Key: Any] {
+    [
+      .foregroundColor: NSColor.clear,
+      .font: bodyFont(size: max(0.1, 0.1 * fontSize / bodyFontSize), family: fontFamily)
+    ]
+  }
+
+  private static func tableRowPlaceholderAttributes(
+    fontSize: CGFloat,
+    fontFamily: EditorFontFamily,
+    isHeader: Bool
+  ) -> [NSAttributedString.Key: Any] {
+    let rowHeight = (isHeader ? 38 : 34) * fontSize / bodyFontSize
+    let paragraphStyle = NSMutableParagraphStyle()
+    paragraphStyle.minimumLineHeight = rowHeight
+    paragraphStyle.maximumLineHeight = rowHeight
+    paragraphStyle.lineSpacing = 0
+    paragraphStyle.paragraphSpacing = 0
+    return [
+      .foregroundColor: NSColor.clear,
+      .font: bodyFont(size: max(0.1, 0.1 * fontSize / bodyFontSize), family: fontFamily),
+      .paragraphStyle: paragraphStyle
+    ]
+  }
+
+  private static func tableSeparatorPlaceholderAttributes(
+    fontSize: CGFloat,
+    fontFamily: EditorFontFamily
+  ) -> [NSAttributedString.Key: Any] {
+    let paragraphStyle = NSMutableParagraphStyle()
+    paragraphStyle.minimumLineHeight = max(1, 2 * fontSize / bodyFontSize)
+    paragraphStyle.maximumLineHeight = max(1, 2 * fontSize / bodyFontSize)
+    paragraphStyle.lineSpacing = 0
+    paragraphStyle.paragraphSpacing = 0
+    return [
+      .foregroundColor: NSColor.clear,
+      .font: bodyFont(size: max(0.1, 0.1 * fontSize / bodyFontSize), family: fontFamily),
+      .paragraphStyle: paragraphStyle
+    ]
+  }
+
   private static func italicBodyFont(size: CGFloat, fontFamily: EditorFontFamily) -> NSFont {
     NSFontManager.shared.convert(bodyFont(size: size, family: fontFamily), toHaveTrait: .italicFontMask)
   }
@@ -815,6 +896,16 @@ enum MarkdownAttributedRenderer {
     return NSRange(location: lineRange.location, length: end - lineRange.location)
   }
 
+  private static func tableRangeIsActive(_ tableRange: NSRange, activeRanges: [NSRange]) -> Bool {
+    activeRanges.contains { activeRange in
+      if activeRange.length > 0 {
+        return NSIntersectionRange(tableRange, activeRange).length > 0
+      }
+
+      return activeRange.location >= tableRange.location && activeRange.location <= NSMaxRange(tableRange)
+    }
+  }
+
   private static func applyInactiveTextDimming(
     to attributed: NSMutableAttributedString,
     activeRanges: [NSRange],
@@ -915,17 +1006,22 @@ enum MarkdownAttributedRenderer {
   ) {
     let fullRange = NSRange(location: 0, length: attributed.length)
     let codeBlocks = codeBlockRanges(in: attributed.string as NSString)
+    let tables = MarkdownTableParser.tables(in: attributed.string)
+    let inactiveTableRanges = tables
+      .filter { !tableRangeIsActive($0.range, activeRanges: activeRanges) }
+      .map(\.range)
     for span in MarkdownStyler.spans(in: attributed.string) {
       guard NSMaxRange(span.range) <= attributed.length else {
         continue
       }
       attributed.addAttributes(attributes(for: span, fontFamily: fontFamily, theme: theme), range: span.range)
     }
-    applyInlineTokenStyles(to: attributed, fontFamily: fontFamily, skippedRanges: codeBlocks, activeRanges: activeRanges, theme: theme)
-    applyAutolinkStyles(to: attributed, fullRange: fullRange, skippedRanges: inlineLinkRanges(in: attributed.string, fullRange: fullRange, skippedRanges: codeBlocks), theme: theme)
+    applyInlineTokenStyles(to: attributed, fontFamily: fontFamily, skippedRanges: codeBlocks + inactiveTableRanges, activeRanges: activeRanges, theme: theme)
+    applyAutolinkStyles(to: attributed, fullRange: fullRange, skippedRanges: inlineLinkRanges(in: attributed.string, fullRange: fullRange, skippedRanges: codeBlocks + inactiveTableRanges), theme: theme)
     applyBlockStyles(to: attributed, fontFamily: fontFamily, activeRanges: activeRanges, theme: theme)
     applyWikiLinkStyles(to: attributed, fontFamily: fontFamily, activeRanges: activeRanges, states: wikiLinkStates, theme: theme)
     hideLatticeMetadataComments(in: attributed, fontFamily: fontFamily, activeRanges: activeRanges, theme: theme)
+    applyMarkdownTableStyles(to: attributed, fontFamily: fontFamily, tables: tables, activeRanges: activeRanges, theme: theme)
   }
 
   private static func applyInlineTokenStyles(
@@ -1302,6 +1398,73 @@ enum MarkdownAttributedRenderer {
     ]
   }
 
+  private static func applyMarkdownTableStyles(
+    to attributed: NSMutableAttributedString,
+    fontFamily: EditorFontFamily,
+    tables: [MarkdownTableBlock],
+    activeRanges: [NSRange],
+    theme: LatticeTheme
+  ) {
+    for table in tables where NSMaxRange(table.range) <= attributed.length {
+      if tableRangeIsActive(table.range, activeRanges: activeRanges) {
+        attributed.addAttributes(tableSourceAttributes(theme: theme), range: table.range)
+        continue
+      }
+
+      attributed.addAttributes(tableHiddenSourceAttributes(fontFamily: fontFamily), range: table.range)
+      attributed.addAttribute(.latticeMarkdownTable, value: true, range: table.range)
+      attributed.addAttributes(tableRowPlaceholderAttributes(fontFamily: fontFamily, isHeader: true), range: table.headerLineRange)
+      attributed.addAttributes(tableSeparatorPlaceholderAttributes(fontFamily: fontFamily), range: table.separatorLineRange)
+      for lineRange in table.bodyLineRanges {
+        attributed.addAttributes(tableRowPlaceholderAttributes(fontFamily: fontFamily, isHeader: false), range: lineRange)
+      }
+    }
+  }
+
+  private static func tableSourceAttributes(theme: LatticeTheme) -> [NSAttributedString.Key: Any] {
+    [
+      .foregroundColor: theme.uiColor(.primaryText),
+      .font: UIFont.monospacedSystemFont(ofSize: bodyFont().pointSize, weight: .regular)
+    ]
+  }
+
+  private static func tableHiddenSourceAttributes(fontFamily: EditorFontFamily) -> [NSAttributedString.Key: Any] {
+    [
+      .foregroundColor: UIColor.clear,
+      .font: bodyFont(size: 0.1, fontFamily: fontFamily)
+    ]
+  }
+
+  private static func tableRowPlaceholderAttributes(
+    fontFamily: EditorFontFamily,
+    isHeader: Bool
+  ) -> [NSAttributedString.Key: Any] {
+    let rowHeight: CGFloat = isHeader ? 42 : 38
+    let paragraphStyle = NSMutableParagraphStyle()
+    paragraphStyle.minimumLineHeight = rowHeight
+    paragraphStyle.maximumLineHeight = rowHeight
+    paragraphStyle.lineSpacing = 0
+    paragraphStyle.paragraphSpacing = 0
+    return [
+      .foregroundColor: UIColor.clear,
+      .font: bodyFont(size: 0.1, fontFamily: fontFamily),
+      .paragraphStyle: paragraphStyle
+    ]
+  }
+
+  private static func tableSeparatorPlaceholderAttributes(fontFamily: EditorFontFamily) -> [NSAttributedString.Key: Any] {
+    let paragraphStyle = NSMutableParagraphStyle()
+    paragraphStyle.minimumLineHeight = 2
+    paragraphStyle.maximumLineHeight = 2
+    paragraphStyle.lineSpacing = 0
+    paragraphStyle.paragraphSpacing = 0
+    return [
+      .foregroundColor: UIColor.clear,
+      .font: bodyFont(size: 0.1, fontFamily: fontFamily),
+      .paragraphStyle: paragraphStyle
+    ]
+  }
+
   private static func wikiLinkAttributes(for status: WikiLinkRenderStatus, theme: LatticeTheme) -> [NSAttributedString.Key: Any] {
     switch status {
     case .resolved:
@@ -1349,6 +1512,16 @@ enum MarkdownAttributedRenderer {
 
   private static func range(_ range: NSRange, intersectsAny ranges: [NSRange]) -> Bool {
     ranges.contains { NSIntersectionRange(range, $0).length > 0 }
+  }
+
+  private static func tableRangeIsActive(_ tableRange: NSRange, activeRanges: [NSRange]) -> Bool {
+    activeRanges.contains { activeRange in
+      if activeRange.length > 0 {
+        return NSIntersectionRange(tableRange, activeRange).length > 0
+      }
+
+      return activeRange.location >= tableRange.location && activeRange.location <= NSMaxRange(tableRange)
+    }
   }
 
   private static func firstMatch(_ pattern: String, in string: String) -> NSTextCheckingResult? {
