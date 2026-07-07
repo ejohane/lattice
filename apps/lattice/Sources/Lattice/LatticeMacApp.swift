@@ -7,9 +7,12 @@ import SwiftUI
 struct LatticeMacApp: App {
   private static let minimumWindowWidth: CGFloat = 420
   private static let minimumWindowHeight: CGFloat = 280
+  private static let settingsWindowWidth: CGFloat = 760
+  private static let settingsWindowHeight: CGFloat = 660
 
   @NSApplicationDelegateAdaptor(MacAppDelegate.self) private var appDelegate
   @Environment(\.openWindow) private var openWindow
+  @Environment(\.openSettings) private var openSettings
   @Environment(\.scenePhase) private var scenePhase
   @State private var model = LatticeAppModel()
 
@@ -35,8 +38,21 @@ struct LatticeMacApp: App {
             model.appBecameActive()
           }
         }
+        .onChange(of: model.isShowingSettings) { _, isShowingSettings in
+          if isShowingSettings {
+            showSettingsWindow()
+            model.isShowingSettings = false
+          }
+        }
     }
     .commands {
+      CommandGroup(after: .appInfo) {
+        Button("Settings...") {
+          showSettingsWindow()
+        }
+        .keyboardShortcut(",", modifiers: [.command])
+        Divider()
+      }
       CommandGroup(replacing: .newItem) {
         Button("New Note") {
           showMainWindow()
@@ -65,12 +81,10 @@ struct LatticeMacApp: App {
         }
         .keyboardShortcut("a", modifiers: [.command])
       }
-      CommandMenu("Lattice") {
+      CommandMenu("Actions") {
         Button("Settings...") {
-          showMainWindow()
-          model.showSettings()
+          showSettingsWindow()
         }
-        .keyboardShortcut(",", modifiers: [.command])
 
         Divider()
 
@@ -166,8 +180,7 @@ struct LatticeMacApp: App {
         model.showFolderImporter()
       }
       Button("Settings...") {
-        showMainWindow()
-        model.showSettings()
+        showSettingsWindow()
       }
       if let folderURL = model.folderURL {
         Button("Open Notes Folder") {
@@ -193,6 +206,20 @@ struct LatticeMacApp: App {
       }
       .keyboardShortcut("q", modifiers: [.command])
     }
+
+    Settings {
+      TaskSyncSettingsView(model: model)
+        .frame(width: Self.settingsWindowWidth, height: Self.settingsWindowHeight)
+        .background(SettingsWindowConfiguration(
+          width: Self.settingsWindowWidth,
+          height: Self.settingsWindowHeight,
+          identifier: Self.settingsWindowIdentifier
+        ))
+        .task {
+          model.start()
+        }
+    }
+    .windowResizability(.contentSize)
   }
 
   private func showMainWindow() {
@@ -204,8 +231,27 @@ struct LatticeMacApp: App {
     NSApp.activate(ignoringOtherApps: true)
   }
 
+  private func showSettingsWindow() {
+    if let window = NSApp.windows.first(where: { $0.identifier?.rawValue == Self.settingsWindowIdentifier }) {
+      window.makeKeyAndOrderFront(nil)
+    } else {
+      openSettings()
+    }
+    NSApp.activate(ignoringOtherApps: true)
+  }
+
   private var commandPalettePlatformCommands: [CommandPaletteCommand] {
     [
+      CommandPaletteCommand(
+        id: "mac.settings",
+        title: "Settings",
+        subtitle: "Open Lattice preferences",
+        systemImage: "gearshape",
+        isSetupSafe: true,
+        keyboardShortcut: "⌘,"
+      ) {
+        showSettingsWindow()
+      },
       CommandPaletteCommand(
         id: "mac.checkForUpdates",
         title: "Check for Updates",
@@ -242,6 +288,7 @@ struct LatticeMacApp: App {
 
 private extension LatticeMacApp {
   static let mainWindowIdentifier = "main"
+  static let settingsWindowIdentifier = "settings"
 }
 
 private extension View {
@@ -410,6 +457,42 @@ private struct WindowConfiguration: NSViewRepresentable {
   }
 }
 
+private struct SettingsWindowConfiguration: NSViewRepresentable {
+  let width: CGFloat
+  let height: CGFloat
+  let identifier: String
+
+  func makeNSView(context: Context) -> NSView {
+    let view = NSView()
+    updateWindow(for: view)
+    return view
+  }
+
+  func updateNSView(_ nsView: NSView, context: Context) {
+    updateWindow(for: nsView)
+  }
+
+  private func updateWindow(for view: NSView) {
+    DispatchQueue.main.async {
+      guard let window = view.window else {
+        return
+      }
+      let size = NSSize(width: width, height: height)
+      window.identifier = NSUserInterfaceItemIdentifier(identifier)
+      window.title = "Settings"
+      window.titleVisibility = .hidden
+      window.minSize = size
+      window.maxSize = size
+      window.contentMinSize = size
+      window.contentMaxSize = size
+      window.titlebarAppearsTransparent = true
+      window.toolbarStyle = .unified
+      window.toolbar?.showsBaselineSeparator = false
+      window.styleMask.remove(.resizable)
+    }
+  }
+}
+
 @MainActor
 final class MacAppDelegate: NSObject, NSApplicationDelegate {
   private var updaterController: SPUStandardUpdaterController?
@@ -446,6 +529,9 @@ final class MacAppDelegate: NSObject, NSApplicationDelegate {
   }
 
   func toggleSidebar() {
+    if NSApp.activeWindow?.identifier?.rawValue == LatticeMacApp.settingsWindowIdentifier {
+      return
+    }
     if let toggleSidebarItem = NSApp.activeWindow?.toolbar?.items.first(where: { $0.itemIdentifier == .toggleSidebar }),
        let button = toggleSidebarItem.view as? NSButton {
       button.performClick(nil)

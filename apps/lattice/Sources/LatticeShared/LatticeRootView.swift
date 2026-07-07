@@ -65,9 +65,7 @@ public struct LatticeRootView: View {
           platformCommands: commandPalettePlatformCommands()
         )
       }
-      .sheet(isPresented: $model.isShowingSettings) {
-        TaskSyncSettingsView(model: model)
-      }
+      .latticeSettingsPresentation(model: model)
       .confirmationDialog(
         "Choose Note",
         isPresented: Binding(
@@ -137,6 +135,27 @@ public struct LatticeRootView: View {
     } else {
       FolderSetupView(model: model)
     }
+  }
+}
+
+private struct SettingsPresentationModifier: ViewModifier {
+  @Bindable var model: LatticeAppModel
+
+  func body(content: Content) -> some View {
+    #if os(iOS)
+    content
+      .sheet(isPresented: $model.isShowingSettings) {
+        TaskSyncSettingsView(model: model)
+      }
+    #else
+    content
+    #endif
+  }
+}
+
+private extension View {
+  func latticeSettingsPresentation(model: LatticeAppModel) -> some View {
+    modifier(SettingsPresentationModifier(model: model))
   }
 }
 
