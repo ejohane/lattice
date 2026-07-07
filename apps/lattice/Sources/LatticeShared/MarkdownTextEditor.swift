@@ -75,6 +75,7 @@ public struct MarkdownTextEditor: NSViewRepresentable {
   let showsRelativeLineNumbers: Bool
   let dimsInactiveParagraphs: Bool
   let caretAnchorFraction: CGFloat?
+  @Binding var autocompleteAnchor: CGRect?
   let keyboardAccessoryActions: [MarkdownKeyboardAccessoryAction]
   let hasAutocompleteSuggestions: Bool
   let wikiLinkStates: [WikiLinkRenderState]
@@ -85,6 +86,8 @@ public struct MarkdownTextEditor: NSViewRepresentable {
   let onWikiLinkActivated: (Int) -> Void
   let onMarkdownLinkActivated: (Int) -> Void
   let onDismissAutocomplete: () -> Void
+  let onMoveAutocompleteSelection: (Int) -> Void
+  let onCommitAutocomplete: () -> Void
   let onVimWrite: () -> Void
   let onVimStatusChange: (String?) -> Void
   let onImageAttachmentsImported: ([ImageAttachmentImport]) -> Void
@@ -101,6 +104,7 @@ public struct MarkdownTextEditor: NSViewRepresentable {
     showsRelativeLineNumbers: Bool,
     dimsInactiveParagraphs: Bool = false,
     caretAnchorFraction: CGFloat? = nil,
+    autocompleteAnchor: Binding<CGRect?> = .constant(nil),
     keyboardAccessoryActions: [MarkdownKeyboardAccessoryAction] = [],
     hasAutocompleteSuggestions: Bool,
     wikiLinkStates: [WikiLinkRenderState],
@@ -111,6 +115,8 @@ public struct MarkdownTextEditor: NSViewRepresentable {
     onWikiLinkActivated: @escaping (Int) -> Void,
     onMarkdownLinkActivated: @escaping (Int) -> Void,
     onDismissAutocomplete: @escaping () -> Void,
+    onMoveAutocompleteSelection: @escaping (Int) -> Void = { _ in },
+    onCommitAutocomplete: @escaping () -> Void = {},
     onVimWrite: @escaping () -> Void,
     onVimStatusChange: @escaping (String?) -> Void,
     onImageAttachmentsImported: @escaping ([ImageAttachmentImport]) -> Void,
@@ -126,6 +132,7 @@ public struct MarkdownTextEditor: NSViewRepresentable {
     self.showsRelativeLineNumbers = showsRelativeLineNumbers
     self.dimsInactiveParagraphs = dimsInactiveParagraphs
     self.caretAnchorFraction = caretAnchorFraction
+    self._autocompleteAnchor = autocompleteAnchor
     self.keyboardAccessoryActions = keyboardAccessoryActions
     self.hasAutocompleteSuggestions = hasAutocompleteSuggestions
     self.wikiLinkStates = wikiLinkStates
@@ -136,6 +143,8 @@ public struct MarkdownTextEditor: NSViewRepresentable {
     self.onWikiLinkActivated = onWikiLinkActivated
     self.onMarkdownLinkActivated = onMarkdownLinkActivated
     self.onDismissAutocomplete = onDismissAutocomplete
+    self.onMoveAutocompleteSelection = onMoveAutocompleteSelection
+    self.onCommitAutocomplete = onCommitAutocomplete
     self.onVimWrite = onVimWrite
     self.onVimStatusChange = onVimStatusChange
     self.onImageAttachmentsImported = onImageAttachmentsImported
@@ -226,8 +235,10 @@ public struct MarkdownTextEditor: NSViewRepresentable {
       DispatchQueue.main.async {
         textView.window?.makeFirstResponder(textView)
         context.coordinator.scheduleCaretAnchor(selection: clampedSelectedRange, animated: false)
+        context.coordinator.updateAutocompleteAnchor(in: textView, selection: clampedSelectedRange)
       }
     }
+    context.coordinator.updateAutocompleteAnchor(in: textView, selection: clampedSelectedRange)
   }
 
   @MainActor
@@ -287,6 +298,7 @@ public struct MarkdownTextEditor: NSViewRepresentable {
       applyBaseTypingAttributes(to: textView)
       (textView as? MarkdownTextView)?.invalidateLineNumberRuler()
       textView.needsDisplay = true
+      updateAutocompleteAnchor(in: textView, selection: textView.selectedRange())
       scheduleDeferredRender(in: textView, preserving: textView.selectedRange())
       scheduleCaretAnchor(animated: true)
     }
@@ -298,14 +310,16 @@ public struct MarkdownTextEditor: NSViewRepresentable {
       let selection = textView.selectedRange()
       parent.selectedRange = selection
       parent.onSelectionChange()
+      updateAutocompleteAnchor(in: textView, selection: selection)
       scheduleDeferredRender(in: textView, preserving: selection)
       scheduleCaretAnchor(animated: true)
     }
 
     @objc private func scrollViewBoundsDidChange(_ notification: Notification) {
-      guard parent.normalizedCaretAnchorFraction != nil else {
-        return
+      if let textView {
+        updateAutocompleteAnchor(in: textView, selection: textView.selectedRange())
       }
+      guard parent.normalizedCaretAnchorFraction != nil else { return }
       scheduleCaretAnchor(animated: false)
     }
 
@@ -378,6 +392,7 @@ public struct MarkdownTextEditor: NSViewRepresentable {
       lastRenderedTheme = parent.theme
       lastRenderedImagePreviewStates = parent.imagePreviewStates
       isRendering = false
+      updateAutocompleteAnchor(in: textView, selection: selection)
       scheduleCaretAnchor(selection: selection, animated: true)
     }
 
@@ -413,6 +428,7 @@ public struct MarkdownTextEditor: NSViewRepresentable {
         }
         let targetSelection = selection ?? textView.selectedRange()
         self.scrollCaretIntoView(in: textView, selection: targetSelection, animated: animated)
+        self.updateAutocompleteAnchor(in: textView, selection: targetSelection)
       }
     }
 
@@ -637,6 +653,40 @@ public struct MarkdownTextEditor: NSViewRepresentable {
       return lineRect.offsetBy(dx: origin.x, dy: origin.y)
     }
 
+    func updateAutocompleteAnchor(in textView: NSTextView, selection: NSRange) {
+      guard parent.hasAutocompleteSuggestions else {
+        if parent.autocompleteAnchor != nil {
+          parent.autocompleteAnchor = nil
+        }
+        return
+      }
+
+      guard let scrollView = scrollView ?? textView.enclosingScrollView,
+            let caretRect = caretRect(for: selection, in: textView)
+      else {
+        parent.autocompleteAnchor = nil
+        return
+      }
+
+      let caretInScrollView = scrollView.convert(caretRect, from: textView)
+      guard
+        caretInScrollView.minX.isFinite,
+        caretInScrollView.minY.isFinite,
+        caretInScrollView.width.isFinite,
+        caretInScrollView.height.isFinite
+      else {
+        parent.autocompleteAnchor = nil
+        return
+      }
+
+      parent.autocompleteAnchor = CGRect(
+        x: caretInScrollView.minX,
+        y: caretInScrollView.minY,
+        width: max(1, caretInScrollView.width),
+        height: caretInScrollView.height
+      )
+    }
+
     private static func lineRange(containing selection: NSRange, in text: String) -> NSRange {
       let nsString = text as NSString
       guard nsString.length > 0 else {
@@ -697,9 +747,20 @@ private final class MarkdownTextView: NSTextView {
       return
     }
 
-    if coordinator.parent.hasAutocompleteSuggestions, Self.isEscape(event) {
-      coordinator.parent.onDismissAutocomplete()
-      return
+    if coordinator.parent.hasAutocompleteSuggestions {
+      switch Self.autocompleteKeyAction(for: event) {
+      case .dismiss:
+        coordinator.parent.onDismissAutocomplete()
+        return
+      case .move(let delta):
+        coordinator.parent.onMoveAutocompleteSelection(delta)
+        return
+      case .commit:
+        coordinator.parent.onCommitAutocomplete()
+        return
+      case .none:
+        break
+      }
     }
 
     guard coordinator.parent.isVimModeEnabled else {
@@ -727,6 +788,27 @@ private final class MarkdownTextView: NSTextView {
   }
 
   override func complete(_ sender: Any?) {
+  }
+
+  override func doCommand(by selector: Selector) {
+    guard let coordinator, coordinator.parent.hasAutocompleteSuggestions else {
+      super.doCommand(by: selector)
+      return
+    }
+
+    switch selector {
+    case #selector(NSResponder.moveDown(_:)):
+      coordinator.parent.onMoveAutocompleteSelection(1)
+    case #selector(NSResponder.moveUp(_:)):
+      coordinator.parent.onMoveAutocompleteSelection(-1)
+    case #selector(NSResponder.insertNewline(_:)),
+         #selector(NSResponder.insertTab(_:)):
+      coordinator.parent.onCommitAutocomplete()
+    case #selector(NSResponder.cancelOperation(_:)):
+      coordinator.parent.onDismissAutocomplete()
+    default:
+      super.doCommand(by: selector)
+    }
   }
 
   override func completions(
@@ -1010,6 +1092,34 @@ private final class MarkdownTextView: NSTextView {
 
   private static func isEscape(_ event: NSEvent) -> Bool {
     event.keyCode == 53
+  }
+
+  private enum AutocompleteKeyAction {
+    case dismiss
+    case move(Int)
+    case commit
+  }
+
+  private static func autocompleteKeyAction(for event: NSEvent) -> AutocompleteKeyAction? {
+    let modifiers = event.modifierFlags
+      .intersection(.deviceIndependentFlagsMask)
+      .subtracting([.function, .numericPad, .shift])
+    guard modifiers.isEmpty else {
+      return nil
+    }
+
+    switch event.keyCode {
+    case 53:
+      return .dismiss
+    case 125:
+      return .move(1)
+    case 126:
+      return .move(-1)
+    case 36, 48, 76:
+      return .commit
+    default:
+      return nil
+    }
   }
 
   func configureRuler(showsRelativeLineNumbers: Bool) {
@@ -1638,6 +1748,7 @@ public struct MarkdownTextEditor: UIViewRepresentable {
   let showsRelativeLineNumbers: Bool
   let dimsInactiveParagraphs: Bool
   let caretAnchorFraction: CGFloat?
+  @Binding var autocompleteAnchor: CGRect?
   let keyboardAccessoryActions: [MarkdownKeyboardAccessoryAction]
   let hasAutocompleteSuggestions: Bool
   let wikiLinkStates: [WikiLinkRenderState]
@@ -1648,6 +1759,8 @@ public struct MarkdownTextEditor: UIViewRepresentable {
   let onWikiLinkActivated: (Int) -> Void
   let onMarkdownLinkActivated: (Int) -> Void
   let onDismissAutocomplete: () -> Void
+  let onMoveAutocompleteSelection: (Int) -> Void
+  let onCommitAutocomplete: () -> Void
   let onVimWrite: () -> Void
   let onVimStatusChange: (String?) -> Void
   let onImageAttachmentsImported: ([ImageAttachmentImport]) -> Void
@@ -1664,6 +1777,7 @@ public struct MarkdownTextEditor: UIViewRepresentable {
     showsRelativeLineNumbers: Bool,
     dimsInactiveParagraphs: Bool = false,
     caretAnchorFraction: CGFloat? = nil,
+    autocompleteAnchor: Binding<CGRect?> = .constant(nil),
     keyboardAccessoryActions: [MarkdownKeyboardAccessoryAction] = [],
     hasAutocompleteSuggestions: Bool,
     wikiLinkStates: [WikiLinkRenderState],
@@ -1674,6 +1788,8 @@ public struct MarkdownTextEditor: UIViewRepresentable {
     onWikiLinkActivated: @escaping (Int) -> Void,
     onMarkdownLinkActivated: @escaping (Int) -> Void,
     onDismissAutocomplete: @escaping () -> Void,
+    onMoveAutocompleteSelection: @escaping (Int) -> Void = { _ in },
+    onCommitAutocomplete: @escaping () -> Void = {},
     onVimWrite: @escaping () -> Void,
     onVimStatusChange: @escaping (String?) -> Void,
     onImageAttachmentsImported: @escaping ([ImageAttachmentImport]) -> Void,
@@ -1689,6 +1805,7 @@ public struct MarkdownTextEditor: UIViewRepresentable {
     self.showsRelativeLineNumbers = showsRelativeLineNumbers
     self.dimsInactiveParagraphs = dimsInactiveParagraphs
     self.caretAnchorFraction = caretAnchorFraction
+    self._autocompleteAnchor = autocompleteAnchor
     self.keyboardAccessoryActions = keyboardAccessoryActions
     self.hasAutocompleteSuggestions = hasAutocompleteSuggestions
     self.wikiLinkStates = wikiLinkStates
@@ -1699,6 +1816,8 @@ public struct MarkdownTextEditor: UIViewRepresentable {
     self.onWikiLinkActivated = onWikiLinkActivated
     self.onMarkdownLinkActivated = onMarkdownLinkActivated
     self.onDismissAutocomplete = onDismissAutocomplete
+    self.onMoveAutocompleteSelection = onMoveAutocompleteSelection
+    self.onCommitAutocomplete = onCommitAutocomplete
     self.onVimWrite = onVimWrite
     self.onVimStatusChange = onVimStatusChange
     self.onImageAttachmentsImported = onImageAttachmentsImported
@@ -1787,12 +1906,14 @@ public struct MarkdownTextEditor: UIViewRepresentable {
     textView.backgroundColor = theme.uiColor(.editorBackground)
     textView.tintColor = theme.uiColor(.accent)
     context.coordinator.applyHostBackground(for: textView)
+    context.coordinator.updateAutocompleteAnchor(in: textView, selection: clampedSelectedRange)
     if context.coordinator.lastFocusToken != focusToken {
       context.coordinator.lastFocusToken = focusToken
       DispatchQueue.main.async {
         textView.becomeFirstResponder()
         context.coordinator.applyHostBackground(for: textView)
         context.coordinator.scheduleCaretVisibility(selection: clampedSelectedRange, animated: false)
+        context.coordinator.updateAutocompleteAnchor(in: textView, selection: clampedSelectedRange)
       }
     }
   }
@@ -1879,6 +2000,7 @@ public struct MarkdownTextEditor: UIViewRepresentable {
       applyHostBackground(for: textView)
       configureCaretAnchorLayout(in: textView)
       scheduleCaretVisibility(selection: textView.selectedRange, animated: false)
+      updateAutocompleteAnchor(in: textView, selection: textView.selectedRange)
     }
 
     func applyHostBackground(for textView: UITextView) {
@@ -1959,6 +2081,7 @@ public struct MarkdownTextEditor: UIViewRepresentable {
       parent.text = textView.text
       parent.selectedRange = textView.selectedRange
       parent.onTextChange()
+      updateAutocompleteAnchor(in: textView, selection: textView.selectedRange)
       guard !parent.dimsInactiveParagraphs else {
         let activeLineLocation = Self.lineRange(containing: textView.selectedRange, in: textView.text).location
         let didChangeActiveLine = activeLineLocation != lastRenderedActiveRanges.first?.location
@@ -1977,6 +2100,7 @@ public struct MarkdownTextEditor: UIViewRepresentable {
       parent.selectedRange = textView.selectedRange
       parent.onSelectionChange()
       let clampedSelection = clamped(textView.selectedRange, length: (textView.text as NSString).length)
+      updateAutocompleteAnchor(in: textView, selection: clampedSelection)
       let nextActiveWikiLinkRange = WikiLinkParser.link(at: clampedSelection.location, in: textView.text)?.range
       if needsSelectionRender(selection: clampedSelection, text: textView.text, wikiLinkRange: nextActiveWikiLinkRange) {
         render(textView.text, in: textView, preserving: clampedSelection)
@@ -1991,6 +2115,7 @@ public struct MarkdownTextEditor: UIViewRepresentable {
       }
       configureCaretAnchorLayout(in: textView)
       scheduleCaretVisibility(selection: textView.selectedRange, animated: false)
+      updateAutocompleteAnchor(in: textView, selection: textView.selectedRange)
     }
 
     public func scrollViewDidScroll(_ scrollView: UIScrollView) {
@@ -1998,6 +2123,7 @@ public struct MarkdownTextEditor: UIViewRepresentable {
         return
       }
       restoreFrozenViewportIfNeeded(in: textView)
+      updateAutocompleteAnchor(in: textView, selection: textView.selectedRange)
     }
 
     public func textView(
@@ -2023,6 +2149,7 @@ public struct MarkdownTextEditor: UIViewRepresentable {
       parent.text = textView.text
       parent.selectedRange = textView.selectedRange
       parent.onTextChange()
+      updateAutocompleteAnchor(in: textView, selection: textView.selectedRange)
       render(textView.text, in: textView, preserving: textView.selectedRange)
       return false
     }
@@ -2053,6 +2180,7 @@ public struct MarkdownTextEditor: UIViewRepresentable {
       parent.text = textView.text
       parent.selectedRange = textView.selectedRange
       parent.onTextChange()
+      updateAutocompleteAnchor(in: textView, selection: textView.selectedRange)
       render(textView.text, in: textView, preserving: textView.selectedRange)
       return true
     }
@@ -2098,6 +2226,7 @@ public struct MarkdownTextEditor: UIViewRepresentable {
       parent.text = textView.text
       parent.selectedRange = textView.selectedRange
       parent.onTextChange()
+      updateAutocompleteAnchor(in: textView, selection: textView.selectedRange)
       render(textView.text, in: textView, preserving: textView.selectedRange)
     }
 
@@ -2146,6 +2275,7 @@ public struct MarkdownTextEditor: UIViewRepresentable {
       lastRenderedActiveRanges = activeRanges
       isRendering = false
       scheduleCaretVisibility(selection: clampedSelection, animated: false)
+      updateAutocompleteAnchor(in: textView, selection: clampedSelection)
     }
 
     private func applyAnchoredZenReplacement(
@@ -2210,6 +2340,7 @@ public struct MarkdownTextEditor: UIViewRepresentable {
       parent.text = textView.text
       parent.selectedRange = textView.selectedRange
       parent.onTextChange()
+      updateAutocompleteAnchor(in: textView, selection: textView.selectedRange)
 
       let activeLineRange = Self.lineRange(containing: textView.selectedRange, in: textView.text)
       if activeLineRange.location != previousActiveLineLocation {
@@ -2437,6 +2568,7 @@ public struct MarkdownTextEditor: UIViewRepresentable {
         self.configureCaretAnchorLayout(in: textView)
         let targetSelection = selection ?? textView.selectedRange
         self.scrollCaretToAnchor(in: textView, selection: targetSelection, animated: animated)
+        self.updateAutocompleteAnchor(in: textView, selection: targetSelection)
       }
     }
 
@@ -2453,6 +2585,7 @@ public struct MarkdownTextEditor: UIViewRepresentable {
         }
         let targetSelection = selection ?? textView.selectedRange
         self.scrollCaretAboveKeyboard(in: textView, selection: targetSelection, animated: animated)
+        self.updateAutocompleteAnchor(in: textView, selection: targetSelection)
       }
     }
 
@@ -2520,6 +2653,34 @@ public struct MarkdownTextEditor: UIViewRepresentable {
           textView.layoutIfNeeded()
         }
       }
+    }
+
+    func updateAutocompleteAnchor(in textView: UITextView, selection: NSRange) {
+      guard parent.hasAutocompleteSuggestions else {
+        if parent.autocompleteAnchor != nil {
+          parent.autocompleteAnchor = nil
+        }
+        return
+      }
+
+      textView.layoutIfNeeded()
+      guard let caretRect = caretRect(for: selection, in: textView) else {
+        parent.autocompleteAnchor = nil
+        return
+      }
+
+      let visibleRect = CGRect(
+        x: caretRect.minX - textView.contentOffset.x,
+        y: caretRect.minY - textView.contentOffset.y,
+        width: max(1, caretRect.width),
+        height: caretRect.height
+      )
+      guard visibleRect.hasFiniteCoordinates else {
+        parent.autocompleteAnchor = nil
+        return
+      }
+
+      parent.autocompleteAnchor = visibleRect
     }
 
     private func keyboardOcclusionHeight(in textView: UITextView) -> CGFloat {

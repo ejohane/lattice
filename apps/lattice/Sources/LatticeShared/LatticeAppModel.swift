@@ -57,7 +57,12 @@ public final class LatticeAppModel {
   public var vimStatusMessage: String?
   public var wikiLinkStates: [WikiLinkRenderState] = []
   public var imagePreviewStates: [MarkdownImageRenderState] = []
-  public var wikiAutocompleteSuggestions: [WikiAutocompleteSuggestion] = []
+  public var wikiAutocompleteSuggestions: [WikiAutocompleteSuggestion] = [] {
+    didSet {
+      clampWikiAutocompleteSelection()
+    }
+  }
+  public var wikiAutocompleteSelectionIndex = 0
   public var ambiguousWikiLink: AmbiguousWikiLinkResolution?
   public var renamingNote: SavedNote?
   public var renameTitle = ""
@@ -615,15 +620,28 @@ public final class LatticeAppModel {
     editorFocusToken += 1
   }
 
+  public func moveWikiAutocompleteSelection(by delta: Int) {
+    guard !wikiAutocompleteSuggestions.isEmpty else {
+      wikiAutocompleteSelectionIndex = 0
+      return
+    }
+    let count = wikiAutocompleteSuggestions.count
+    wikiAutocompleteSelectionIndex = (wikiAutocompleteSelectionIndex + delta + count) % count
+  }
+
+  public func commitSelectedWikiAutocompleteSuggestion() {
+    guard wikiAutocompleteSuggestions.indices.contains(wikiAutocompleteSelectionIndex) else {
+      return
+    }
+    selectWikiAutocompleteSuggestion(wikiAutocompleteSuggestions[wikiAutocompleteSelectionIndex])
+  }
+
   public func dismissWikiAutocomplete() {
     wikiAutocompleteSuggestions = []
+    wikiAutocompleteSelectionIndex = 0
   }
 
   public func updateWikiAutocomplete() {
-    #if os(macOS)
-    wikiAutocompleteSuggestions = []
-    return
-    #else
     guard let folderURL, let context = WikiLinkParser.autocompleteContext(in: text, selection: selectedRange) else {
       wikiAutocompleteSuggestions = []
       return
@@ -678,7 +696,6 @@ public final class LatticeAppModel {
     } catch {
       wikiAutocompleteSuggestions = []
     }
-    #endif
   }
 
   public func apply(_ command: MarkdownCommand) {
@@ -691,6 +708,14 @@ public final class LatticeAppModel {
     refreshImagePreviewStates()
     updateWikiAutocomplete()
     editorFocusToken += 1
+  }
+
+  private func clampWikiAutocompleteSelection() {
+    guard !wikiAutocompleteSuggestions.isEmpty else {
+      wikiAutocompleteSelectionIndex = 0
+      return
+    }
+    wikiAutocompleteSelectionIndex = min(max(wikiAutocompleteSelectionIndex, 0), wikiAutocompleteSuggestions.count - 1)
   }
 
   public func indentSelectedListItems() {

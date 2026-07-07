@@ -488,6 +488,66 @@ struct LatticeAppModelTests {
     #expect(model.wikiAutocompleteSuggestions.isEmpty)
   }
 
+  @Test("suggests notes while typing wiki links")
+  func suggestsNotesWhileTypingWikiLinks() throws {
+    let fixture = try Fixture()
+    defer { fixture.cleanup() }
+    let model = LatticeAppModel(
+      noteLibrary: fixture.library,
+      folderAccessStore: fixture.folderAccessStore,
+      noteIndex: NoteIndex(appSupportURL: fixture.appSupportURL)
+    )
+
+    try fixture.fileManager.createDirectory(at: fixture.root, withIntermediateDirectories: true)
+    try fixture.library.selectNotesFolder(fixture.root)
+    let created = try fixture.library.createNote(body: "# Deep Link Notes", now: fixture.date())
+    let target = try fixture.library.renameNote(created, to: "Deep Link Notes")
+    model.chooseFolder(fixture.root)
+    model.text = "See [[deep"
+    model.selectedRange = NSRange(location: (model.text as NSString).length, length: 0)
+
+    model.updateWikiAutocomplete()
+
+    #expect(model.wikiAutocompleteSuggestions.map(\.title).contains(target.filenameTitle))
+  }
+
+  @Test("moves and commits selected wiki autocomplete suggestion")
+  func movesAndCommitsSelectedWikiAutocompleteSuggestion() {
+    let model = LatticeAppModel()
+    model.text = "See [["
+    model.selectedRange = NSRange(location: (model.text as NSString).length, length: 0)
+    model.wikiAutocompleteSuggestions = [
+      WikiAutocompleteSuggestion(
+        title: "Alpha",
+        subtitle: "notes/Alpha.md",
+        replacement: "[[Alpha]]",
+        replacementRange: NSRange(location: 4, length: 2)
+      ),
+      WikiAutocompleteSuggestion(
+        title: "Beta",
+        subtitle: "notes/Beta.md",
+        replacement: "[[Beta]]",
+        replacementRange: NSRange(location: 4, length: 2)
+      )
+    ]
+
+    model.moveWikiAutocompleteSelection(by: 1)
+    #expect(model.wikiAutocompleteSelectionIndex == 1)
+
+    model.moveWikiAutocompleteSelection(by: 1)
+    #expect(model.wikiAutocompleteSelectionIndex == 0)
+
+    model.moveWikiAutocompleteSelection(by: -1)
+    #expect(model.wikiAutocompleteSelectionIndex == 1)
+
+    model.commitSelectedWikiAutocompleteSuggestion()
+
+    #expect(model.text == "See [[Beta]]")
+    #expect(model.selectedRange.location == (model.text as NSString).length)
+    #expect(model.wikiAutocompleteSuggestions.isEmpty)
+    #expect(model.wikiAutocompleteSelectionIndex == 0)
+  }
+
   @Test("clears vim status when editing resumes")
   func clearsVimStatusWhenEditingResumes() {
     let model = LatticeAppModel()
