@@ -456,7 +456,7 @@ enum MarkdownAttributedRenderer {
   ) -> [NSAttributedString.Key: Any] {
     [
       .foregroundColor: NSColor.clear,
-      .font: bodyFont(size: max(0.1, 0.1 * fontSize / bodyFontSize), weight: .regular, family: fontFamily),
+      .font: bodyFont(size: fontSize, weight: .regular, family: fontFamily),
       .latticeTaskCheckbox: true,
       .latticeTaskCheckboxChecked: isChecked
     ]
@@ -1264,7 +1264,7 @@ enum MarkdownAttributedRenderer {
   ) -> [NSAttributedString.Key: Any] {
     [
       .foregroundColor: UIColor.clear,
-      .font: bodyFont(size: 0.1, fontFamily: fontFamily),
+      .font: bodyFont(fontFamily: fontFamily),
       .latticeTaskCheckbox: true,
       .latticeTaskCheckboxChecked: isChecked
     ]

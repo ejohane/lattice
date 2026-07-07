@@ -131,6 +131,7 @@ struct MarkdownAttributedRendererTests {
     let rendersCheckbox = attributed.attribute(.latticeTaskCheckbox, at: checkboxRange.location, effectiveRange: nil) as? Bool
     let isChecked = attributed.attribute(.latticeTaskCheckboxChecked, at: checkboxRange.location, effectiveRange: nil) as? Bool
     let checkboxColor = attributed.attribute(.foregroundColor, at: checkboxRange.location, effectiveRange: nil) as? NSColor
+    let checkboxFont = attributed.attribute(.font, at: checkboxRange.location, effectiveRange: nil) as? NSFont
     let color = attributed.attribute(.foregroundColor, at: contentRange.location, effectiveRange: nil) as? NSColor
     let strikethrough = attributed.attribute(.strikethroughStyle, at: contentRange.location, effectiveRange: nil) as? Int
 
@@ -138,6 +139,7 @@ struct MarkdownAttributedRendererTests {
     #expect(rendersCheckbox == true)
     #expect(isChecked == true)
     #expect(checkboxColor == NSColor.clear)
+    #expect(checkboxFont?.pointSize == MarkdownAttributedRenderer.bodyFontSize)
     #expect(color == NSColor.secondaryLabelColor)
     #expect(strikethrough == NSUnderlineStyle.single.rawValue)
   }
