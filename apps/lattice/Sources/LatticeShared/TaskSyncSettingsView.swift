@@ -8,12 +8,39 @@ import AppKit
 public struct TaskSyncSettingsView: View {
   @Bindable private var model: LatticeAppModel
   @Environment(\.dismiss) private var dismiss
+  #if os(macOS)
+  @State private var selectedMacPane: MacSettingsPane? = .general
+  @State private var macSearchQuery = ""
+  #endif
 
   public init(model: LatticeAppModel) {
     self.model = model
   }
 
   public var body: some View {
+    settingsContent
+      .task {
+        await model.refreshTaskSyncProviderState()
+      }
+      .alert("Sync existing tasks?", isPresented: initialSyncConfirmationBinding) {
+        Button("Cancel", role: .cancel) {
+          model.cancelInitialTaskSync()
+        }
+        Button("Sync Tasks") {
+          Task { @MainActor in
+            await model.confirmInitialTaskSync()
+          }
+        }
+      } message: {
+        Text(initialSyncMessage)
+      }
+  }
+
+  @ViewBuilder
+  private var settingsContent: some View {
+    #if os(macOS)
+    macSettingsContent
+    #else
     NavigationStack {
       Form {
         themeSection
@@ -37,22 +64,339 @@ public struct TaskSyncSettingsView: View {
         }
       }
     }
-    .task {
-      await model.refreshTaskSyncProviderState()
+    #endif
+  }
+
+  #if os(macOS)
+  private var macSettingsContent: some View {
+    HStack(spacing: 0) {
+      macSettingsSidebar
+        .frame(width: 226)
+
+      Divider()
+
+      macSettingsDetail
     }
-    .alert("Sync existing tasks?", isPresented: initialSyncConfirmationBinding) {
-      Button("Cancel", role: .cancel) {
-        model.cancelInitialTaskSync()
+    .background(Color(nsColor: .controlBackgroundColor))
+    .preferredColorScheme(model.theme.preferredColorScheme)
+    .tint(model.theme.color(.accent))
+    .onChange(of: macSearchQuery) { _, _ in
+      if !filteredMacPanes.contains(selectedMacSettingsPane),
+         let firstPane = filteredMacPanes.first {
+        selectedMacPane = firstPane
       }
-      Button("Sync Tasks") {
-        Task { @MainActor in
-          await model.confirmInitialTaskSync()
-        }
-      }
-    } message: {
-      Text(initialSyncMessage)
     }
   }
+
+  private var macSettingsSidebar: some View {
+    VStack(spacing: 12) {
+      HStack(spacing: 7) {
+        Image(systemName: "magnifyingglass")
+          .foregroundStyle(.secondary)
+        TextField("Search", text: $macSearchQuery)
+          .textFieldStyle(.plain)
+      }
+      .padding(.horizontal, 10)
+      .frame(height: 28)
+      .background(.quaternary, in: RoundedRectangle(cornerRadius: 7, style: .continuous))
+      .padding(.horizontal, 16)
+      .padding(.top, 18)
+
+      List {
+        ForEach(filteredMacPanes) { pane in
+          Button {
+            selectedMacPane = pane
+          } label: {
+            MacSettingsSidebarRow(
+              pane: pane,
+              isSelected: selectedMacSettingsPane == pane
+            )
+          }
+          .buttonStyle(.plain)
+        }
+
+        if filteredMacPanes.isEmpty {
+          Text("No Results")
+            .foregroundStyle(.secondary)
+            .padding(.horizontal, 10)
+            .padding(.vertical, 7)
+        }
+      }
+      .listStyle(.sidebar)
+      .scrollContentBackground(.hidden)
+    }
+    .background(.bar)
+  }
+
+  private var macSettingsDetail: some View {
+    ScrollView {
+      VStack(spacing: 22) {
+        MacSettingsHeroCard(pane: selectedMacSettingsPane)
+        macPaneSections
+      }
+      .frame(maxWidth: 520)
+      .padding(.horizontal, 24)
+      .padding(.top, 42)
+      .padding(.bottom, 44)
+    }
+    .frame(maxWidth: .infinity, maxHeight: .infinity)
+    .background(Color(nsColor: .controlBackgroundColor))
+    .toolbar {
+      ToolbarItemGroup(placement: .navigation) {
+        Button {
+          selectPreviousMacPane()
+        } label: {
+          Label("Back", systemImage: "chevron.left")
+            .labelStyle(.iconOnly)
+        }
+        .help("Back")
+        .disabled(previousMacPane == nil)
+
+        Button {
+          selectNextMacPane()
+        } label: {
+          Label("Forward", systemImage: "chevron.right")
+            .labelStyle(.iconOnly)
+        }
+        .help("Forward")
+        .disabled(nextMacPane == nil)
+      }
+    }
+  }
+
+  @ViewBuilder
+  private var macPaneSections: some View {
+    switch selectedMacSettingsPane {
+    case .general:
+      macGeneralSections
+    case .appearance:
+      macAppearanceSections
+    case .editor:
+      macEditorSections
+    case .keyboard:
+      macKeyboardSections
+    case .reminders:
+      macRemindersSections
+    }
+  }
+
+  private var macGeneralSections: some View {
+    VStack(spacing: 22) {
+      MacSettingsSection(title: "Lattice") {
+        MacSettingsValueRow(title: "Notes Folder", value: model.folderURL?.lastPathComponent ?? "Not selected")
+        MacSettingsDivider()
+        MacSettingsValueRow(title: "Status", value: model.status)
+        MacSettingsDivider()
+        MacSettingsValueRow(title: "Theme", value: model.theme.displayName)
+        MacSettingsDivider()
+        MacSettingsValueRow(title: "Task Sync", value: model.taskSyncStatus)
+      }
+
+      MacSettingsSection(title: "Task Provider") {
+        MacSettingsValueRow(title: "Provider", value: model.taskSyncProviderName)
+        MacSettingsDivider()
+        MacSettingsValueRow(title: "Access", value: authorizationText)
+        if !model.taskSyncAuthorizationStatus.allowsSync {
+          MacSettingsDivider()
+          MacSettingsActionRow(
+            title: "Allow Reminders Access",
+            systemImage: "checkmark.shield"
+          ) {
+            Task { @MainActor in
+              await model.refreshTaskSyncProviderState()
+              await model.requestEnableTaskSync()
+            }
+          }
+        }
+      }
+    }
+  }
+
+  private var macAppearanceSections: some View {
+    MacSettingsSection(title: "Theme") {
+      MacSettingsControlRow(title: "Theme") {
+        Picker("Theme", selection: themeBinding) {
+          ForEach(LatticeThemeID.allCases) { themeID in
+            Text(themeID.displayName).tag(themeID)
+          }
+        }
+        .labelsHidden()
+        .pickerStyle(.menu)
+      }
+      MacSettingsDivider()
+      ScrollView(.horizontal, showsIndicators: false) {
+        HStack(spacing: 12) {
+          ForEach(LatticeThemeID.allCases) { themeID in
+            ThemePreviewCard(
+              theme: LatticeTheme(id: themeID),
+              isSelected: model.selectedThemeID == themeID
+            ) {
+              model.setTheme(themeID)
+            }
+          }
+        }
+        .padding(.horizontal, 14)
+        .padding(.vertical, 14)
+      }
+    }
+  }
+
+  private var macEditorSections: some View {
+    MacSettingsSection(title: "Editor") {
+      MacSettingsControlRow(title: "Font") {
+        Picker("Font", selection: fontFamilyBinding) {
+          ForEach(EditorFontFamily.allCases) { fontFamily in
+            Text(fontFamily.displayName).tag(fontFamily)
+          }
+        }
+        .labelsHidden()
+        .pickerStyle(.menu)
+      }
+      MacSettingsDivider()
+      MacSettingsToggleRow(title: "Status Bar", isOn: statusBarBinding)
+      MacSettingsDivider()
+      MacSettingsToggleRow(title: "Vim Mode", isOn: vimModeBinding)
+      MacSettingsDivider()
+      MacSettingsToggleRow(title: "Relative Line Numbers", isOn: relativeLineNumbersBinding)
+    }
+  }
+
+  private var macKeyboardSections: some View {
+    MacSettingsSection(title: "Keyboard Shortcuts") {
+      ForEach(Array(LatticeKeyboardShortcutID.allCases.enumerated()), id: \.element.id) { index, shortcutID in
+        if index > 0 {
+          MacSettingsDivider()
+        }
+        KeyboardShortcutSettingsRow(
+          shortcutID: shortcutID,
+          shortcut: model.keyboardShortcut(for: shortcutID)
+        ) { shortcut in
+          model.setKeyboardShortcut(shortcut, for: shortcutID)
+        } onReset: {
+          model.resetKeyboardShortcut(for: shortcutID)
+        }
+        .padding(.horizontal, 14)
+        .frame(minHeight: 44)
+      }
+    }
+  }
+
+  private var macRemindersSections: some View {
+    VStack(spacing: 22) {
+      MacSettingsSection(title: "Reminders List") {
+        if model.taskSyncDestinations.isEmpty {
+          MacSettingsTextRow(
+            text: model.taskSyncAuthorizationStatus.allowsSync
+              ? "No Reminders lists are available."
+              : "Allow Reminders access to choose a list."
+          )
+        } else {
+          MacSettingsControlRow(title: "List") {
+            Picker("List", selection: destinationBinding) {
+              ForEach(model.taskSyncDestinations) { destination in
+                Text(destination.title).tag(destination.id)
+              }
+            }
+            .labelsHidden()
+            .pickerStyle(.menu)
+          }
+        }
+      }
+
+      MacSettingsSection(title: "Sync") {
+        if model.isTaskSyncEnabled {
+          MacSettingsActionRow(title: "Sync Now", systemImage: "arrow.triangle.2.circlepath") {
+            Task { @MainActor in
+              await model.syncTasksNow()
+            }
+          }
+          .disabled(!model.hasFolder)
+          MacSettingsDivider()
+          MacSettingsActionRow(
+            title: "Disable Task Sync",
+            systemImage: "xmark.circle",
+            role: .destructive
+          ) {
+            model.disableTaskSync()
+          }
+        } else {
+          MacSettingsActionRow(title: "Enable Task Sync", systemImage: "arrow.triangle.2.circlepath") {
+            Task { @MainActor in
+              await model.requestEnableTaskSync()
+            }
+          }
+          .disabled(!model.hasFolder)
+        }
+
+        MacSettingsDivider()
+        MacSettingsValueRow(title: "Status", value: model.taskSyncStatus)
+        if let message = model.taskSyncErrorMessage, !message.isEmpty {
+          MacSettingsDivider()
+          MacSettingsTextRow(text: message, isError: true)
+        }
+        if !model.hasFolder {
+          MacSettingsDivider()
+          MacSettingsTextRow(text: "Choose a notes folder before enabling task sync.")
+        }
+      }
+    }
+  }
+
+  private var generalSection: some View {
+    Section("Lattice") {
+      LabeledContent("Notes Folder", value: model.folderURL?.lastPathComponent ?? "Not selected")
+      LabeledContent("Status", value: model.status)
+      LabeledContent("Theme", value: model.theme.displayName)
+      LabeledContent("Task Sync", value: model.taskSyncStatus)
+    }
+  }
+
+  private var selectedMacSettingsPane: MacSettingsPane {
+    selectedMacPane ?? .general
+  }
+
+  private var filteredMacPanes: [MacSettingsPane] {
+    let query = macSearchQuery.trimmingCharacters(in: .whitespacesAndNewlines)
+    guard !query.isEmpty else {
+      return MacSettingsPane.allCases
+    }
+    return MacSettingsPane.allCases.filter {
+      $0.title.localizedCaseInsensitiveContains(query)
+        || $0.subtitle.localizedCaseInsensitiveContains(query)
+    }
+  }
+
+  private var previousMacPane: MacSettingsPane? {
+    adjacentMacPane(offset: -1)
+  }
+
+  private var nextMacPane: MacSettingsPane? {
+    adjacentMacPane(offset: 1)
+  }
+
+  private func adjacentMacPane(offset: Int) -> MacSettingsPane? {
+    guard let index = MacSettingsPane.allCases.firstIndex(of: selectedMacSettingsPane) else {
+      return nil
+    }
+    let nextIndex = index + offset
+    guard MacSettingsPane.allCases.indices.contains(nextIndex) else {
+      return nil
+    }
+    return MacSettingsPane.allCases[nextIndex]
+  }
+
+  private func selectPreviousMacPane() {
+    if let previousMacPane {
+      selectedMacPane = previousMacPane
+    }
+  }
+
+  private func selectNextMacPane() {
+    if let nextMacPane {
+      selectedMacPane = nextMacPane
+    }
+  }
+  #endif
 
   private var themeSection: some View {
     Section("Theme") {
@@ -270,6 +614,238 @@ public struct TaskSyncSettingsView: View {
 }
 
 #if os(macOS)
+private enum MacSettingsPane: String, CaseIterable, Identifiable, Hashable {
+  case general
+  case appearance
+  case editor
+  case keyboard
+  case reminders
+
+  var id: String { rawValue }
+
+  var title: String {
+    switch self {
+    case .general:
+      return "General"
+    case .appearance:
+      return "Appearance"
+    case .editor:
+      return "Editor"
+    case .keyboard:
+      return "Keyboard"
+    case .reminders:
+      return "Reminders"
+    }
+  }
+
+  var subtitle: String {
+    switch self {
+    case .general:
+      return "Manage your notes folder, appearance, and task sync setup."
+    case .appearance:
+      return "Choose how Lattice looks across your workspace."
+    case .editor:
+      return "Adjust writing preferences, Vim mode, and editor chrome."
+    case .keyboard:
+      return "Review and customize the shortcuts used by Lattice."
+    case .reminders:
+      return "Connect Markdown tasks with Apple Reminders."
+    }
+  }
+
+  var systemImage: String {
+    switch self {
+    case .general:
+      return "gearshape"
+    case .appearance:
+      return "circle.lefthalf.filled"
+    case .editor:
+      return "text.alignleft"
+    case .keyboard:
+      return "keyboard"
+    case .reminders:
+      return "checklist"
+    }
+  }
+}
+
+private struct MacSettingsHeroCard: View {
+  let pane: MacSettingsPane
+
+  var body: some View {
+    VStack(spacing: 16) {
+      Image(systemName: pane.systemImage)
+        .font(.system(size: 36, weight: .medium))
+        .symbolRenderingMode(.hierarchical)
+        .foregroundStyle(.primary)
+        .frame(width: 74, height: 74)
+        .background(.tertiary, in: RoundedRectangle(cornerRadius: 18, style: .continuous))
+
+      VStack(spacing: 5) {
+        Text(pane.title)
+          .font(.system(size: 28, weight: .bold))
+        Text(pane.subtitle)
+          .font(.system(size: 14, weight: .semibold))
+          .foregroundStyle(.secondary)
+          .multilineTextAlignment(.center)
+          .lineLimit(2)
+      }
+    }
+    .frame(maxWidth: .infinity)
+    .padding(.horizontal, 28)
+    .padding(.vertical, 26)
+    .background(MacSettingsCardColor.fill, in: RoundedRectangle(cornerRadius: 18, style: .continuous))
+  }
+}
+
+private struct MacSettingsSidebarRow: View {
+  let pane: MacSettingsPane
+  let isSelected: Bool
+
+  var body: some View {
+    HStack(spacing: 10) {
+      Image(systemName: pane.systemImage)
+        .font(.system(size: 14, weight: .medium))
+        .symbolRenderingMode(.hierarchical)
+        .foregroundStyle(isSelected ? .white : Color.accentColor)
+        .frame(width: 18)
+      Text(pane.title)
+        .font(.system(size: 14, weight: isSelected ? .semibold : .regular))
+        .foregroundStyle(isSelected ? .white : .primary)
+      Spacer(minLength: 0)
+    }
+      .frame(maxWidth: .infinity, alignment: .leading)
+      .frame(height: 32)
+      .padding(.horizontal, 10)
+      .background {
+        if isSelected {
+          RoundedRectangle(cornerRadius: 6, style: .continuous)
+            .fill(Color.accentColor)
+        }
+      }
+      .contentShape(Rectangle())
+      .accessibilityAddTraits(isSelected ? [.isSelected] : [])
+  }
+}
+
+private struct MacSettingsSection<Content: View>: View {
+  let title: String
+  @ViewBuilder let content: Content
+
+  var body: some View {
+    VStack(alignment: .leading, spacing: 8) {
+      Text(title)
+        .font(.system(size: 13, weight: .semibold))
+        .foregroundStyle(.primary)
+        .padding(.leading, 14)
+
+      VStack(spacing: 0) {
+        content
+      }
+      .background(MacSettingsCardColor.fill, in: RoundedRectangle(cornerRadius: 14, style: .continuous))
+      .clipShape(RoundedRectangle(cornerRadius: 14, style: .continuous))
+    }
+  }
+}
+
+private struct MacSettingsValueRow: View {
+  let title: String
+  let value: String
+
+  var body: some View {
+    HStack(spacing: 16) {
+      Text(title)
+        .foregroundStyle(.primary)
+      Spacer(minLength: 20)
+      Text(value)
+        .foregroundStyle(.secondary)
+        .multilineTextAlignment(.trailing)
+        .lineLimit(2)
+    }
+    .font(.system(size: 14))
+    .padding(.horizontal, 14)
+    .frame(minHeight: 42)
+  }
+}
+
+private struct MacSettingsControlRow<Control: View>: View {
+  let title: String
+  @ViewBuilder let control: Control
+
+  var body: some View {
+    HStack(spacing: 16) {
+      Text(title)
+        .foregroundStyle(.primary)
+      Spacer(minLength: 20)
+      control
+        .controlSize(.small)
+    }
+    .font(.system(size: 14))
+    .padding(.horizontal, 14)
+    .frame(minHeight: 42)
+  }
+}
+
+private struct MacSettingsToggleRow: View {
+  let title: String
+  @Binding var isOn: Bool
+
+  var body: some View {
+    MacSettingsControlRow(title: title) {
+      Toggle(title, isOn: $isOn)
+        .labelsHidden()
+        .toggleStyle(.switch)
+    }
+  }
+}
+
+private struct MacSettingsTextRow: View {
+  let text: String
+  var isError = false
+
+  var body: some View {
+    Text(text)
+      .font(.system(size: 13))
+      .foregroundStyle(isError ? .red : .secondary)
+      .frame(maxWidth: .infinity, alignment: .leading)
+      .padding(.horizontal, 14)
+      .padding(.vertical, 12)
+  }
+}
+
+private struct MacSettingsActionRow: View {
+  let title: String
+  let systemImage: String
+  var role: ButtonRole?
+  let action: () -> Void
+
+  var body: some View {
+    Button(role: role, action: action) {
+      Label(title, systemImage: systemImage)
+        .font(.system(size: 14))
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .contentShape(Rectangle())
+    }
+    .buttonStyle(.plain)
+    .foregroundStyle(role == .destructive ? .red : Color.accentColor)
+    .padding(.horizontal, 14)
+    .frame(minHeight: 42)
+  }
+}
+
+private struct MacSettingsDivider: View {
+  var body: some View {
+    Divider()
+      .padding(.leading, 14)
+  }
+}
+
+private enum MacSettingsCardColor {
+  static var fill: Color {
+    Color(nsColor: .separatorColor).opacity(0.12)
+  }
+}
+
 private struct KeyboardShortcutSettingsRow: View {
   let shortcutID: LatticeKeyboardShortcutID
   let shortcut: LatticeKeyboardShortcut?
