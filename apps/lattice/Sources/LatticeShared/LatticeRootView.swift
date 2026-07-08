@@ -414,9 +414,6 @@ private struct NoteEditorPane: View {
           onVimWrite: {
             model.vimWrite()
           },
-          onVimStatusChange: { message in
-            model.setVimStatusMessage(message)
-          },
           onImageAttachmentsImported: { imports in
             model.insertImageAttachments(imports)
           },
@@ -431,9 +428,6 @@ private struct NoteEditorPane: View {
         wikiAutocompleteOverlay
       }
       .frame(maxWidth: .infinity, maxHeight: .infinity)
-      if model.showsStatusBar {
-        statusBar
-      }
     }
     .frame(maxWidth: .infinity, maxHeight: .infinity)
   }
@@ -567,29 +561,6 @@ private struct NoteEditorPane: View {
   }
   #endif
 
-  private var statusBar: some View {
-    HStack(spacing: 8) {
-      if let modeText {
-        Text(modeText)
-          .font(.caption2.weight(.bold))
-          .foregroundStyle(modeText == "NORMAL" ? theme.color(.highlightedText) : theme.color(.secondaryText))
-          .padding(.horizontal, 7)
-          .padding(.vertical, 3)
-          .background {
-            Capsule()
-              .fill(modeText == "NORMAL" ? theme.color(.accent) : theme.color(.secondaryText).opacity(0.14))
-          }
-      }
-
-      Text(statusText)
-        .font(.footnote.weight(.medium))
-        .foregroundStyle(theme.color(.secondaryText))
-    }
-      .frame(maxWidth: .infinity)
-      .padding(.vertical, 10)
-      .background(theme.color(.barBackground))
-  }
-
   @ViewBuilder
   private var wikiAutocompleteOverlay: some View {
     if let wikiAutocompleteAnchor, !model.wikiAutocompleteSuggestions.isEmpty {
@@ -639,36 +610,6 @@ private struct NoteEditorPane: View {
     let maximumStart = suggestionCount - visibleCount
     let start = min(max(0, clampedSelection - visibleCount + 1), maximumStart)
     return start..<(start + visibleCount)
-  }
-
-  private var statusText: String {
-    let count = model.text.count
-    let unit = count == 1 ? "character" : "characters"
-    var parts: [String] = []
-    if let vimStatusMessage = model.vimStatusMessage, !vimStatusMessage.isEmpty {
-      parts.append(vimStatusMessage)
-    } else if !model.status.isEmpty {
-      parts.append(model.status)
-    }
-    parts.append("\(count) \(unit)")
-    return parts.joined(separator: " - ")
-  }
-
-  private var modeText: String? {
-    guard model.effectiveIsVimModeEnabled else {
-      return nil
-    }
-
-    switch model.vimState.mode {
-    case .insert:
-      return "INSERT"
-    case .normal:
-      return "NORMAL"
-    case .visual:
-      return "VISUAL"
-    case .commandLine:
-      return ":\(model.vimState.commandText)"
-    }
   }
 
 }
@@ -775,9 +716,6 @@ private struct ZenNoteEditorPane: View {
       },
       onVimWrite: {
         model.vimWrite()
-      },
-      onVimStatusChange: { message in
-        model.setVimStatusMessage(message)
       },
       onImageAttachmentsImported: { imports in
         model.insertImageAttachments(imports)

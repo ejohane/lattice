@@ -303,8 +303,6 @@ public struct TaskSyncSettingsView: View {
         .pickerStyle(.menu)
       }
       MacSettingsDivider()
-      MacSettingsToggleRow(title: "Status Bar", isOn: statusBarBinding)
-      MacSettingsDivider()
       MacSettingsToggleRow(title: "Vim Mode", isOn: vimModeBinding)
       MacSettingsDivider()
       MacSettingsToggleRow(title: "Relative Line Numbers", isOn: relativeLineNumbersBinding)
@@ -507,7 +505,6 @@ public struct TaskSyncSettingsView: View {
           Text(fontFamily.displayName).tag(fontFamily)
         }
       }
-      Toggle("Status Bar", isOn: statusBarBinding)
 
       #if os(macOS)
       Toggle("Vim Mode", isOn: vimModeBinding)
@@ -646,14 +643,6 @@ public struct TaskSyncSettingsView: View {
       model.editorFontFamily
     } set: { value in
       model.setEditorFontFamily(value)
-    }
-  }
-
-  private var statusBarBinding: Binding<Bool> {
-    Binding {
-      model.showsStatusBar
-    } set: { value in
-      model.setStatusBarVisible(value)
     }
   }
 
