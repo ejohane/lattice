@@ -32,6 +32,9 @@ let package = Package(
       dependencies: [
         "LatticeCore",
         "LatticeEditor"
+      ],
+      resources: [
+        .process("Resources")
       ]
     ),
     .target(

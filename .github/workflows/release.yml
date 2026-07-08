@@ -83,6 +83,13 @@ jobs:
           GITHUB_TOKEN: ${{ github.token }}
         run: node scripts/plan-release.mjs
 
+      - name: Upload release notes catalog
+        if: steps.plan.outputs.release_created == 'true'
+        uses: actions/upload-artifact@v4
+        with:
+          name: lattice-release-notes
+          path: apps/lattice/Sources/LatticeShared/Resources/ReleaseNotes.json
+
   build:
     name: Build ${{ matrix.mac-app-artifact }}
     needs:
@@ -113,6 +120,12 @@ jobs:
 
       - name: Install dependencies
         run: bun install --frozen-lockfile
+
+      - name: Download release notes catalog
+        uses: actions/download-artifact@v4
+        with:
+          name: lattice-release-notes
+          path: apps/lattice/Sources/LatticeShared/Resources
 
       - name: Import Developer ID certificate
         env:

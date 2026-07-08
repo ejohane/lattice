@@ -23,6 +23,7 @@
     "ios:archive": "xcodebuild -project apps/lattice/iOS/Lattice.xcodeproj -scheme Lattice -configuration Release -destination 'generic/platform=iOS' archive -archivePath dist/Lattice-iOS.xcarchive",
     "test": "bun run mac:test",
     "verify": "bun run mac:test && bun run mac:build && bun run ios:build && bun run ios:build:ipad",
+    "release:notes": "node scripts/release-notes.mjs",
     "release:plan": "node scripts/plan-release.mjs",
     "release": "semantic-release",
     "release:dry-run": "semantic-release --dry-run --no-ci"
