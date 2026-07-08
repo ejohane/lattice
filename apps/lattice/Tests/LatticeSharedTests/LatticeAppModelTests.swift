@@ -541,6 +541,33 @@ struct LatticeAppModelTests {
     #expect(model.wikiAutocompleteSuggestions.map(\.title).contains(target.filenameTitle))
   }
 
+  @Test("suggests notes by rendered sidebar title while typing wiki links")
+  func suggestsNotesByRenderedSidebarTitleWhileTypingWikiLinks() throws {
+    let fixture = try Fixture()
+    defer { fixture.cleanup() }
+    let model = LatticeAppModel(
+      noteLibrary: fixture.library,
+      folderAccessStore: fixture.folderAccessStore,
+      noteIndex: NoteIndex(appSupportURL: fixture.appSupportURL)
+    )
+
+    try fixture.fileManager.createDirectory(at: fixture.root, withIntermediateDirectories: true)
+    try fixture.library.selectNotesFolder(fixture.root)
+    let target = try fixture.library.createNote(body: "Pocket Closet\n\nInventory", now: fixture.date(day: 4))
+    let targetID = try #require(MarkdownDocumentMetadata.noteID(in: fixture.library.rawBody(for: target)))
+    let expectedReplacement = "[[Pocket Closet]]\(WikiLinkParser.targetComment(noteID: targetID))"
+    model.chooseFolder(fixture.root)
+    model.text = "See [[pocket"
+    model.selectedRange = NSRange(location: (model.text as NSString).length, length: 0)
+
+    model.updateWikiAutocomplete()
+
+    let suggestion = try #require(model.wikiAutocompleteSuggestions.first)
+    #expect(suggestion.title == "Pocket Closet")
+    #expect(suggestion.subtitle.hasSuffix("/\(target.filenameTitle).md"))
+    #expect(suggestion.replacement == expectedReplacement)
+  }
+
   @Test("moves and commits selected wiki autocomplete suggestion")
   func movesAndCommitsSelectedWikiAutocompleteSuggestion() {
     let model = LatticeAppModel()
