@@ -1,6 +1,6 @@
 import Foundation
-import LatticeShared
 import Testing
+@testable import LatticeShared
 
 @Suite("ReleaseNotesCatalog")
 struct ReleaseNotesCatalogTests {
@@ -46,9 +46,35 @@ struct ReleaseNotesCatalogTests {
 
   @Test("loads checked-in bundled catalog")
   func loadsBundledCatalog() {
+    #expect(ReleaseNotesCatalog.releaseNotesURL() != nil)
+
     let catalog = ReleaseNotesCatalog.bundled()
 
     #expect(catalog.schemaVersion == 1)
     #expect(catalog.repository == "ejohane/lattice")
+  }
+
+  @Test("finds release notes inside packaged app resources")
+  func findsReleaseNotesInsidePackagedAppResources() throws {
+    let rootURL = FileManager.default.temporaryDirectory
+      .appendingPathComponent(UUID().uuidString, isDirectory: true)
+    let appURL = rootURL.appendingPathComponent("Lattice.app", isDirectory: true)
+    let releaseNotesDirectory = appURL
+      .appendingPathComponent("Contents", isDirectory: true)
+      .appendingPathComponent("Resources", isDirectory: true)
+      .appendingPathComponent(ReleaseNotesCatalog.releaseNotesBundleName, isDirectory: true)
+    let releaseNotesURL = releaseNotesDirectory
+      .appendingPathComponent(ReleaseNotesCatalog.releaseNotesFileName)
+
+    try FileManager.default.createDirectory(
+      at: releaseNotesDirectory,
+      withIntermediateDirectories: true
+    )
+    try Data("{}".utf8).write(to: releaseNotesURL)
+    defer {
+      try? FileManager.default.removeItem(at: rootURL)
+    }
+
+    #expect(ReleaseNotesCatalog.releaseNotesURL(searchBases: [appURL]) == releaseNotesURL)
   }
 }
