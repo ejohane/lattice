@@ -65,6 +65,12 @@ if [[ ! -f "$app_icon_source" ]]; then
 fi
 cp "$app_icon_source" "$resources_dir/Lattice.icns"
 
+for resource_bundle in "$build_dir"/*.bundle "$build_dir"/*.resources; do
+  if [[ -e "$resource_bundle" ]]; then
+    COPYFILE_DISABLE=1 ditto --norsrc "$resource_bundle" "$resources_dir/$(basename "$resource_bundle")"
+  fi
+done
+
 sparkle_framework="$build_dir/Sparkle.framework"
 if [[ ! -d "$sparkle_framework" ]]; then
   printf 'Missing Sparkle framework: %s\n' "$sparkle_framework" >&2

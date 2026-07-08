@@ -7,14 +7,25 @@ import AppKit
 
 public struct TaskSyncSettingsView: View {
   @Bindable private var model: LatticeAppModel
+  private let releaseNotesCatalog: ReleaseNotesCatalog
+  private let releaseUpdateStatus: ReleaseUpdateStatus
+  private let onCheckForUpdates: (() -> Void)?
   @Environment(\.dismiss) private var dismiss
   #if os(macOS)
   @State private var selectedMacPane: MacSettingsPane? = .general
   @State private var macSearchQuery = ""
   #endif
 
-  public init(model: LatticeAppModel) {
+  public init(
+    model: LatticeAppModel,
+    releaseNotesCatalog: ReleaseNotesCatalog = .bundled(),
+    releaseUpdateStatus: ReleaseUpdateStatus = .unavailable,
+    onCheckForUpdates: (() -> Void)? = nil
+  ) {
     self.model = model
+    self.releaseNotesCatalog = releaseNotesCatalog
+    self.releaseUpdateStatus = releaseUpdateStatus
+    self.onCheckForUpdates = onCheckForUpdates
   }
 
   public var body: some View {
@@ -43,6 +54,7 @@ public struct TaskSyncSettingsView: View {
     #else
     NavigationStack {
       Form {
+        changelogSection
         themeSection
         editorSection
         #if os(macOS)
@@ -169,6 +181,8 @@ public struct TaskSyncSettingsView: View {
     switch selectedMacSettingsPane {
     case .general:
       macGeneralSections
+    case .changelog:
+      macChangelogSections
     case .appearance:
       macAppearanceSections
     case .editor:
@@ -237,6 +251,42 @@ public struct TaskSyncSettingsView: View {
         }
         .padding(.horizontal, 14)
         .padding(.vertical, 14)
+      }
+    }
+  }
+
+  private var macChangelogSections: some View {
+    VStack(spacing: 16) {
+      if releaseUpdateStatus.shouldShowInChangelog {
+        macUpdateSection
+      }
+
+      if releaseNotesCatalog.entries.isEmpty {
+        MacSettingsSection(title: "Release Notes") {
+          MacSettingsTextRow(text: changelogEmptyMessage)
+        }
+      } else {
+        ForEach(releaseNotesCatalog.entries) { entry in
+          MacReleaseNoteCard(entry: entry)
+        }
+      }
+    }
+  }
+
+  private var macUpdateSection: some View {
+    MacSettingsSection(title: "Updates") {
+      MacSettingsValueRow(title: "Status", value: releaseUpdateStatus.statusText)
+      MacSettingsDivider()
+      MacSettingsTextRow(text: releaseUpdateStatus.detailText)
+      if let onCheckForUpdates {
+        MacSettingsDivider()
+        MacSettingsActionRow(
+          title: releaseUpdateStatus.actionTitle,
+          systemImage: releaseUpdateStatus.actionSystemImage
+        ) {
+          onCheckForUpdates()
+        }
+        .disabled(!releaseUpdateStatus.canCheckForUpdates)
       }
     }
   }
@@ -397,6 +447,30 @@ public struct TaskSyncSettingsView: View {
     }
   }
   #endif
+
+  private var changelogSection: some View {
+    Section("Changelog") {
+      if releaseUpdateStatus.shouldShowInChangelog {
+        ReleaseUpdateStatusDisclosure(
+          status: releaseUpdateStatus,
+          onCheckForUpdates: onCheckForUpdates
+        )
+      }
+
+      if releaseNotesCatalog.entries.isEmpty {
+        Text(changelogEmptyMessage)
+          .foregroundStyle(.secondary)
+      } else {
+        ForEach(releaseNotesCatalog.entries) { entry in
+          ReleaseNoteDisclosure(entry: entry)
+        }
+      }
+    }
+  }
+
+  private var changelogEmptyMessage: String {
+    "Release notes are included in release builds."
+  }
 
   private var themeSection: some View {
     Section("Theme") {
@@ -613,9 +687,132 @@ public struct TaskSyncSettingsView: View {
   }
 }
 
+private struct ReleaseNoteDisclosure: View {
+  let entry: ReleaseNoteEntry
+
+  var body: some View {
+    DisclosureGroup {
+      ReleaseNoteSectionsView(entry: entry)
+        .padding(.top, 8)
+    } label: {
+      VStack(alignment: .leading, spacing: 3) {
+        Text("Version \(entry.version)")
+          .font(.headline)
+        if let displayDate = entry.displayDate {
+          Text(displayDate)
+            .font(.caption)
+            .foregroundStyle(.secondary)
+        }
+      }
+      .padding(.vertical, 4)
+    }
+  }
+}
+
+private struct ReleaseUpdateStatusDisclosure: View {
+  let status: ReleaseUpdateStatus
+  let onCheckForUpdates: (() -> Void)?
+
+  var body: some View {
+    VStack(alignment: .leading, spacing: 8) {
+      LabeledContent("Update Status", value: status.statusText)
+      Text(status.detailText)
+        .font(.footnote)
+        .foregroundStyle(.secondary)
+
+      if let onCheckForUpdates {
+        Button {
+          onCheckForUpdates()
+        } label: {
+          Label(status.actionTitle, systemImage: status.actionSystemImage)
+        }
+        .disabled(!status.canCheckForUpdates)
+      }
+    }
+    .padding(.vertical, 4)
+  }
+}
+
+private struct ReleaseNoteSectionsView: View {
+  let entry: ReleaseNoteEntry
+
+  var body: some View {
+    VStack(alignment: .leading, spacing: 14) {
+      if entry.sections.isEmpty {
+        Text("No release notes were published for this version.")
+          .font(.footnote)
+          .foregroundStyle(.secondary)
+      } else {
+        ForEach(entry.sections) { section in
+          VStack(alignment: .leading, spacing: 7) {
+            Text(section.title)
+              .font(.subheadline.weight(.semibold))
+            ForEach(section.items) { item in
+              HStack(alignment: .firstTextBaseline, spacing: 8) {
+                Text("*")
+                  .foregroundStyle(.secondary)
+                if let url = item.url {
+                  Link(item.text, destination: url)
+                } else {
+                  Text(item.text)
+                }
+              }
+              .font(.footnote)
+            }
+          }
+        }
+      }
+
+      if let url = entry.url {
+        Link("Open release", destination: url)
+          .font(.footnote.weight(.semibold))
+      }
+    }
+    .frame(maxWidth: .infinity, alignment: .leading)
+  }
+}
+
 #if os(macOS)
+private struct MacReleaseNoteCard: View {
+  let entry: ReleaseNoteEntry
+
+  var body: some View {
+    VStack(alignment: .leading, spacing: 14) {
+      HStack(alignment: .firstTextBaseline, spacing: 12) {
+        VStack(alignment: .leading, spacing: 3) {
+          Text("Version \(entry.version)")
+            .font(.system(size: 17, weight: .semibold))
+          if let displayDate = entry.displayDate {
+            Text(displayDate)
+              .font(.system(size: 12, weight: .medium))
+              .foregroundStyle(.secondary)
+          }
+        }
+
+        Spacer(minLength: 12)
+
+        if let url = entry.url {
+          Link(destination: url) {
+            Image(systemName: "arrow.up.forward")
+              .font(.system(size: 12, weight: .semibold))
+              .frame(width: 24, height: 24)
+          }
+          .buttonStyle(.plain)
+          .foregroundStyle(Color.accentColor)
+          .help("Open release")
+        }
+      }
+
+      ReleaseNoteSectionsView(entry: entry)
+    }
+    .padding(16)
+    .background(MacSettingsCardColor.fill, in: RoundedRectangle(cornerRadius: 14, style: .continuous))
+  }
+}
+
 private enum MacSettingsPane: String, CaseIterable, Identifiable, Hashable {
   case general
+  case changelog
   case appearance
   case editor
   case keyboard
@@ -627,6 +824,8 @@ private enum MacSettingsPane: String, CaseIterable, Identifiable, Hashable {
     switch self {
     case .general:
       return "General"
+    case .changelog:
+      return "Changelog"
     case .appearance:
       return "Appearance"
     case .editor:
@@ -642,6 +841,8 @@ private enum MacSettingsPane: String, CaseIterable, Identifiable, Hashable {
     switch self {
     case .general:
       return "Manage your notes folder, appearance, and task sync setup."
+    case .changelog:
+      return "Review what changed in each Lattice release."
     case .appearance:
       return "Choose how Lattice looks across your workspace."
     case .editor:
@@ -657,6 +858,8 @@ private enum MacSettingsPane: String, CaseIterable, Identifiable, Hashable {
     switch self {
     case .general:
       return "gearshape"
+    case .changelog:
+      return "list.bullet.rectangle"
     case .appearance:
       return "circle.lefthalf.filled"
     case .editor:

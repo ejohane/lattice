@@ -1,6 +1,7 @@
 #!/usr/bin/env node
 import { appendFile } from "node:fs/promises";
 import semanticRelease from "semantic-release";
+import { writeReleaseNotesCatalog } from "./release-notes.mjs";
 
 const result = await semanticRelease(
   {
@@ -15,6 +16,7 @@ const result = await semanticRelease(
 );
 
 const nextRelease = result && result.nextRelease ? result.nextRelease : undefined;
+const releaseNotesCatalog = await writeReleaseNotesCatalog({ nextRelease });
 const appBuild = process.env.GITHUB_RUN_NUMBER ?? `${Math.floor(Date.now() / 1000)}`;
 const outputs = nextRelease
   ? {
@@ -33,6 +35,8 @@ const outputs = nextRelease
 for (const [key, value] of Object.entries(outputs)) {
   console.log(`${key}=${value}`);
 }
+
+console.log(`release_notes_entries=${releaseNotesCatalog.entries.length}`);
 
 if (process.env.GITHUB_OUTPUT) {
   await appendFile(

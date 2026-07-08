@@ -235,7 +235,12 @@ struct LatticeMacApp: App {
     }
 
     Settings {
-      TaskSyncSettingsView(model: model)
+      TaskSyncSettingsView(
+        model: model,
+        releaseUpdateStatus: settingsReleaseUpdateStatus
+      ) {
+        checkForUpdatesFromSettings()
+      }
         .frame(width: Self.settingsWindowWidth, height: Self.settingsWindowHeight)
         .background(SettingsWindowConfiguration(
           width: Self.settingsWindowWidth,
@@ -304,6 +309,30 @@ struct LatticeMacApp: App {
       return "Look for a newer Lattice release"
     }
     return "Available in release builds"
+  }
+
+  private var settingsReleaseUpdateStatus: ReleaseUpdateStatus {
+    if updateState.isUpdateAvailable {
+      return .updateAvailable(
+        version: updateState.updateVersion,
+        title: updateState.updateTitle,
+        canCheckForUpdates: appDelegate.canCheckForUpdates
+      )
+    }
+
+    if updateState.isUpdaterConfigured {
+      return .idle(canCheckForUpdates: appDelegate.canCheckForUpdates)
+    }
+
+    return .unavailable
+  }
+
+  private func checkForUpdatesFromSettings() {
+    if appDelegate.canCheckForUpdates {
+      appDelegate.checkForUpdates()
+    } else {
+      model.errorMessage = "Update checking is available in release builds."
+    }
   }
 
   private func chooseImageAttachments() {
