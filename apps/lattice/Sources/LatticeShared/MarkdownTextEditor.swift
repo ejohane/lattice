@@ -89,7 +89,6 @@ public struct MarkdownTextEditor: NSViewRepresentable {
   let onMoveAutocompleteSelection: (Int) -> Void
   let onCommitAutocomplete: () -> Void
   let onVimWrite: () -> Void
-  let onVimStatusChange: (String?) -> Void
   let onImageAttachmentsImported: ([ImageAttachmentImport]) -> Void
   let onImageAttachmentResized: (Int, Double) -> Void
 
@@ -118,7 +117,6 @@ public struct MarkdownTextEditor: NSViewRepresentable {
     onMoveAutocompleteSelection: @escaping (Int) -> Void = { _ in },
     onCommitAutocomplete: @escaping () -> Void = {},
     onVimWrite: @escaping () -> Void,
-    onVimStatusChange: @escaping (String?) -> Void,
     onImageAttachmentsImported: @escaping ([ImageAttachmentImport]) -> Void,
     onImageAttachmentResized: @escaping (Int, Double) -> Void
   ) {
@@ -146,7 +144,6 @@ public struct MarkdownTextEditor: NSViewRepresentable {
     self.onMoveAutocompleteSelection = onMoveAutocompleteSelection
     self.onCommitAutocomplete = onCommitAutocomplete
     self.onVimWrite = onVimWrite
-    self.onVimStatusChange = onVimStatusChange
     self.onImageAttachmentsImported = onImageAttachmentsImported
     self.onImageAttachmentResized = onImageAttachmentResized
   }
@@ -1068,7 +1065,6 @@ private final class MarkdownTextView: NSTextView {
     }
 
     coordinator.parent.vimState = result.state
-    coordinator.parent.onVimStatusChange(result.statusMessage)
 
     if let replacementRange = result.replacementRange,
        let replacement = result.replacement {
@@ -1884,7 +1880,6 @@ public struct MarkdownTextEditor: UIViewRepresentable {
   let onMoveAutocompleteSelection: (Int) -> Void
   let onCommitAutocomplete: () -> Void
   let onVimWrite: () -> Void
-  let onVimStatusChange: (String?) -> Void
   let onImageAttachmentsImported: ([ImageAttachmentImport]) -> Void
   let onImageAttachmentResized: (Int, Double) -> Void
 
@@ -1913,7 +1908,6 @@ public struct MarkdownTextEditor: UIViewRepresentable {
     onMoveAutocompleteSelection: @escaping (Int) -> Void = { _ in },
     onCommitAutocomplete: @escaping () -> Void = {},
     onVimWrite: @escaping () -> Void,
-    onVimStatusChange: @escaping (String?) -> Void,
     onImageAttachmentsImported: @escaping ([ImageAttachmentImport]) -> Void,
     onImageAttachmentResized: @escaping (Int, Double) -> Void
   ) {
@@ -1941,7 +1935,6 @@ public struct MarkdownTextEditor: UIViewRepresentable {
     self.onMoveAutocompleteSelection = onMoveAutocompleteSelection
     self.onCommitAutocomplete = onCommitAutocomplete
     self.onVimWrite = onVimWrite
-    self.onVimStatusChange = onVimStatusChange
     self.onImageAttachmentsImported = onImageAttachmentsImported
     self.onImageAttachmentResized = onImageAttachmentResized
   }

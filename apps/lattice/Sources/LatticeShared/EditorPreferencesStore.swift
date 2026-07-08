@@ -129,7 +129,6 @@ public struct EditorPreferences: Equatable, Sendable {
   public var showsRelativeLineNumbers: Bool
   public var themeID: LatticeThemeID
   public var fontFamily: EditorFontFamily
-  public var showsStatusBar: Bool
   public var keyboardShortcutOverrides: [LatticeKeyboardShortcutID: LatticeKeyboardShortcut]
   public var disabledKeyboardShortcuts: Set<LatticeKeyboardShortcutID>
 
@@ -138,7 +137,6 @@ public struct EditorPreferences: Equatable, Sendable {
     showsRelativeLineNumbers: Bool = false,
     themeID: LatticeThemeID = .system,
     fontFamily: EditorFontFamily = .system,
-    showsStatusBar: Bool = true,
     keyboardShortcutOverrides: [LatticeKeyboardShortcutID: LatticeKeyboardShortcut] = [:],
     disabledKeyboardShortcuts: Set<LatticeKeyboardShortcutID> = []
   ) {
@@ -146,7 +144,6 @@ public struct EditorPreferences: Equatable, Sendable {
     self.showsRelativeLineNumbers = showsRelativeLineNumbers
     self.themeID = themeID
     self.fontFamily = fontFamily
-    self.showsStatusBar = showsStatusBar
     self.keyboardShortcutOverrides = keyboardShortcutOverrides
     self.disabledKeyboardShortcuts = disabledKeyboardShortcuts
   }
@@ -170,7 +167,6 @@ public final class EditorPreferencesStore {
       showsRelativeLineNumbers: defaults.bool(forKey: key("showsRelativeLineNumbers")),
       themeID: LatticeThemeID(rawValue: defaults.string(forKey: key("themeID")) ?? "") ?? .system,
       fontFamily: EditorFontFamily(rawValue: defaults.string(forKey: key("fontFamily")) ?? "") ?? .system,
-      showsStatusBar: bool(forKey: key("showsStatusBar"), defaultValue: true),
       keyboardShortcutOverrides: keyboardShortcutOverrides(),
       disabledKeyboardShortcuts: disabledKeyboardShortcuts()
     )
@@ -181,7 +177,6 @@ public final class EditorPreferencesStore {
     defaults.set(preferences.showsRelativeLineNumbers, forKey: key("showsRelativeLineNumbers"))
     defaults.set(preferences.themeID.rawValue, forKey: key("themeID"))
     defaults.set(preferences.fontFamily.rawValue, forKey: key("fontFamily"))
-    defaults.set(preferences.showsStatusBar, forKey: key("showsStatusBar"))
     defaults.set(
       Dictionary(uniqueKeysWithValues: preferences.keyboardShortcutOverrides.map {
         ($0.key.rawValue, $0.value.storageValue)
@@ -196,14 +191,6 @@ public final class EditorPreferencesStore {
 
   private func key(_ name: String) -> String {
     "\(keyPrefix).\(name)"
-  }
-
-  private func bool(forKey key: String, defaultValue: Bool) -> Bool {
-    guard defaults.object(forKey: key) != nil else {
-      return defaultValue
-    }
-
-    return defaults.bool(forKey: key)
   }
 
   private func keyboardShortcutOverrides() -> [LatticeKeyboardShortcutID: LatticeKeyboardShortcut] {

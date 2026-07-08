@@ -46,7 +46,6 @@ public final class LatticeAppModel {
   public var editorFocusToken = 0
   public var editorFontSize = 14.0
   public var editorFontFamily = EditorFontFamily.system
-  public var showsStatusBar = true
   public var isVimModeEnabled = false
   public var showsRelativeLineNumbers = false
   public var isZenModeEnabled = false
@@ -54,7 +53,6 @@ public final class LatticeAppModel {
   public var keyboardShortcutOverrides: [LatticeKeyboardShortcutID: LatticeKeyboardShortcut] = [:]
   public var disabledKeyboardShortcuts: Set<LatticeKeyboardShortcutID> = []
   public var vimState = VimEditorState(mode: .insert)
-  public var vimStatusMessage: String?
   public var wikiLinkStates: [WikiLinkRenderState] = []
   public var imagePreviewStates: [MarkdownImageRenderState] = []
   public var wikiAutocompleteSuggestions: [WikiAutocompleteSuggestion] = [] {
@@ -101,7 +99,6 @@ public final class LatticeAppModel {
     self.showsRelativeLineNumbers = editorPreferences.showsRelativeLineNumbers
     self.selectedThemeID = editorPreferences.themeID
     self.editorFontFamily = editorPreferences.fontFamily
-    self.showsStatusBar = editorPreferences.showsStatusBar
     self.keyboardShortcutOverrides = editorPreferences.keyboardShortcutOverrides
     self.disabledKeyboardShortcuts = editorPreferences.disabledKeyboardShortcuts
     self.vimState = VimEditorState(mode: editorPreferences.isVimModeEnabled ? .normal : .insert)
@@ -207,7 +204,6 @@ public final class LatticeAppModel {
     }
     flushAutosave()
     isZenModeEnabled = true
-    vimStatusMessage = nil
     preferredCompactColumn = .detail
     editorFocusToken += 1
   }
@@ -218,7 +214,6 @@ public final class LatticeAppModel {
     }
     flushAutosave()
     isZenModeEnabled = false
-    vimStatusMessage = nil
     editorFocusToken += 1
   }
 
@@ -354,7 +349,6 @@ public final class LatticeAppModel {
     wikiLinkStates = []
     imagePreviewStates = []
     wikiAutocompleteSuggestions = []
-    vimStatusMessage = nil
     ambiguousWikiLink = nil
     status = "New note"
     preferredCompactColumn = .detail
@@ -426,7 +420,6 @@ public final class LatticeAppModel {
       selectedRange = selection.map { clampedRange($0, in: editorBody) }
         ?? headingRange(for: heading, in: editorBody)
         ?? NSRange(location: (editorBody as NSString).length, length: 0)
-      vimStatusMessage = nil
       status = "Opened \(displayTitle(for: restored.note))"
       preferredCompactColumn = .detail
       reloadNotes(selecting: restored.note)
@@ -706,7 +699,6 @@ public final class LatticeAppModel {
     let result = MarkdownTextEditing.apply(command, to: text, selection: selectedRange)
     text = result.body
     selectedRange = result.selection
-    vimStatusMessage = nil
     scheduleAutosave()
     refreshWikiLinkStates()
     refreshImagePreviewStates()
@@ -743,7 +735,6 @@ public final class LatticeAppModel {
 
     text = result.body
     selectedRange = result.selection
-    vimStatusMessage = nil
     scheduleAutosave()
     refreshWikiLinkStates()
     refreshImagePreviewStates()
@@ -752,7 +743,6 @@ public final class LatticeAppModel {
   }
 
   public func noteTextDidChange() {
-    vimStatusMessage = nil
     scheduleAutosave()
     updateWikiAutocompleteIfNeeded()
     scheduleEditorDecorationRefresh()
@@ -777,7 +767,6 @@ public final class LatticeAppModel {
         )
         insertMarkdownImage(attachment)
       }
-      vimStatusMessage = nil
       refreshWikiLinkStates()
       refreshImagePreviewStates()
       updateWikiAutocomplete()
@@ -806,7 +795,6 @@ public final class LatticeAppModel {
     let replacement = "![\(escapedMarkdownImageAltText(link.altText))|\(Int(clampedWidth))](\(link.destination))"
     text = (text as NSString).replacingCharacters(in: link.range, with: replacement)
     selectedRange = clampedRange(selectedRange, in: text)
-    vimStatusMessage = nil
     scheduleAutosave()
     refreshWikiLinkStates()
     refreshImagePreviewStates()
@@ -821,7 +809,6 @@ public final class LatticeAppModel {
   public func setVimModeEnabled(_ isEnabled: Bool) {
     isVimModeEnabled = isEnabled
     vimState = VimEditorState(mode: isEnabled ? .normal : .insert)
-    vimStatusMessage = nil
     saveEditorPreferences()
     editorFocusToken += 1
   }
@@ -838,11 +825,6 @@ public final class LatticeAppModel {
 
   public func setEditorFontFamily(_ fontFamily: EditorFontFamily) {
     editorFontFamily = fontFamily
-    saveEditorPreferences()
-  }
-
-  public func setStatusBarVisible(_ isVisible: Bool) {
-    showsStatusBar = isVisible
     saveEditorPreferences()
   }
 
@@ -878,13 +860,8 @@ public final class LatticeAppModel {
     saveEditorPreferences()
   }
 
-  public func setVimStatusMessage(_ message: String?) {
-    vimStatusMessage = message
-  }
-
   public func vimWrite() {
     flushAutosave()
-    vimStatusMessage = "Saved"
   }
 
   public func increaseEditorFontSize() {
@@ -1019,7 +996,6 @@ public final class LatticeAppModel {
         let editorBody = Self.editorBody(from: restored.body)
         text = editorBody
         selectedRange = NSRange(location: (editorBody as NSString).length, length: 0)
-        vimStatusMessage = nil
         status = "Opened \(displayTitle(for: restored.note))"
         preferredCompactColumn = .detail
         refreshWikiLinkStates()
@@ -1179,7 +1155,6 @@ public final class LatticeAppModel {
     wikiLinkStates = []
     wikiAutocompleteSuggestions = []
     ambiguousWikiLink = nil
-    vimStatusMessage = nil
     preferredCompactColumn = .sidebar
     reloadNotes(selecting: nil)
   }
@@ -1636,7 +1611,6 @@ public final class LatticeAppModel {
     wikiLinkStates = []
     wikiAutocompleteSuggestions = []
     ambiguousWikiLink = nil
-    vimStatusMessage = nil
     status = "Removed \(title)"
     preferredCompactColumn = .sidebar
     updateSelectedNoteChangeMonitor()
@@ -1705,7 +1679,6 @@ public final class LatticeAppModel {
       showsRelativeLineNumbers: showsRelativeLineNumbers,
       themeID: selectedThemeID,
       fontFamily: editorFontFamily,
-      showsStatusBar: showsStatusBar,
       keyboardShortcutOverrides: keyboardShortcutOverrides,
       disabledKeyboardShortcuts: disabledKeyboardShortcuts
     ))

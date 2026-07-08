@@ -435,14 +435,12 @@ struct LatticeAppModelTests {
     #expect(!model.showsRelativeLineNumbers)
     #expect(model.selectedThemeID == .system)
     #expect(model.editorFontFamily == .system)
-    #expect(model.showsStatusBar)
     #expect(model.vimState.mode == .insert)
 
     model.setVimModeEnabled(true)
     model.setRelativeLineNumbersEnabled(true)
     model.setTheme(.solarizedDark)
     model.setEditorFontFamily(.monospaced)
-    model.setStatusBarVisible(false)
     model.setKeyboardShortcut(
       LatticeKeyboardShortcut(key: "b", modifiers: [.command, .shift]),
       for: .zenMode
@@ -458,7 +456,6 @@ struct LatticeAppModelTests {
     #expect(restored.showsRelativeLineNumbers)
     #expect(restored.selectedThemeID == .solarizedDark)
     #expect(restored.editorFontFamily == .monospaced)
-    #expect(!restored.showsStatusBar)
     #expect(restored.vimState.mode == .normal)
     #expect(restored.keyboardShortcut(for: .zenMode) == LatticeKeyboardShortcut(key: "b", modifiers: [.command, .shift]))
   }
@@ -603,16 +600,6 @@ struct LatticeAppModelTests {
     #expect(model.selectedRange.location == (model.text as NSString).length)
     #expect(model.wikiAutocompleteSuggestions.isEmpty)
     #expect(model.wikiAutocompleteSelectionIndex == 0)
-  }
-
-  @Test("clears vim status when editing resumes")
-  func clearsVimStatusWhenEditingResumes() {
-    let model = LatticeAppModel()
-    model.setVimStatusMessage("Saved")
-
-    model.noteTextDidChange()
-
-    #expect(model.vimStatusMessage == nil)
   }
 
   @Test("skips synchronous editor decoration refresh while typing")
