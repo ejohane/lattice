@@ -101,6 +101,54 @@ struct WikiLinkTests {
     #expect(missingHeadingStates.map(\.status) == [.broken])
   }
 
+  @Test("matches wiki note candidates by rendered display title")
+  func matchesWikiNoteCandidatesByRenderedDisplayTitle() throws {
+    let fixture = try Fixture()
+    defer { fixture.cleanup() }
+
+    let noteURL = try fixture.writeNote(
+      relativePath: "notes/2026-07-04/2026-07-04T12-00-00.md",
+      body: """
+      ---
+      lattice:
+        id: pocket-closet
+      ---
+
+      Pocket Closet
+
+      ## Measurements
+
+      Inventory notes
+      """
+    )
+
+    try fixture.index.rebuild(notesFolderURL: fixture.root)
+
+    let candidates = try fixture.index.wikiNoteCandidates(
+      stem: "Pocket Closet",
+      notesFolderURL: fixture.root,
+      limit: 10
+    )
+    let states = try fixture.index.wikiLinkRenderStates(
+      body: "See [[Pocket Closet]]",
+      currentNote: SavedNote(url: noteURL),
+      notesFolderURL: fixture.root
+    )
+    let headings = try fixture.index.wikiHeadingCandidates(
+      noteID: nil,
+      stem: "Pocket Closet",
+      prefix: "",
+      currentNote: nil,
+      notesFolderURL: fixture.root,
+      limit: 10
+    )
+
+    #expect(candidates.map(\.title) == ["Pocket Closet"])
+    #expect(candidates.first?.filenameStem == "2026-07-04T12-00-00")
+    #expect(states.map(\.status) == [.resolved])
+    #expect(headings.map(\.title) == ["Measurements"])
+  }
+
   @Test("parses standard markdown local note links")
   func parsesMarkdownLinks() throws {
     let links = MarkdownLocalLinkParser.links(in: "[Target](../2026-06-17/Target.md#Part)")

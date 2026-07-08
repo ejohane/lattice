@@ -651,14 +651,18 @@ public final class LatticeAppModel {
       switch context {
       case .note(let prefix, let replacementRange):
         let notes = try noteIndex.indexedNotes(notesFolderURL: folderURL, limit: 500)
-          .filter { prefix.isEmpty || $0.url.deletingPathExtension().lastPathComponent.localizedCaseInsensitiveContains(prefix) }
+          .filter {
+            let stem = $0.url.deletingPathExtension().lastPathComponent
+            return prefix.isEmpty
+              || stem.localizedCaseInsensitiveContains(prefix)
+              || $0.title.localizedCaseInsensitiveContains(prefix)
+          }
           .prefix(8)
         wikiAutocompleteSuggestions = notes.map { note in
-          let stem = note.url.deletingPathExtension().lastPathComponent
           return WikiAutocompleteSuggestion(
-            title: stem,
+            title: note.title,
             subtitle: note.relativePath,
-            replacement: "[[\(stem)]]\(WikiLinkParser.targetComment(noteID: note.noteID))",
+            replacement: "[[\(note.title)]]\(WikiLinkParser.targetComment(noteID: note.noteID))",
             replacementRange: replacementRange
           )
         }

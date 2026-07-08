@@ -190,11 +190,11 @@ public final class NoteIndex: NoteIndexing {
       """
       SELECT relative_path, note_id, date_string, filename, modified_at, title
       FROM notes
-      WHERE lower(replace(filename, '.md', '')) = ?
+      WHERE lower(replace(filename, '.md', '')) = ? OR lower(title) = ?
       ORDER BY date_string DESC, relative_path ASC
       LIMIT ?
       """,
-      bindings: [.text(normalizedStem), .integer(Int64(limit))]
+      bindings: [.text(normalizedStem), .text(normalizedStem), .integer(Int64(limit))]
     )
     return rows.compactMap { row in
       guard
@@ -242,8 +242,13 @@ public final class NoteIndex: NoteIndexing {
     } else if let stem, !stem.isEmpty {
       rows = try headingRows(
         connection: connection,
-        whereClause: "lower(replace(notes.filename, '.md', '')) = ?",
-        bindings: [.text(stem.lowercased()), .text("\(normalizedPrefix)%"), .integer(Int64(limit))]
+        whereClause: "(lower(replace(notes.filename, '.md', '')) = ? OR lower(notes.title) = ?)",
+        bindings: [
+          .text(stem.lowercased()),
+          .text(stem.lowercased()),
+          .text("\(normalizedPrefix)%"),
+          .integer(Int64(limit))
+        ]
       )
     } else if let currentNote, let relativePath = Self.relativePath(for: currentNote.url, in: notesFolderURL) {
       rows = try headingRows(
