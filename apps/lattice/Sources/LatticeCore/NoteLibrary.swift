@@ -60,6 +60,7 @@ public enum NoteLibraryError: LocalizedError, Equatable, Sendable {
   case emptyNote
   case missingNote(String)
   case invalidNotesFolder(String)
+  case invalidTagName(String)
 
   public var errorDescription: String? {
     switch self {
@@ -70,6 +71,8 @@ public enum NoteLibraryError: LocalizedError, Equatable, Sendable {
     case .missingNote(let path):
       return "Note file does not exist: \(path)"
     case .invalidNotesFolder(let message):
+      return message
+    case .invalidTagName(let message):
       return message
     }
   }
@@ -607,6 +610,39 @@ public final class NoteLibrary {
       }
     }
     try initializeNotesFolder(at: folderURL)
+  }
+
+  @discardableResult
+  public func rewriteTag(normalizedName: String, to replacementName: String?) throws -> Int {
+    guard let folderURL = activeNotesFolderURL() else {
+      throw NoteLibraryError.noActiveNotesFolder
+    }
+    if let replacementName, !NoteTagParser.isValidName(replacementName) {
+      throw NoteLibraryError.invalidTagName("Tag names cannot contain spaces or punctuation other than -, _, and /.")
+    }
+
+    var changedNoteCount = 0
+    for section in try listNotes() {
+      for note in section.notes {
+        let raw = try rawBody(for: note)
+        let rawNSString = raw as NSString
+        let contentLocation = MarkdownDocumentMetadata.frontMatterRange(in: raw).map(NSMaxRange) ?? 0
+        let prefix = rawNSString.substring(to: contentLocation)
+        let content = rawNSString.substring(from: contentLocation)
+        let rewritten = NoteTagParser.replacingTag(
+          normalizedName: normalizedName,
+          with: replacementName,
+          in: content
+        )
+        guard rewritten != content else {
+          continue
+        }
+        try writeNoteBody(prefix + rewritten, to: note.url)
+        changedNoteCount += 1
+      }
+    }
+    try initializeNotesFolder(at: folderURL)
+    return changedNoteCount
   }
 
   public func notesDirectory(in rootURL: URL) -> URL {

@@ -36,7 +36,7 @@ struct NoteIndexTests {
     try fixture.index.rebuild(notesFolderURL: fixture.root)
 
     let notes = try fixture.index.indexedNotes(notesFolderURL: fixture.root)
-    #expect(try fixture.index.schemaVersion(notesFolderURL: fixture.root) == 2)
+    #expect(try fixture.index.schemaVersion(notesFolderURL: fixture.root) == 3)
     #expect(notes.count == 1)
     let note = try #require(notes.first)
     #expect(note.relativePath == "notes/2026-06-17/2026-06-17T14-32-10.md")
@@ -44,6 +44,33 @@ struct NoteIndexTests {
     #expect(note.title == "Project Brief")
     #expect(note.excerpt == "**Project Brief**")
     #expect(note.createdAt != nil)
+  }
+
+  @Test("indexes unique tag note counts and filters notes")
+  func indexesTags() throws {
+    let fixture = try Fixture()
+    defer { fixture.cleanup() }
+
+    try fixture.writeNote(
+      relativePath: "notes/2026-06-17/First.md",
+      body: "# First\n\n#Work #work #project/lattice"
+    )
+    try fixture.writeNote(
+      relativePath: "notes/2026-06-18/Second.md",
+      body: "# Second\n\n#WORK `#project/lattice`"
+    )
+
+    try fixture.index.rebuild(notesFolderURL: fixture.root)
+
+    let summaries = try fixture.index.tagSummaries(notesFolderURL: fixture.root)
+    #expect(summaries.map(\.normalizedName) == ["project/lattice", "work"])
+    #expect(summaries.first { $0.normalizedName == "work" }?.noteCount == 2)
+    #expect(summaries.first { $0.normalizedName == "project/lattice" }?.noteCount == 1)
+    #expect(try fixture.index.notes(
+      tagged: "WORK",
+      notesFolderURL: fixture.root,
+      limit: 10
+    ).count == 2)
   }
 
   @Test("uses plain first line as title and extracts the first useful excerpt")

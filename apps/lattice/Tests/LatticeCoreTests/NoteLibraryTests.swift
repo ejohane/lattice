@@ -110,6 +110,28 @@ struct NoteLibraryTests {
     #expect(fixture.library.activeNoteURL()?.path == note.url.path)
   }
 
+  @Test("renames and deletes inline tags across notes while preserving metadata")
+  func rewritesTagsAcrossNotes() throws {
+    let fixture = try Fixture()
+    defer { fixture.cleanup() }
+
+    try fixture.library.selectNotesFolder(fixture.root)
+    let first = try fixture.library.createNote(body: "# First\n\n#Work and `#work`", now: fixture.date)
+    let second = try fixture.library.createNote(
+      body: "# Second\n\n#work #project/lattice",
+      now: fixture.date.addingTimeInterval(1)
+    )
+    let firstID = try #require(MarkdownDocumentMetadata.noteID(in: fixture.library.rawBody(for: first)))
+
+    #expect(try fixture.library.rewriteTag(normalizedName: "work", to: "career") == 2)
+    #expect(try fixture.library.body(for: first).contains("#career and `#work`"))
+    #expect(try fixture.library.body(for: second).contains("#career #project/lattice"))
+    #expect(MarkdownDocumentMetadata.noteID(in: try fixture.library.rawBody(for: first)) == firstID)
+
+    #expect(try fixture.library.rewriteTag(normalizedName: "career", to: nil) == 2)
+    #expect(try !fixture.library.body(for: second).contains("#career"))
+  }
+
   @Test("editing session creates once then autosaves in place")
   func editingSessionAutosavesInPlace() throws {
     let fixture = try Fixture()

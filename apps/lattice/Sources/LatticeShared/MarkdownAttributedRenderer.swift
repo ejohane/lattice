@@ -100,6 +100,7 @@ enum MarkdownAttributedRenderer {
     applyBlockStyles(to: attributed, fontSize: fontSize, fontFamily: fontFamily, codeBlocks: codeBlocks, activeRanges: activeRanges, theme: theme)
     applyInlineStyles(to: attributed, fontSize: fontSize, fontFamily: fontFamily, skippedRanges: codeBlocks + inactiveTableRanges, activeRanges: activeRanges, theme: theme)
     applyWikiLinkStyles(to: attributed, fontSize: fontSize, fontFamily: fontFamily, states: wikiLinkStates, activeRanges: activeRanges, theme: theme)
+    applyTagStyles(to: attributed, fontSize: fontSize, fontFamily: fontFamily, theme: theme)
     hideLatticeMetadataComments(in: attributed, fontSize: fontSize, fontFamily: fontFamily, activeRanges: activeRanges, theme: theme)
     applyMarkdownTableStyles(to: attributed, fontSize: fontSize, fontFamily: fontFamily, tables: tables, activeRanges: activeRanges, theme: theme)
     applyImagePreviewStyles(to: attributed, fontSize: fontSize, fontFamily: fontFamily, states: imagePreviewStates, activeRanges: activeRanges)
@@ -606,6 +607,23 @@ enum MarkdownAttributedRenderer {
     }
   }
 
+  private static func applyTagStyles(
+    to attributed: NSMutableAttributedString,
+    fontSize: CGFloat,
+    fontFamily: EditorFontFamily,
+    theme: LatticeTheme
+  ) {
+    for tag in NoteTagParser.tags(in: attributed.string) where NSMaxRange(tag.range) <= attributed.length {
+      attributed.addAttributes(
+        [
+          .font: bodyFont(size: fontSize, weight: .semibold, family: fontFamily),
+          .foregroundColor: theme.nsColor(.accent)
+        ],
+        range: tag.range
+      )
+    }
+  }
+
   private static func hideLatticeMetadataComments(
     in attributed: NSMutableAttributedString,
     fontSize: CGFloat,
@@ -1020,6 +1038,7 @@ enum MarkdownAttributedRenderer {
     applyAutolinkStyles(to: attributed, fullRange: fullRange, skippedRanges: inlineLinkRanges(in: attributed.string, fullRange: fullRange, skippedRanges: codeBlocks + inactiveTableRanges), theme: theme)
     applyBlockStyles(to: attributed, fontFamily: fontFamily, activeRanges: activeRanges, theme: theme)
     applyWikiLinkStyles(to: attributed, fontFamily: fontFamily, activeRanges: activeRanges, states: wikiLinkStates, theme: theme)
+    applyTagStyles(to: attributed, fontFamily: fontFamily, theme: theme)
     hideLatticeMetadataComments(in: attributed, fontFamily: fontFamily, activeRanges: activeRanges, theme: theme)
     applyMarkdownTableStyles(to: attributed, fontFamily: fontFamily, tables: tables, activeRanges: activeRanges, theme: theme)
   }
@@ -1477,6 +1496,22 @@ enum MarkdownAttributedRenderer {
         .underlineColor: theme.uiColor(.warning).withAlphaComponent(0.65),
         .underlineStyle: NSUnderlineStyle.patternDash.rawValue | NSUnderlineStyle.single.rawValue
       ]
+    }
+  }
+
+  private static func applyTagStyles(
+    to attributed: NSMutableAttributedString,
+    fontFamily: EditorFontFamily,
+    theme: LatticeTheme
+  ) {
+    for tag in NoteTagParser.tags(in: attributed.string) where NSMaxRange(tag.range) <= attributed.length {
+      attributed.addAttributes(
+        [
+          .font: bodyFont(weight: .semibold, fontFamily: fontFamily),
+          .foregroundColor: theme.uiColor(.accent)
+        ],
+        range: tag.range
+      )
     }
   }
 

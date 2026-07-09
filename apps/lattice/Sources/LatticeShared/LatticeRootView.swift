@@ -59,6 +59,38 @@ public struct LatticeRootView: View {
       } message: {
         Text("Wiki links to this note will be updated.")
       }
+      .alert("Rename Tag", isPresented: Binding(
+        get: { model.renamingTag != nil },
+        set: { if !$0 { model.cancelTagRename() } }
+      )) {
+        TextField("Tag name", text: $model.renameTagName)
+        Button("Rename") {
+          model.commitTagRename()
+        }
+        .disabled(!model.canCommitTagRename)
+        Button("Cancel", role: .cancel) {
+          model.cancelTagRename()
+        }
+      } message: {
+        Text("This changes the tag in every note that uses it.")
+      }
+      .confirmationDialog(
+        "Delete Tag?",
+        isPresented: Binding(
+          get: { model.deletingTag != nil },
+          set: { if !$0 { model.cancelTagDeletion() } }
+        ),
+        titleVisibility: .visible
+      ) {
+        Button("Delete Tag", role: .destructive) {
+          model.confirmTagDeletion()
+        }
+        Button("Cancel", role: .cancel) {
+          model.cancelTagDeletion()
+        }
+      } message: {
+        Text("The tag will be removed from every note. The notes themselves will not be deleted.")
+      }
       .sheet(isPresented: $model.isShowingCommandPalette) {
         CommandPaletteView(
           model: model,
@@ -162,10 +194,61 @@ private extension View {
 private struct NoteSidebar: View {
   @Bindable var model: LatticeAppModel
   @Environment(\.latticeTheme) private var theme
+  @State private var tagsAreExpanded = true
 
   var body: some View {
     List {
       if model.hasFolder {
+        DisclosureGroup(isExpanded: $tagsAreExpanded) {
+          Button {
+            model.selectTag(nil)
+          } label: {
+            sidebarFilterRow(
+              title: "All Notes",
+              systemImage: "tray.full",
+              count: nil,
+              isSelected: model.selectedTagName == nil
+            )
+          }
+          .buttonStyle(.plain)
+
+          if model.tagSummaries.isEmpty {
+            Text("Type #tag in a note to create one.")
+              .font(.caption)
+              .foregroundStyle(theme.color(.secondaryText))
+              .padding(.vertical, 4)
+          } else {
+            ForEach(model.tagSummaries) { tag in
+              Button {
+                model.selectTag(tag)
+              } label: {
+                sidebarFilterRow(
+                  title: "#\(tag.name)",
+                  systemImage: "tag",
+                  count: tag.noteCount,
+                  isSelected: model.selectedTagName == tag.normalizedName
+                )
+              }
+              .buttonStyle(.plain)
+              .contextMenu {
+                Button {
+                  model.beginRenamingTag(tag)
+                } label: {
+                  Label("Rename Tag", systemImage: "pencil")
+                }
+                Button(role: .destructive) {
+                  model.requestTagDeletion(tag)
+                } label: {
+                  Label("Delete Tag", systemImage: "trash")
+                }
+              }
+            }
+          }
+        } label: {
+          Label("Tags", systemImage: "tag")
+            .font(.headline)
+        }
+
         ForEach(model.sections) { section in
           Section(section.dateString) {
             ForEach(section.notes) { note in
@@ -238,6 +321,33 @@ private struct NoteSidebar: View {
         }
       }
     }
+  }
+
+  private func sidebarFilterRow(
+    title: String,
+    systemImage: String,
+    count: Int?,
+    isSelected: Bool
+  ) -> some View {
+    HStack(spacing: 8) {
+      Image(systemName: systemImage)
+        .foregroundStyle(isSelected ? theme.color(.accent) : theme.color(.secondaryText))
+        .frame(width: 16)
+      Text(title)
+        .lineLimit(1)
+      Spacer(minLength: 8)
+      if let count {
+        Text(count.formatted())
+          .font(.caption.monospacedDigit())
+          .foregroundStyle(theme.color(.tertiaryText))
+      }
+      if isSelected {
+        Image(systemName: "checkmark")
+          .font(.caption.weight(.semibold))
+          .foregroundStyle(theme.color(.secondaryText))
+      }
+    }
+    .contentShape(Rectangle())
   }
 }
 
@@ -331,7 +441,7 @@ private struct LeftEdgeBackSwipeView: UIViewRepresentable {
 private struct NoteEditorPane: View {
   @Bindable var model: LatticeAppModel
   @Environment(\.latticeTheme) private var theme
-  @State private var wikiAutocompleteAnchor: CGRect?
+  @State private var editorAutocompleteAnchor: CGRect?
   private let maximumEditorWidth: CGFloat = 920
   private let editorHorizontalPadding: CGFloat = 12
   #if os(iOS)
@@ -384,9 +494,9 @@ private struct NoteEditorPane: View {
           focusToken: model.editorFocusToken,
           isVimModeEnabled: model.effectiveIsVimModeEnabled,
           showsRelativeLineNumbers: model.showsRelativeLineNumbers,
-          autocompleteAnchor: $wikiAutocompleteAnchor,
+          autocompleteAnchor: $editorAutocompleteAnchor,
           keyboardAccessoryActions: keyboardAccessoryActions,
-          hasAutocompleteSuggestions: !model.wikiAutocompleteSuggestions.isEmpty,
+          hasAutocompleteSuggestions: model.hasEditorAutocompleteSuggestions,
           wikiLinkStates: model.wikiLinkStates,
           theme: theme,
           imagePreviewStates: model.imagePreviewStates,
@@ -402,14 +512,17 @@ private struct NoteEditorPane: View {
           onMarkdownLinkActivated: { characterIndex in
             model.activateMarkdownLink(at: characterIndex)
           },
+          onTagActivated: { characterIndex in
+            model.activateTag(at: characterIndex)
+          },
           onDismissAutocomplete: {
             model.dismissWikiAutocomplete()
           },
           onMoveAutocompleteSelection: { delta in
-            model.moveWikiAutocompleteSelection(by: delta)
+            model.moveEditorAutocompleteSelection(by: delta)
           },
           onCommitAutocomplete: {
-            model.commitSelectedWikiAutocompleteSuggestion()
+            model.commitSelectedEditorAutocompleteSuggestion()
           },
           onVimWrite: {
             model.vimWrite()
@@ -425,7 +538,7 @@ private struct NoteEditorPane: View {
         .frame(maxWidth: .infinity, maxHeight: .infinity)
         .background(theme.color(.editorBackground))
 
-        wikiAutocompleteOverlay
+        editorAutocompleteOverlay
       }
       .frame(maxWidth: .infinity, maxHeight: .infinity)
     }
@@ -561,11 +674,52 @@ private struct NoteEditorPane: View {
   }
   #endif
 
+  private var editorAutocompleteOverlay: some View {
+    EditorAutocompleteOverlay(anchor: editorAutocompleteAnchor, model: model, theme: theme)
+  }
+
+}
+
+private struct EditorAutocompleteOverlay: View {
+  let anchor: CGRect?
+  @Bindable var model: LatticeAppModel
+  let theme: LatticeTheme
+
   @ViewBuilder
-  private var wikiAutocompleteOverlay: some View {
-    if let wikiAutocompleteAnchor, !model.wikiAutocompleteSuggestions.isEmpty {
+  var body: some View {
+    if let anchor, !model.tagAutocompleteSuggestions.isEmpty {
       GeometryReader { proxy in
-        let visibleRange = wikiAutocompleteVisibleRange(
+        let visibleRange = autocompleteVisibleRange(
+          suggestionCount: model.tagAutocompleteSuggestions.count,
+          selectedIndex: model.tagAutocompleteSelectionIndex,
+          maxVisibleCount: 5
+        )
+        let suggestions = Array(model.tagAutocompleteSuggestions[visibleRange])
+        let selectedIndex = max(0, model.tagAutocompleteSelectionIndex - visibleRange.lowerBound)
+        let width = min(420, max(0, proxy.size.width - 24))
+        let rowHeight: CGFloat = 48
+        let panelHeight = CGFloat(suggestions.count) * rowHeight + 12
+        let x = min(max(12, anchor.minX), max(12, proxy.size.width - width - 12))
+        let preferredY = anchor.maxY + 8
+        let y = preferredY + panelHeight <= proxy.size.height - 12
+          ? preferredY
+          : max(12, anchor.minY - panelHeight - 8)
+
+        TagAutocompletePanel(
+          suggestions: suggestions,
+          selectedIndex: selectedIndex,
+          theme: theme
+        ) { suggestion in
+          model.selectTagAutocompleteSuggestion(suggestion)
+        }
+        .frame(width: width, height: panelHeight, alignment: .top)
+        .position(x: x + width / 2, y: y + panelHeight / 2)
+        .transition(.opacity.combined(with: .scale(scale: 0.98, anchor: .topLeading)))
+      }
+      .allowsHitTesting(true)
+    } else if let anchor, !model.wikiAutocompleteSuggestions.isEmpty {
+      GeometryReader { proxy in
+        let visibleRange = autocompleteVisibleRange(
           suggestionCount: model.wikiAutocompleteSuggestions.count,
           selectedIndex: model.wikiAutocompleteSelectionIndex,
           maxVisibleCount: 5
@@ -575,11 +729,11 @@ private struct NoteEditorPane: View {
         let width = min(640, max(0, proxy.size.width - 24))
         let rowHeight: CGFloat = 48
         let panelHeight = CGFloat(suggestions.count) * rowHeight + 12
-        let x = min(max(12, wikiAutocompleteAnchor.minX), max(12, proxy.size.width - width - 12))
-        let preferredY = wikiAutocompleteAnchor.maxY + 8
+        let x = min(max(12, anchor.minX), max(12, proxy.size.width - width - 12))
+        let preferredY = anchor.maxY + 8
         let y = preferredY + panelHeight <= proxy.size.height - 12
           ? preferredY
-          : max(12, wikiAutocompleteAnchor.minY - panelHeight - 8)
+          : max(12, anchor.minY - panelHeight - 8)
 
         WikiAutocompletePanel(
           suggestions: suggestions,
@@ -596,7 +750,7 @@ private struct NoteEditorPane: View {
     }
   }
 
-  private func wikiAutocompleteVisibleRange(
+  private func autocompleteVisibleRange(
     suggestionCount: Int,
     selectedIndex: Int,
     maxVisibleCount: Int
@@ -646,11 +800,11 @@ private struct WikiAutocompletePanel: View {
           .padding(.horizontal, 14)
           .background {
             if isSelected {
-              RoundedRectangle(cornerRadius: 12, style: .continuous)
+              RoundedRectangle(cornerRadius: 8, style: .continuous)
                 .fill(theme.color(.secondaryText).opacity(0.18))
             }
           }
-          .contentShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
+          .contentShape(Rectangle())
         }
         .buttonStyle(.plain)
         .accessibilityLabel(suggestion.subtitle.isEmpty ? suggestion.title : "\(suggestion.title), \(suggestion.subtitle)")
@@ -658,13 +812,63 @@ private struct WikiAutocompletePanel: View {
     }
     .padding(6)
     .background {
-      RoundedRectangle(cornerRadius: 22, style: .continuous)
-        .fill(theme.color(.barBackground).opacity(0.96))
-        .shadow(color: .black.opacity(0.24), radius: 18, x: 0, y: 10)
+      RoundedRectangle(cornerRadius: 12, style: .continuous)
+        .fill(theme.color(.barBackground).opacity(0.98))
+        .shadow(color: .black.opacity(0.2), radius: 8, x: 0, y: 4)
     }
-    .overlay {
-      RoundedRectangle(cornerRadius: 22, style: .continuous)
-        .stroke(theme.color(.separator).opacity(0.68), lineWidth: 1)
+  }
+}
+
+private struct TagAutocompletePanel: View {
+  let suggestions: [TagAutocompleteSuggestion]
+  let selectedIndex: Int
+  let theme: LatticeTheme
+  let onSelect: (TagAutocompleteSuggestion) -> Void
+
+  var body: some View {
+    VStack(spacing: 0) {
+      ForEach(Array(suggestions.enumerated()), id: \.element.id) { index, suggestion in
+        let isSelected = index == selectedIndex
+        Button {
+          onSelect(suggestion)
+        } label: {
+          HStack(spacing: 12) {
+            Image(systemName: "tag")
+              .font(.system(size: 18, weight: .medium))
+              .foregroundStyle(isSelected ? theme.color(.accent) : theme.color(.secondaryText))
+              .frame(width: 28)
+
+            Text("#\(suggestion.name)")
+              .font(.body.weight(isSelected ? .semibold : .regular))
+              .foregroundStyle(theme.color(.primaryText))
+              .lineLimit(1)
+              .truncationMode(.middle)
+
+            Spacer(minLength: 8)
+
+            Text("\(suggestion.noteCount)")
+              .font(.caption.monospacedDigit())
+              .foregroundStyle(theme.color(.secondaryText))
+          }
+          .frame(height: 48)
+          .padding(.horizontal, 14)
+          .background {
+            if isSelected {
+              RoundedRectangle(cornerRadius: 8, style: .continuous)
+                .fill(theme.color(.secondaryText).opacity(0.18))
+            }
+          }
+          .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+        .accessibilityLabel("Tag \(suggestion.name), \(suggestion.noteCount) notes")
+      }
+    }
+    .padding(6)
+    .background {
+      RoundedRectangle(cornerRadius: 12, style: .continuous)
+        .fill(theme.color(.barBackground).opacity(0.98))
+        .shadow(color: .black.opacity(0.2), radius: 8, x: 0, y: 4)
     }
   }
 }
@@ -672,6 +876,7 @@ private struct WikiAutocompletePanel: View {
 private struct ZenNoteEditorPane: View {
   @Bindable var model: LatticeAppModel
   @Environment(\.latticeTheme) private var theme
+  @State private var editorAutocompleteAnchor: CGRect?
   private let maximumEditorWidth: CGFloat = 980
 
   var body: some View {
@@ -683,50 +888,64 @@ private struct ZenNoteEditorPane: View {
   }
 
   private var editorContent: some View {
-    MarkdownTextEditor(
-      text: $model.text,
-      selectedRange: $model.selectedRange,
-      vimState: $model.vimState,
-      fontSize: CGFloat(model.editorFontSize),
-      fontFamily: model.editorFontFamily,
-      focusToken: model.editorFocusToken,
-      isVimModeEnabled: model.effectiveIsVimModeEnabled,
-      showsRelativeLineNumbers: false,
-      dimsInactiveParagraphs: true,
-      caretAnchorFraction: 1.0 / 3.0,
-      keyboardAccessoryActions: zenKeyboardAccessoryActions,
-      hasAutocompleteSuggestions: false,
-      wikiLinkStates: model.wikiLinkStates,
-      theme: theme,
-      imagePreviewStates: model.imagePreviewStates,
-      onTextChange: {
-        model.noteTextDidChange()
-      },
-      onSelectionChange: {
-        model.noteSelectionDidChange()
-      },
-      onWikiLinkActivated: { characterIndex in
-        model.activateWikiLink(at: characterIndex)
-      },
-      onMarkdownLinkActivated: { characterIndex in
-        model.activateMarkdownLink(at: characterIndex)
-      },
-      onDismissAutocomplete: {
-        model.dismissWikiAutocomplete()
-      },
-      onVimWrite: {
-        model.vimWrite()
-      },
-      onImageAttachmentsImported: { imports in
-        model.insertImageAttachments(imports)
-      },
-      onImageAttachmentResized: { lineLocation, width in
-        model.resizeImageAttachment(lineLocation: lineLocation, width: width)
-      }
-    )
-    .ignoresSafeArea(.keyboard, edges: .bottom)
-    .frame(maxWidth: .infinity, maxHeight: .infinity)
-    .background(theme.color(.editorBackground))
+    ZStack(alignment: .topLeading) {
+      MarkdownTextEditor(
+        text: $model.text,
+        selectedRange: $model.selectedRange,
+        vimState: $model.vimState,
+        fontSize: CGFloat(model.editorFontSize),
+        fontFamily: model.editorFontFamily,
+        focusToken: model.editorFocusToken,
+        isVimModeEnabled: model.effectiveIsVimModeEnabled,
+        showsRelativeLineNumbers: false,
+        dimsInactiveParagraphs: true,
+        caretAnchorFraction: 1.0 / 3.0,
+        autocompleteAnchor: $editorAutocompleteAnchor,
+        keyboardAccessoryActions: zenKeyboardAccessoryActions,
+        hasAutocompleteSuggestions: model.hasEditorAutocompleteSuggestions,
+        wikiLinkStates: model.wikiLinkStates,
+        theme: theme,
+        imagePreviewStates: model.imagePreviewStates,
+        onTextChange: {
+          model.noteTextDidChange()
+        },
+        onSelectionChange: {
+          model.noteSelectionDidChange()
+        },
+        onWikiLinkActivated: { characterIndex in
+          model.activateWikiLink(at: characterIndex)
+        },
+        onMarkdownLinkActivated: { characterIndex in
+          model.activateMarkdownLink(at: characterIndex)
+        },
+        onTagActivated: { characterIndex in
+          model.activateTag(at: characterIndex)
+        },
+        onDismissAutocomplete: {
+          model.dismissWikiAutocomplete()
+        },
+        onMoveAutocompleteSelection: { delta in
+          model.moveEditorAutocompleteSelection(by: delta)
+        },
+        onCommitAutocomplete: {
+          model.commitSelectedEditorAutocompleteSuggestion()
+        },
+        onVimWrite: {
+          model.vimWrite()
+        },
+        onImageAttachmentsImported: { imports in
+          model.insertImageAttachments(imports)
+        },
+        onImageAttachmentResized: { lineLocation, width in
+          model.resizeImageAttachment(lineLocation: lineLocation, width: width)
+        }
+      )
+      .ignoresSafeArea(.keyboard, edges: .bottom)
+      .frame(maxWidth: .infinity, maxHeight: .infinity)
+      .background(theme.color(.editorBackground))
+
+      EditorAutocompleteOverlay(anchor: editorAutocompleteAnchor, model: model, theme: theme)
+    }
   }
 
   #if os(iOS)

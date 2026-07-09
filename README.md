@@ -8,6 +8,18 @@ The app keeps one active note open per device. The first autosave creates a
 Markdown file, later autosaves update that same file, and New Note starts a
 fresh file.
 
+## Tags
+
+Type inline tags such as `#work` or `#project/lattice` anywhere outside code.
+Lattice styles tags in the editor, suggests existing tags while typing, and
+lists them with note counts in the sidebar. Selecting a tag filters the existing
+date-grouped note list. A tag's context menu can rename it or remove it from all
+notes without deleting those notes.
+
+Tag matching is case-insensitive. Names can contain letters, numbers, `-`, `_`,
+and `/`, must include a letter, and cannot contain spaces. The Markdown files
+remain the source of truth; tag counts and filters are derived locally.
+
 ## Notes Folder
 
 On first run, Lattice asks you to choose a notes folder. The recommended folder

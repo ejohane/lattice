@@ -28,6 +28,8 @@ public protocol NoteIndexing: AnyObject {
   func refresh(note: SavedNote, notesFolderURL: URL) throws
   func recentNotes(notesFolderURL: URL, limit: Int) throws -> [SavedNote]
   func searchNotes(query: String, notesFolderURL: URL, limit: Int) throws -> [SavedNote]
+  func tagSummaries(notesFolderURL: URL) throws -> [NoteTagSummary]
+  func notes(tagged normalizedName: String, notesFolderURL: URL, limit: Int) throws -> [SavedNote]
   func indexedNotes(notesFolderURL: URL, limit: Int) throws -> [IndexedNote]
   func wikiNoteCandidates(stem: String, notesFolderURL: URL, limit: Int) throws -> [WikiNoteCandidate]
   func wikiHeadingCandidates(
@@ -44,6 +46,16 @@ public protocol NoteIndexing: AnyObject {
     currentNote: SavedNote?,
     notesFolderURL: URL
   ) throws -> [WikiLinkRenderState]
+}
+
+public extension NoteIndexing {
+  func tagSummaries(notesFolderURL: URL) throws -> [NoteTagSummary] {
+    []
+  }
+
+  func notes(tagged normalizedName: String, notesFolderURL: URL, limit: Int) throws -> [SavedNote] {
+    []
+  }
 }
 
 public enum NoteIndexError: LocalizedError, Equatable, Sendable {
@@ -84,10 +96,13 @@ public final class NoteIndex: NoteIndexing {
   public func rebuild(notesFolderURL: URL) throws {
     let connection = try connection(for: notesFolderURL)
     let notes = try indexedDocuments(in: notesFolderURL)
+      .sorted { $0.note.relativePath < $1.note.relativePath }
     let relativePaths = Set(notes.map(\.note.relativePath))
 
     try connection.execute("BEGIN IMMEDIATE TRANSACTION")
     do {
+      try connection.execute("DELETE FROM note_tags")
+      try connection.execute("DELETE FROM tags")
       for document in notes {
         try upsert(document, connection: connection)
       }
@@ -163,6 +178,53 @@ public final class NoteIndex: NoteIndexing {
     return rows.compactMap { row in
       savedNote(from: row, notesFolderURL: notesFolderURL)
     }
+  }
+
+  public func tagSummaries(notesFolderURL: URL) throws -> [NoteTagSummary] {
+    let connection = try connection(for: notesFolderURL)
+    let rows = try connection.query(
+      """
+      SELECT tags.normalized_name, tags.display_name, COUNT(note_tags.note_relative_path) AS note_count
+      FROM tags
+      JOIN note_tags ON note_tags.normalized_name = tags.normalized_name
+      GROUP BY tags.normalized_name, tags.display_name
+      ORDER BY tags.display_name COLLATE NOCASE ASC
+      """
+    )
+    return rows.compactMap { row in
+      guard
+        let normalizedName = row["normalized_name"]?.stringValue,
+        let displayName = row["display_name"]?.stringValue,
+        let noteCount = row["note_count"]?.int64Value
+      else {
+        return nil
+      }
+      return NoteTagSummary(
+        name: displayName,
+        normalizedName: normalizedName,
+        noteCount: Int(noteCount)
+      )
+    }
+  }
+
+  public func notes(
+    tagged normalizedName: String,
+    notesFolderURL: URL,
+    limit: Int = 2_000
+  ) throws -> [SavedNote] {
+    let connection = try connection(for: notesFolderURL)
+    let rows = try connection.query(
+      """
+      SELECT notes.relative_path, notes.date_string, notes.modified_at
+      FROM note_tags
+      JOIN notes ON notes.relative_path = note_tags.note_relative_path
+      WHERE note_tags.normalized_name = ?
+      ORDER BY notes.date_string DESC, length(notes.filename) DESC, notes.filename DESC, notes.modified_at DESC
+      LIMIT ?
+      """,
+      bindings: [.text(NoteTagParser.normalizedName(normalizedName)), .integer(Int64(limit))]
+    )
+    return rows.compactMap { savedNote(from: $0, notesFolderURL: notesFolderURL) }
   }
 
   public func indexedNotes(notesFolderURL: URL, limit: Int = 500) throws -> [IndexedNote] {
@@ -403,10 +465,28 @@ public final class NoteIndex: NoteIndexing {
       )
       """
     )
+    try connection.execute(
+      """
+      CREATE TABLE IF NOT EXISTS tags (
+        normalized_name TEXT PRIMARY KEY,
+        display_name TEXT NOT NULL
+      )
+      """
+    )
+    try connection.execute(
+      """
+      CREATE TABLE IF NOT EXISTS note_tags (
+        note_relative_path TEXT NOT NULL,
+        normalized_name TEXT NOT NULL,
+        PRIMARY KEY (note_relative_path, normalized_name)
+      )
+      """
+    )
     try connection.execute("CREATE INDEX IF NOT EXISTS idx_notes_filename_stem ON notes(filename)")
     try connection.execute("CREATE INDEX IF NOT EXISTS idx_headings_note ON note_headings(note_id)")
     try connection.execute("CREATE INDEX IF NOT EXISTS idx_wiki_links_target ON wiki_links(target_note_id)")
-    try connection.execute("PRAGMA user_version = 2")
+    try connection.execute("CREATE INDEX IF NOT EXISTS idx_note_tags_name ON note_tags(normalized_name)")
+    try connection.execute("PRAGMA user_version = 3")
   }
 
   private func ensureColumn(
@@ -558,6 +638,7 @@ public final class NoteIndex: NoteIndexing {
     )
     try upsertHeadings(document, connection: connection)
     try upsertWikiLinks(for: document, connection: connection)
+    try upsertTags(for: document, connection: connection)
   }
 
   private func deleteRowsNotIn(_ relativePaths: Set<String>, connection: SQLiteConnection) throws {
@@ -573,8 +654,10 @@ public final class NoteIndex: NoteIndexing {
       try connection.execute("DELETE FROM notes_fts WHERE rowid = ?", bindings: [.integer(rowID)])
       try connection.execute("DELETE FROM note_headings WHERE note_relative_path = ?", bindings: [.text(relativePath)])
       try connection.execute("DELETE FROM wiki_links WHERE source_relative_path = ?", bindings: [.text(relativePath)])
+      try connection.execute("DELETE FROM note_tags WHERE note_relative_path = ?", bindings: [.text(relativePath)])
       try connection.execute("DELETE FROM notes WHERE id = ?", bindings: [.integer(rowID)])
     }
+    try deleteUnusedTags(connection: connection)
   }
 
   private func deleteRow(relativePath: String, connection: SQLiteConnection) throws {
@@ -587,7 +670,9 @@ public final class NoteIndex: NoteIndexing {
     try connection.execute("DELETE FROM notes_fts WHERE rowid = ?", bindings: [.integer(rowID)])
     try connection.execute("DELETE FROM note_headings WHERE note_relative_path = ?", bindings: [.text(relativePath)])
     try connection.execute("DELETE FROM wiki_links WHERE source_relative_path = ?", bindings: [.text(relativePath)])
+    try connection.execute("DELETE FROM note_tags WHERE note_relative_path = ?", bindings: [.text(relativePath)])
     try connection.execute("DELETE FROM notes WHERE id = ?", bindings: [.integer(rowID)])
+    try deleteUnusedTags(connection: connection)
   }
 
   private func deleteRowsWithNoteID(
@@ -609,8 +694,36 @@ public final class NoteIndex: NoteIndexing {
       try connection.execute("DELETE FROM notes_fts WHERE rowid = ?", bindings: [.integer(rowID)])
       try connection.execute("DELETE FROM note_headings WHERE note_relative_path = ?", bindings: [.text(relativePath)])
       try connection.execute("DELETE FROM wiki_links WHERE source_relative_path = ?", bindings: [.text(relativePath)])
+      try connection.execute("DELETE FROM note_tags WHERE note_relative_path = ?", bindings: [.text(relativePath)])
       try connection.execute("DELETE FROM notes WHERE id = ?", bindings: [.integer(rowID)])
     }
+    try deleteUnusedTags(connection: connection)
+  }
+
+  private func upsertTags(for document: IndexedDocument, connection: SQLiteConnection) throws {
+    try connection.execute(
+      "DELETE FROM note_tags WHERE note_relative_path = ?",
+      bindings: [.text(document.note.relativePath)]
+    )
+
+    var insertedNames: Set<String> = []
+    for tag in NoteTagParser.tags(in: document.body) where insertedNames.insert(tag.normalizedName).inserted {
+      try connection.execute(
+        "INSERT OR IGNORE INTO tags(normalized_name, display_name) VALUES (?, ?)",
+        bindings: [.text(tag.normalizedName), .text(tag.name)]
+      )
+      try connection.execute(
+        "INSERT INTO note_tags(note_relative_path, normalized_name) VALUES (?, ?)",
+        bindings: [.text(document.note.relativePath), .text(tag.normalizedName)]
+      )
+    }
+    try deleteUnusedTags(connection: connection)
+  }
+
+  private func deleteUnusedTags(connection: SQLiteConnection) throws {
+    try connection.execute(
+      "DELETE FROM tags WHERE normalized_name NOT IN (SELECT DISTINCT normalized_name FROM note_tags)"
+    )
   }
 
   private func upsertHeadings(_ document: IndexedDocument, connection: SQLiteConnection) throws {
