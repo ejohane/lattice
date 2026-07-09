@@ -158,6 +158,13 @@ if [[ -n "$codesign_identity" ]]; then
     codesign_args+=(--timestamp --options runtime)
   fi
 
+  sparkle_version_dir="$frameworks_dir/Sparkle.framework/Versions/Current"
+  if [[ -x "$sparkle_version_dir/Autoupdate" ]]; then
+    codesign "${codesign_args[@]}" "$sparkle_version_dir/Autoupdate"
+  fi
+  if [[ -d "$sparkle_version_dir/Updater.app" ]]; then
+    codesign "${codesign_args[@]}" "$sparkle_version_dir/Updater.app"
+  fi
   codesign "${codesign_args[@]}" "$frameworks_dir/Sparkle.framework"
   codesign "${codesign_args[@]}" "$macos_dir/$executable_name"
   codesign "${codesign_args[@]}" "$app_dir"
