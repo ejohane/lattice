@@ -22,6 +22,7 @@ public final class LatticeAppModel {
   private var scopedFolderURL: URL?
   private var backStack: [NavigationHistoryEntry] = []
   private var forwardStack: [NavigationHistoryEntry] = []
+  private var allSections: [NoteSection] = []
 
   private enum ExternalSelectedNoteChange {
     case none
@@ -32,6 +33,8 @@ public final class LatticeAppModel {
 
   public var sections: [NoteSection] = []
   public var noteTitles: [String: String] = [:]
+  public var tagSummaries: [NoteTagSummary] = []
+  public var selectedTagName: String?
   public var text = ""
   public var selectedRange = NSRange(location: 0, length: 0)
   public var selectedNote: SavedNote?
@@ -61,9 +64,18 @@ public final class LatticeAppModel {
     }
   }
   public var wikiAutocompleteSelectionIndex = 0
+  public var tagAutocompleteSuggestions: [TagAutocompleteSuggestion] = [] {
+    didSet {
+      clampTagAutocompleteSelection()
+    }
+  }
+  public var tagAutocompleteSelectionIndex = 0
   public var ambiguousWikiLink: AmbiguousWikiLinkResolution?
   public var renamingNote: SavedNote?
   public var renameTitle = ""
+  public var renamingTag: NoteTagSummary?
+  public var renameTagName = ""
+  public var deletingTag: NoteTagSummary?
   public var taskSyncProviderName = "Apple Reminders"
   public var taskSyncAuthorizationStatus = TaskProviderAuthorizationStatus.notDetermined
   public var taskSyncDestinations: [TaskDestination] = []
@@ -106,6 +118,14 @@ public final class LatticeAppModel {
 
   public var hasFolder: Bool {
     folderURL != nil
+  }
+
+  public var hasEditorAutocompleteSuggestions: Bool {
+    !tagAutocompleteSuggestions.isEmpty || !wikiAutocompleteSuggestions.isEmpty
+  }
+
+  public var canCommitTagRename: Bool {
+    NoteTagParser.isValidName(renameTagName.trimmingCharacters(in: .whitespacesAndNewlines))
   }
 
   public var recommendedFolderURL: URL {
@@ -341,6 +361,7 @@ public final class LatticeAppModel {
   public func createNewNote() {
     flushAutosave()
     forwardStack.removeAll()
+    selectedTagName = nil
     session.resetForNewNote()
     selectedNote = nil
     updateSelectedNoteChangeMonitor()
@@ -349,6 +370,7 @@ public final class LatticeAppModel {
     wikiLinkStates = []
     imagePreviewStates = []
     wikiAutocompleteSuggestions = []
+    tagAutocompleteSuggestions = []
     ambiguousWikiLink = nil
     status = "New note"
     preferredCompactColumn = .detail
@@ -599,6 +621,101 @@ public final class LatticeAppModel {
     }
   }
 
+  public func selectTag(_ tag: NoteTagSummary?) {
+    selectedTagName = tag?.normalizedName
+    reloadNotes(selecting: selectedNote)
+    status = tag.map { "Showing #\($0.name)" } ?? "All notes"
+  }
+
+  public func activateTag(at characterIndex: Int) {
+    guard let occurrence = NoteTagParser.tag(at: characterIndex, in: text) else {
+      return
+    }
+    flushAutosave()
+    let summary = tagSummaries.first { $0.normalizedName == occurrence.normalizedName }
+      ?? NoteTagSummary(name: occurrence.name, noteCount: 1)
+    selectTag(summary)
+    preferredCompactColumn = .sidebar
+  }
+
+  public func beginRenamingTag(_ tag: NoteTagSummary) {
+    renamingTag = tag
+    renameTagName = tag.name
+  }
+
+  public func cancelTagRename() {
+    renamingTag = nil
+    renameTagName = ""
+  }
+
+  public func commitTagRename() {
+    guard let folderURL, let tag = renamingTag else {
+      return
+    }
+    let name = renameTagName.trimmingCharacters(in: .whitespacesAndNewlines)
+    guard NoteTagParser.isValidName(name) else {
+      errorMessage = "Tag names need a letter and can use numbers, -, _, or /, but not spaces."
+      return
+    }
+
+    do {
+      flushAutosave()
+      let selected = selectedNote
+      let selection = selectedRange
+      try noteLibrary.rewriteTag(normalizedName: tag.normalizedName, to: name)
+      try noteIndex.rebuild(notesFolderURL: folderURL)
+      selectedTagName = selectedTagName == tag.normalizedName
+        ? NoteTagParser.normalizedName(name)
+        : selectedTagName
+      renamingTag = nil
+      renameTagName = ""
+      refreshTagSummaries()
+      if let selected {
+        _ = open(selected, heading: nil, selection: selection, recordHistory: false, flushBeforeOpen: false)
+      } else {
+        reloadNotes()
+      }
+      status = "Renamed #\(tag.name) to #\(name)"
+    } catch {
+      errorMessage = error.localizedDescription
+    }
+  }
+
+  public func requestTagDeletion(_ tag: NoteTagSummary) {
+    deletingTag = tag
+  }
+
+  public func cancelTagDeletion() {
+    deletingTag = nil
+  }
+
+  public func confirmTagDeletion() {
+    guard let folderURL, let tag = deletingTag else {
+      return
+    }
+
+    do {
+      flushAutosave()
+      let selected = selectedNote
+      let selection = selectedRange
+      try noteLibrary.rewriteTag(normalizedName: tag.normalizedName, to: nil)
+      try noteIndex.rebuild(notesFolderURL: folderURL)
+      if selectedTagName == tag.normalizedName {
+        selectedTagName = nil
+      }
+      deletingTag = nil
+      refreshTagSummaries()
+      if let selected {
+        _ = open(selected, heading: nil, selection: selection, recordHistory: false, flushBeforeOpen: false)
+      } else {
+        reloadNotes()
+      }
+      status = "Deleted #\(tag.name)"
+    } catch {
+      errorMessage = error.localizedDescription
+    }
+  }
+
   public func selectWikiAutocompleteSuggestion(_ suggestion: WikiAutocompleteSuggestion) {
     let nsString = text as NSString
     guard NSMaxRange(suggestion.replacementRange) <= nsString.length else {
@@ -607,6 +724,7 @@ public final class LatticeAppModel {
     text = nsString.replacingCharacters(in: suggestion.replacementRange, with: suggestion.replacement)
     selectedRange = NSRange(location: suggestion.replacementRange.location + (suggestion.replacement as NSString).length, length: 0)
     wikiAutocompleteSuggestions = []
+    tagAutocompleteSuggestions = []
     scheduleAutosave()
     refreshWikiLinkStates()
     refreshImagePreviewStates()
@@ -632,10 +750,71 @@ public final class LatticeAppModel {
   public func dismissWikiAutocomplete() {
     wikiAutocompleteSuggestions = []
     wikiAutocompleteSelectionIndex = 0
+    tagAutocompleteSuggestions = []
+    tagAutocompleteSelectionIndex = 0
+  }
+
+  public func selectTagAutocompleteSuggestion(_ suggestion: TagAutocompleteSuggestion) {
+    let nsString = text as NSString
+    guard NSMaxRange(suggestion.replacementRange) <= nsString.length else {
+      return
+    }
+    text = nsString.replacingCharacters(in: suggestion.replacementRange, with: suggestion.replacement)
+    selectedRange = NSRange(
+      location: suggestion.replacementRange.location + (suggestion.replacement as NSString).length,
+      length: 0
+    )
+    tagAutocompleteSuggestions = []
+    wikiAutocompleteSuggestions = []
+    scheduleAutosave()
+    refreshWikiLinkStates()
+    refreshImagePreviewStates()
+    editorFocusToken += 1
+  }
+
+  public func moveEditorAutocompleteSelection(by delta: Int) {
+    if !tagAutocompleteSuggestions.isEmpty {
+      let count = tagAutocompleteSuggestions.count
+      tagAutocompleteSelectionIndex = (tagAutocompleteSelectionIndex + delta + count) % count
+    } else {
+      moveWikiAutocompleteSelection(by: delta)
+    }
+  }
+
+  public func commitSelectedEditorAutocompleteSuggestion() {
+    if tagAutocompleteSuggestions.indices.contains(tagAutocompleteSelectionIndex) {
+      selectTagAutocompleteSuggestion(tagAutocompleteSuggestions[tagAutocompleteSelectionIndex])
+    } else {
+      commitSelectedWikiAutocompleteSuggestion()
+    }
   }
 
   public func updateWikiAutocomplete() {
-    guard let folderURL, let context = WikiLinkParser.autocompleteContext(in: text, selection: selectedRange) else {
+    guard let folderURL else {
+      tagAutocompleteSuggestions = []
+      wikiAutocompleteSuggestions = []
+      return
+    }
+
+    if let context = NoteTagParser.autocompleteContext(in: text, selection: selectedRange) {
+      wikiAutocompleteSuggestions = []
+      let normalizedPrefix = NoteTagParser.normalizedName(context.prefix)
+      tagAutocompleteSuggestions = tagSummaries
+        .filter { normalizedPrefix.isEmpty || $0.normalizedName.hasPrefix(normalizedPrefix) }
+        .prefix(8)
+        .map { tag in
+          TagAutocompleteSuggestion(
+            name: tag.name,
+            noteCount: tag.noteCount,
+            replacement: "#\(tag.name)",
+            replacementRange: context.replacementRange
+          )
+        }
+      return
+    }
+
+    tagAutocompleteSuggestions = []
+    guard let context = WikiLinkParser.autocompleteContext(in: text, selection: selectedRange) else {
       wikiAutocompleteSuggestions = []
       return
     }
@@ -712,6 +891,17 @@ public final class LatticeAppModel {
       return
     }
     wikiAutocompleteSelectionIndex = min(max(wikiAutocompleteSelectionIndex, 0), wikiAutocompleteSuggestions.count - 1)
+  }
+
+  private func clampTagAutocompleteSelection() {
+    guard !tagAutocompleteSuggestions.isEmpty else {
+      tagAutocompleteSelectionIndex = 0
+      return
+    }
+    tagAutocompleteSelectionIndex = min(
+      max(tagAutocompleteSelectionIndex, 0),
+      tagAutocompleteSuggestions.count - 1
+    )
   }
 
   public func indentSelectedListItems() {
@@ -978,6 +1168,8 @@ public final class LatticeAppModel {
     try noteLibrary.selectNotesFolder(url, preserveActiveNoteForSameFolder: preserveActiveNoteForSameFolder)
     clearNavigationHistory()
     folderURL = url
+    selectedTagName = nil
+    tagSummaries = []
     status = url.lastPathComponent
     reloadNotes()
     startNotesFolderChangeMonitor()
@@ -1086,6 +1278,8 @@ public final class LatticeAppModel {
     }
     do {
       try noteIndex.rebuild(notesFolderURL: folderURL)
+      refreshTagSummaries()
+      reloadNotes(selecting: selectedNote)
     } catch {
       // The index is disposable; note files remain the source of truth.
     }
@@ -1097,6 +1291,7 @@ public final class LatticeAppModel {
     }
     do {
       try noteIndex.refresh(note: note, notesFolderURL: folderURL)
+      refreshTagSummaries()
     } catch {
       // Autosave should not fail because the derived index could not refresh.
     }
@@ -1158,6 +1353,7 @@ public final class LatticeAppModel {
     selectedRange = NSRange(location: 0, length: 0)
     wikiLinkStates = []
     wikiAutocompleteSuggestions = []
+    tagAutocompleteSuggestions = []
     ambiguousWikiLink = nil
     preferredCompactColumn = .sidebar
     reloadNotes(selecting: nil)
@@ -1207,9 +1403,15 @@ public final class LatticeAppModel {
   }
 
   private func updateWikiAutocompleteIfNeeded() {
-    guard WikiLinkParser.autocompleteContext(in: text, selection: selectedRange) != nil else {
+    guard
+      NoteTagParser.autocompleteContext(in: text, selection: selectedRange) != nil
+        || WikiLinkParser.autocompleteContext(in: text, selection: selectedRange) != nil
+    else {
       if !wikiAutocompleteSuggestions.isEmpty {
         wikiAutocompleteSuggestions = []
+      }
+      if !tagAutocompleteSuggestions.isEmpty {
+        tagAutocompleteSuggestions = []
       }
       return
     }
@@ -1614,6 +1816,7 @@ public final class LatticeAppModel {
     selectedRange = NSRange(location: 0, length: 0)
     wikiLinkStates = []
     wikiAutocompleteSuggestions = []
+    tagAutocompleteSuggestions = []
     ambiguousWikiLink = nil
     status = "Removed \(title)"
     preferredCompactColumn = .sidebar
@@ -1657,19 +1860,53 @@ public final class LatticeAppModel {
 
   private func reloadNotes(selecting note: SavedNote? = nil) {
     do {
-      sections = try noteLibrary.listNotes()
-      noteTitles = Dictionary(uniqueKeysWithValues: sections
+      allSections = try noteLibrary.listNotes()
+      noteTitles = Dictionary(uniqueKeysWithValues: allSections
         .flatMap(\.notes)
         .map { ($0.id, noteLibrary.displayTitle(for: $0)) })
+      if let selectedTagName, let folderURL {
+        let taggedNoteIDs = Set(try noteIndex.notes(
+          tagged: selectedTagName,
+          notesFolderURL: folderURL,
+          limit: 2_000
+        ).map(\.id))
+        sections = allSections.compactMap { section in
+          let notes = section.notes.filter { taggedNoteIDs.contains($0.id) }
+          return notes.isEmpty ? nil : NoteSection(dateString: section.dateString, notes: notes)
+        }
+      } else {
+        sections = allSections
+      }
       selectedNote = note ?? session.currentNote
       updateSelectedNoteChangeMonitor()
     } catch NoteLibraryError.noActiveNotesFolder {
+      allSections = []
       sections = []
       noteTitles = [:]
+      tagSummaries = []
+      selectedTagName = nil
       selectedNote = nil
       updateSelectedNoteChangeMonitor()
     } catch {
       errorMessage = error.localizedDescription
+    }
+  }
+
+  private func refreshTagSummaries() {
+    guard let folderURL else {
+      tagSummaries = []
+      selectedTagName = nil
+      return
+    }
+    do {
+      tagSummaries = try noteIndex.tagSummaries(notesFolderURL: folderURL)
+      if let selectedTagName,
+         !tagSummaries.contains(where: { $0.normalizedName == selectedTagName }) {
+        self.selectedTagName = nil
+      }
+    } catch {
+      tagSummaries = []
+      selectedTagName = nil
     }
   }
 
@@ -1923,6 +2160,21 @@ public struct WikiAutocompleteSuggestion: Identifiable, Equatable {
   public init(title: String, subtitle: String, replacement: String, replacementRange: NSRange) {
     self.title = title
     self.subtitle = subtitle
+    self.replacement = replacement
+    self.replacementRange = replacementRange
+  }
+}
+
+public struct TagAutocompleteSuggestion: Identifiable, Equatable {
+  public let id = UUID()
+  public let name: String
+  public let noteCount: Int
+  public let replacement: String
+  public let replacementRange: NSRange
+
+  public init(name: String, noteCount: Int, replacement: String, replacementRange: NSRange) {
+    self.name = name
+    self.noteCount = noteCount
     self.replacement = replacement
     self.replacementRange = replacementRange
   }

@@ -524,6 +524,24 @@ struct MarkdownAttributedRendererTests {
     #expect(linkColor == theme.nsColor(.link))
   }
 
+  @Test("styles inline tags without styling code examples")
+  func stylesInlineTags() throws {
+    let theme = LatticeTheme(id: .system)
+    let text = "#work `#example`"
+    let attributed = MarkdownAttributedRenderer.render(text, theme: theme)
+    let string = text as NSString
+    let tagRange = string.range(of: "#work")
+    let codeRange = string.range(of: "#example")
+
+    let tagColor = attributed.attribute(.foregroundColor, at: tagRange.location, effectiveRange: nil) as? NSColor
+    let tagFont = try #require(attributed.attribute(.font, at: tagRange.location, effectiveRange: nil) as? NSFont)
+    let codeColor = attributed.attribute(.foregroundColor, at: codeRange.location, effectiveRange: nil) as? NSColor
+
+    #expect(tagColor == theme.nsColor(.accent))
+    #expect(tagFont.fontDescriptor.symbolicTraits.contains(.bold))
+    #expect(codeColor != theme.nsColor(.accent))
+  }
+
   private func writeTestPNG(width: Int, height: Int) throws -> URL {
     let bitmap = try #require(NSBitmapImageRep(
       bitmapDataPlanes: nil,

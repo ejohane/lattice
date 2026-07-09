@@ -40,6 +40,101 @@ struct LatticeAppModelTests {
     #expect(model.text == "**Universal Note**\n\n# Later Heading\n\nBody")
   }
 
+  @Test("indexes tags and filters the date-grouped sidebar")
+  func filtersNotesByTag() throws {
+    let fixture = try Fixture()
+    defer { fixture.cleanup() }
+    let model = LatticeAppModel(
+      noteLibrary: fixture.library,
+      folderAccessStore: fixture.folderAccessStore,
+      noteIndex: NoteIndex(appSupportURL: fixture.appSupportURL),
+      dateProvider: { fixture.date() }
+    )
+
+    try fixture.fileManager.createDirectory(at: fixture.root, withIntermediateDirectories: true)
+    model.chooseFolder(fixture.root)
+    model.text = "# Work note\n\n#Work"
+    model.flushAutosave()
+    #expect(model.errorMessage == nil)
+    let workNote = try #require(model.selectedNote)
+    model.createNewNote()
+    model.text = "# Personal note\n\n#personal"
+    model.flushAutosave()
+
+    #expect(model.tagSummaries.map(\.normalizedName) == ["personal", "work"])
+    let workTag = try #require(model.tagSummaries.first { $0.normalizedName == "work" })
+    model.selectTag(workTag)
+
+    #expect(model.selectedTagName == "work")
+    #expect(model.sections.flatMap(\.notes) == [workNote])
+
+    model.selectTag(nil)
+    #expect(model.sections.flatMap(\.notes).count == 2)
+  }
+
+  @Test("suggests existing tags and commits autocomplete")
+  func autocompletesTags() throws {
+    let fixture = try Fixture()
+    defer { fixture.cleanup() }
+    let model = LatticeAppModel(
+      noteLibrary: fixture.library,
+      folderAccessStore: fixture.folderAccessStore,
+      noteIndex: NoteIndex(appSupportURL: fixture.appSupportURL),
+      dateProvider: { fixture.date() }
+    )
+
+    try fixture.fileManager.createDirectory(at: fixture.root, withIntermediateDirectories: true)
+    model.chooseFolder(fixture.root)
+    model.text = "# Existing\n\n#Project/Lattice"
+    model.flushAutosave()
+    #expect(model.errorMessage == nil)
+    model.text = "Plan #pro"
+    model.selectedRange = NSRange(location: (model.text as NSString).length, length: 0)
+    model.updateWikiAutocomplete()
+
+    let suggestion = try #require(model.tagAutocompleteSuggestions.first)
+    #expect(suggestion.name == "Project/Lattice")
+    model.commitSelectedEditorAutocompleteSuggestion()
+    #expect(model.text == "Plan #Project/Lattice")
+  }
+
+  @Test("renames and deletes tags across notes")
+  func managesTagsGlobally() throws {
+    let fixture = try Fixture()
+    defer { fixture.cleanup() }
+    let model = LatticeAppModel(
+      noteLibrary: fixture.library,
+      folderAccessStore: fixture.folderAccessStore,
+      noteIndex: NoteIndex(appSupportURL: fixture.appSupportURL),
+      dateProvider: { fixture.date() }
+    )
+
+    try fixture.fileManager.createDirectory(at: fixture.root, withIntermediateDirectories: true)
+    model.chooseFolder(fixture.root)
+    model.text = "# First\n\n#Work"
+    model.flushAutosave()
+    model.createNewNote()
+    model.text = "# Second\n\n#work"
+    model.flushAutosave()
+    #expect(model.errorMessage == nil)
+
+    let workTag = try #require(model.tagSummaries.first { $0.normalizedName == "work" })
+    model.beginRenamingTag(workTag)
+    model.renameTagName = "career"
+    model.commitTagRename()
+
+    let notes = try fixture.library.listNotes().flatMap(\.notes)
+    #expect(model.tagSummaries.map(\.normalizedName) == ["career"])
+    #expect(try notes.allSatisfy { try fixture.library.body(for: $0).contains("#career") })
+
+    let careerTag = try #require(model.tagSummaries.first)
+    model.requestTagDeletion(careerTag)
+    model.confirmTagDeletion()
+
+    #expect(model.tagSummaries.isEmpty)
+    #expect(try notes.allSatisfy { try !fixture.library.body(for: $0).contains("#career") })
+  }
+
   @Test("start restores the last active note instead of creating a new draft")
   func startRestoresLastActiveNote() throws {
     let fixture = try Fixture()

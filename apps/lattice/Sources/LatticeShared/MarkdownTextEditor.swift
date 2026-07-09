@@ -85,6 +85,7 @@ public struct MarkdownTextEditor: NSViewRepresentable {
   let onSelectionChange: () -> Void
   let onWikiLinkActivated: (Int) -> Void
   let onMarkdownLinkActivated: (Int) -> Void
+  let onTagActivated: (Int) -> Void
   let onDismissAutocomplete: () -> Void
   let onMoveAutocompleteSelection: (Int) -> Void
   let onCommitAutocomplete: () -> Void
@@ -113,6 +114,7 @@ public struct MarkdownTextEditor: NSViewRepresentable {
     onSelectionChange: @escaping () -> Void,
     onWikiLinkActivated: @escaping (Int) -> Void,
     onMarkdownLinkActivated: @escaping (Int) -> Void,
+    onTagActivated: @escaping (Int) -> Void,
     onDismissAutocomplete: @escaping () -> Void,
     onMoveAutocompleteSelection: @escaping (Int) -> Void = { _ in },
     onCommitAutocomplete: @escaping () -> Void = {},
@@ -140,6 +142,7 @@ public struct MarkdownTextEditor: NSViewRepresentable {
     self.onSelectionChange = onSelectionChange
     self.onWikiLinkActivated = onWikiLinkActivated
     self.onMarkdownLinkActivated = onMarkdownLinkActivated
+    self.onTagActivated = onTagActivated
     self.onDismissAutocomplete = onDismissAutocomplete
     self.onMoveAutocompleteSelection = onMoveAutocompleteSelection
     self.onCommitAutocomplete = onCommitAutocomplete
@@ -903,6 +906,12 @@ private final class MarkdownTextView: NSTextView {
     if let characterIndex = characterIndex(at: event),
        MarkdownLocalLinkParser.link(at: characterIndex, in: string) != nil {
       coordinator?.parent.onMarkdownLinkActivated(characterIndex)
+      return
+    }
+
+    if let characterIndex = characterIndex(at: event),
+       NoteTagParser.tag(at: characterIndex, in: string) != nil {
+      coordinator?.parent.onTagActivated(characterIndex)
       return
     }
 
@@ -1876,6 +1885,7 @@ public struct MarkdownTextEditor: UIViewRepresentable {
   let onSelectionChange: () -> Void
   let onWikiLinkActivated: (Int) -> Void
   let onMarkdownLinkActivated: (Int) -> Void
+  let onTagActivated: (Int) -> Void
   let onDismissAutocomplete: () -> Void
   let onMoveAutocompleteSelection: (Int) -> Void
   let onCommitAutocomplete: () -> Void
@@ -1904,6 +1914,7 @@ public struct MarkdownTextEditor: UIViewRepresentable {
     onSelectionChange: @escaping () -> Void,
     onWikiLinkActivated: @escaping (Int) -> Void,
     onMarkdownLinkActivated: @escaping (Int) -> Void,
+    onTagActivated: @escaping (Int) -> Void,
     onDismissAutocomplete: @escaping () -> Void,
     onMoveAutocompleteSelection: @escaping (Int) -> Void = { _ in },
     onCommitAutocomplete: @escaping () -> Void = {},
@@ -1931,6 +1942,7 @@ public struct MarkdownTextEditor: UIViewRepresentable {
     self.onSelectionChange = onSelectionChange
     self.onWikiLinkActivated = onWikiLinkActivated
     self.onMarkdownLinkActivated = onMarkdownLinkActivated
+    self.onTagActivated = onTagActivated
     self.onDismissAutocomplete = onDismissAutocomplete
     self.onMoveAutocompleteSelection = onMoveAutocompleteSelection
     self.onCommitAutocomplete = onCommitAutocomplete
@@ -2311,6 +2323,7 @@ public struct MarkdownTextEditor: UIViewRepresentable {
       return MarkdownTaskList.toggleTask(at: location, in: textView.text, selection: textView.selectedRange) != nil
         || WikiLinkParser.link(at: location, in: textView.text) != nil
         || MarkdownLocalLinkParser.link(at: location, in: textView.text) != nil
+        || NoteTagParser.tag(at: location, in: textView.text) != nil
     }
 
     @objc func handleTap(_ gesture: UITapGestureRecognizer) {
@@ -2329,6 +2342,11 @@ public struct MarkdownTextEditor: UIViewRepresentable {
 
       if MarkdownLocalLinkParser.link(at: location, in: textView.text) != nil {
         parent.onMarkdownLinkActivated(location)
+        return
+      }
+
+      if NoteTagParser.tag(at: location, in: textView.text) != nil {
+        parent.onTagActivated(location)
         return
       }
 
