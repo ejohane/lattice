@@ -715,7 +715,7 @@ private struct ReleaseUpdateStatusDisclosure: View {
         } label: {
           Label(status.actionTitle, systemImage: status.actionSystemImage)
         }
-        .disabled(!status.canCheckForUpdates)
+        .disabled(!status.canPerformAction)
       }
     }
     .padding(.vertical, 4)

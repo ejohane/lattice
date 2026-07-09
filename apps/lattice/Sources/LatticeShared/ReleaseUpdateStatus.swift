@@ -9,17 +9,20 @@ public struct ReleaseUpdateStatus: Equatable, Sendable {
   public var version: String?
   public var title: String?
   public var canCheckForUpdates: Bool
+  public var canInstallUpdate: Bool
 
   public init(
     availability: Availability,
     version: String? = nil,
     title: String? = nil,
-    canCheckForUpdates: Bool = false
+    canCheckForUpdates: Bool = false,
+    canInstallUpdate: Bool = false
   ) {
     self.availability = availability
     self.version = version
     self.title = title
     self.canCheckForUpdates = canCheckForUpdates
+    self.canInstallUpdate = canInstallUpdate
   }
 
   public static let unavailable = ReleaseUpdateStatus(availability: .unavailable)
@@ -31,13 +34,15 @@ public struct ReleaseUpdateStatus: Equatable, Sendable {
   public static func updateAvailable(
     version: String?,
     title: String?,
-    canCheckForUpdates: Bool
+    canCheckForUpdates: Bool,
+    canInstallUpdate: Bool = false
   ) -> ReleaseUpdateStatus {
     ReleaseUpdateStatus(
       availability: .updateAvailable,
       version: version,
       title: title,
-      canCheckForUpdates: canCheckForUpdates
+      canCheckForUpdates: canCheckForUpdates,
+      canInstallUpdate: canInstallUpdate
     )
   }
 
@@ -53,9 +58,9 @@ public struct ReleaseUpdateStatus: Equatable, Sendable {
       return "No update available"
     case .updateAvailable:
       if let version, !version.isEmpty {
-        return "Version \(version) available"
+        return canInstallUpdate ? "Version \(version) ready" : "Version \(version) available"
       }
-      return "Update available"
+      return canInstallUpdate ? "Update ready" : "Update available"
     }
   }
 
@@ -66,21 +71,44 @@ public struct ReleaseUpdateStatus: Equatable, Sendable {
     case .idle:
       return "Check for a newer Lattice build."
     case .updateAvailable:
-      if let title, let version, !title.isEmpty, !version.isEmpty {
+      if canInstallUpdate, let title, let version, !title.isEmpty, !version.isEmpty, title != version {
         return "\(title) \(version) is ready to install."
       }
-      if let version, !version.isEmpty {
+      if canInstallUpdate, let version, !version.isEmpty {
         return "Lattice \(version) is ready to install."
       }
-      return "A newer Lattice build is ready to install."
+      if canInstallUpdate {
+        return "A newer Lattice build is ready to install."
+      }
+      if let title, let version, !title.isEmpty, !version.isEmpty, title != version {
+        return "\(title) \(version) is available."
+      }
+      if let version, !version.isEmpty {
+        return "Lattice \(version) is available."
+      }
+      return "A newer Lattice build is available."
     }
   }
 
   public var actionTitle: String {
-    availability == .updateAvailable ? "Update Now" : "Check for Updates"
+    if availability == .updateAvailable {
+      return canInstallUpdate ? "Update Now" : "Show Update"
+    }
+    return "Check for Updates"
   }
 
   public var actionSystemImage: String {
     availability == .updateAvailable ? "arrow.down.circle.fill" : "arrow.triangle.2.circlepath"
+  }
+
+  public var canPerformAction: Bool {
+    switch availability {
+    case .unavailable:
+      return false
+    case .idle:
+      return canCheckForUpdates
+    case .updateAvailable:
+      return canInstallUpdate || canCheckForUpdates
+    }
   }
 }

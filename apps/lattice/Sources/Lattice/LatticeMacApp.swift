@@ -28,12 +28,12 @@ struct LatticeMacApp: App {
           if updateState.isUpdateAvailable {
             ToolbarItem(placement: .primaryAction) {
               Button {
-                appDelegate.checkForUpdates()
+                performUpdateAction()
               } label: {
                 Label(updateState.indicatorTitle, systemImage: "arrow.down.circle.fill")
               }
               .help(updateState.indicatorHelp)
-              .disabled(!appDelegate.canCheckForUpdates)
+              .disabled(!canPerformUpdateAction)
             }
           }
         }
@@ -125,12 +125,8 @@ struct LatticeMacApp: App {
           showMainWindow()
           model.showFolderImporter()
         }
-        Button("Check for Updates...") {
-          if appDelegate.canCheckForUpdates {
-            appDelegate.checkForUpdates()
-          } else {
-            model.errorMessage = "Update checking is available in release builds."
-          }
+        Button(updateMenuTitle) {
+          performUpdateAction()
         }
         .latticeKeyboardShortcut(model.keyboardShortcut(for: .checkForUpdates))
       }
@@ -212,9 +208,9 @@ struct LatticeMacApp: App {
         Divider()
         Button(updateState.menuItemTitle) {
           showMainWindow()
-          appDelegate.checkForUpdates()
+          performUpdateAction()
         }
-        .disabled(!appDelegate.canCheckForUpdates)
+        .disabled(!canPerformUpdateAction)
       }
       if updateState.isUpdaterConfigured {
         Divider()
@@ -292,11 +288,7 @@ struct LatticeMacApp: App {
         isSetupSafe: true,
         keyboardShortcut: model.keyboardShortcut(for: .checkForUpdates)?.displayText
       ) {
-        if appDelegate.canCheckForUpdates {
-          appDelegate.checkForUpdates()
-        } else {
-          model.errorMessage = "Update checking is available in release builds."
-        }
+        performUpdateAction()
       }
     ]
   }
@@ -311,12 +303,24 @@ struct LatticeMacApp: App {
     return "Available in release builds"
   }
 
+  private var updateMenuTitle: String {
+    if updateState.canInstallUpdate {
+      return "Update Now..."
+    }
+    return "Check for Updates..."
+  }
+
+  private var canPerformUpdateAction: Bool {
+    updateState.canInstallUpdate || appDelegate.canCheckForUpdates
+  }
+
   private var settingsReleaseUpdateStatus: ReleaseUpdateStatus {
     if updateState.isUpdateAvailable {
       return .updateAvailable(
         version: updateState.updateVersion,
         title: updateState.updateTitle,
-        canCheckForUpdates: appDelegate.canCheckForUpdates
+        canCheckForUpdates: appDelegate.canCheckForUpdates,
+        canInstallUpdate: updateState.canInstallUpdate
       )
     }
 
@@ -328,6 +332,15 @@ struct LatticeMacApp: App {
   }
 
   private func checkForUpdatesFromSettings() {
+    performUpdateAction()
+  }
+
+  private func performUpdateAction() {
+    if appDelegate.canInstallAvailableUpdate {
+      appDelegate.installAvailableUpdate()
+      return
+    }
+
     if appDelegate.canCheckForUpdates {
       appDelegate.checkForUpdates()
     } else {
@@ -355,10 +368,14 @@ struct LatticeMacApp: App {
 private final class MacUpdateState {
   var isUpdaterConfigured = false
   var isUpdateAvailable = false
+  var canInstallUpdate = false
   var updateVersion: String?
   var updateTitle: String?
 
   var indicatorTitle: String {
+    if canInstallUpdate, let updateVersion {
+      return "Update \(updateVersion) Ready"
+    }
     if let updateVersion {
       return "Update \(updateVersion) Available"
     }
@@ -366,7 +383,13 @@ private final class MacUpdateState {
   }
 
   var indicatorHelp: String {
-    if let updateTitle, let updateVersion {
+    if canInstallUpdate, let updateTitle, let updateVersion, updateTitle != updateVersion {
+      return "\(updateTitle) \(updateVersion) is ready to install"
+    }
+    if canInstallUpdate, let updateVersion {
+      return "Lattice \(updateVersion) is ready to install"
+    }
+    if let updateTitle, let updateVersion, updateTitle != updateVersion {
       return "\(updateTitle) \(updateVersion) is available"
     }
     if let updateVersion {
@@ -387,14 +410,20 @@ private final class MacUpdateState {
     isUpdaterConfigured = isConfigured
   }
 
-  func markUpdateAvailable(_ item: SUAppcastItem) {
+  func markUpdateAvailable(_ item: SUAppcastItem, canInstallUpdate: Bool = false) {
     isUpdateAvailable = true
     updateVersion = item.displayVersionString
     updateTitle = item.title
+    self.canInstallUpdate = self.canInstallUpdate || canInstallUpdate
+  }
+
+  func markUpdateInstallReady(_ item: SUAppcastItem) {
+    markUpdateAvailable(item, canInstallUpdate: true)
   }
 
   func clearUpdateAvailable() {
     isUpdateAvailable = false
+    canInstallUpdate = false
     updateVersion = nil
     updateTitle = nil
   }
@@ -612,9 +641,14 @@ final class MacAppDelegate: NSObject, NSApplicationDelegate, SPUUpdaterDelegate,
   private var updaterController: SPUStandardUpdaterController?
   private var sidebarShortcutMonitor: Any?
   private weak var updateState: MacUpdateState?
+  private var immediateInstallHandler: (() -> Void)?
 
   var canCheckForUpdates: Bool {
     updaterController?.updater.canCheckForUpdates ?? false
+  }
+
+  var canInstallAvailableUpdate: Bool {
+    immediateInstallHandler != nil
   }
 
   var supportsGentleScheduledUpdateReminders: Bool {
@@ -652,11 +686,16 @@ final class MacAppDelegate: NSObject, NSApplicationDelegate, SPUUpdaterDelegate,
     updaterController?.updater.checkForUpdates()
   }
 
+  func installAvailableUpdate() {
+    immediateInstallHandler?()
+  }
+
   func updater(_ updater: SPUUpdater, didFindValidUpdate item: SUAppcastItem) {
     updateState?.markUpdateAvailable(item)
   }
 
   func updaterDidNotFindUpdate(_ updater: SPUUpdater, error: any Error) {
+    immediateInstallHandler = nil
     updateState?.clearUpdateAvailable()
   }
 
@@ -669,8 +708,9 @@ final class MacAppDelegate: NSObject, NSApplicationDelegate, SPUUpdaterDelegate,
     willInstallUpdateOnQuit item: SUAppcastItem,
     immediateInstallationBlock immediateInstallHandler: @escaping () -> Void
   ) -> Bool {
-    updateState?.markUpdateAvailable(item)
-    return false
+    self.immediateInstallHandler = immediateInstallHandler
+    updateState?.markUpdateInstallReady(item)
+    return true
   }
 
   func standardUserDriverShouldHandleShowingScheduledUpdate(
