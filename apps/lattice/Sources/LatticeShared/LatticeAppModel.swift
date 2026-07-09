@@ -158,11 +158,11 @@ public final class LatticeAppModel {
 
     do {
       if let restoredURL = try folderAccessStore.restoreFolderURL() {
-        try activateFolder(restoredURL, saveBookmark: false)
+        try activateFolder(restoredURL, saveBookmark: false, preserveActiveNoteForSameFolder: true)
         restoreActiveNote()
       } else if let activeURL = noteLibrary.activeNotesFolderURL(),
                 noteLibrary.validateNotesFolder(at: activeURL).isUsable {
-        try activateFolder(activeURL, saveBookmark: false)
+        try activateFolder(activeURL, saveBookmark: false, preserveActiveNoteForSameFolder: true)
         restoreActiveNote()
       } else {
         status = "Choose a notes folder"
@@ -964,14 +964,18 @@ public final class LatticeAppModel {
     return Array(filtered.prefix(limit))
   }
 
-  private func activateFolder(_ url: URL, saveBookmark: Bool) throws {
+  private func activateFolder(
+    _ url: URL,
+    saveBookmark: Bool,
+    preserveActiveNoteForSameFolder: Bool = false
+  ) throws {
     scopedFolderURL?.stopAccessingSecurityScopedResource()
     _ = url.startAccessingSecurityScopedResource()
     scopedFolderURL = url
     if saveBookmark {
       try folderAccessStore.save(folderURL: url)
     }
-    try noteLibrary.selectNotesFolder(url)
+    try noteLibrary.selectNotesFolder(url, preserveActiveNoteForSameFolder: preserveActiveNoteForSameFolder)
     clearNavigationHistory()
     folderURL = url
     status = url.lastPathComponent

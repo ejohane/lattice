@@ -40,6 +40,30 @@ struct LatticeAppModelTests {
     #expect(model.text == "**Universal Note**\n\n# Later Heading\n\nBody")
   }
 
+  @Test("start restores the last active note instead of creating a new draft")
+  func startRestoresLastActiveNote() throws {
+    let fixture = try Fixture()
+    defer { fixture.cleanup() }
+    let now = fixture.date()
+
+    try fixture.library.selectNotesFolder(fixture.root)
+    let lastNote = try fixture.library.createNote(body: "# Last Open\n\nContinue here", now: now)
+
+    let model = LatticeAppModel(
+      noteLibrary: fixture.library,
+      folderAccessStore: fixture.folderAccessStore,
+      noteIndex: NoteIndex(appSupportURL: fixture.appSupportURL),
+      dateProvider: { now }
+    )
+
+    model.start()
+
+    #expect(model.selectedNote == lastNote)
+    #expect(model.text == "# Last Open\n\nContinue here")
+    #expect(model.sections.flatMap(\.notes) == [lastNote])
+    #expect(try fixture.library.listNotes().flatMap(\.notes) == [lastNote])
+  }
+
   @Test("indents and outdents selected list items")
   func indentsAndOutdentsSelectedListItems() throws {
     let fixture = try Fixture()

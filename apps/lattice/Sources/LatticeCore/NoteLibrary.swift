@@ -330,11 +330,14 @@ public final class NoteLibrary {
     return opened
   }
 
-  public func selectNotesFolder(_ url: URL) throws {
+  public func selectNotesFolder(_ url: URL, preserveActiveNoteForSameFolder: Bool = false) throws {
     let standardizedURL = url.standardizedFileURL
+    let previousFolderURL = activeNotesFolderURL()?.standardizedFileURL
     try initializeNotesFolder(at: standardizedURL)
     defaults.set(standardizedURL.path, forKey: Self.activeNotesFolderPathKey)
-    clearActiveNote()
+    if !preserveActiveNoteForSameFolder || previousFolderURL != standardizedURL {
+      clearActiveNote()
+    }
   }
 
   public func clearActiveNotesFolder() {
