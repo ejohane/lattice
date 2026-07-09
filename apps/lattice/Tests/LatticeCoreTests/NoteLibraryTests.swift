@@ -171,6 +171,34 @@ struct NoteLibraryTests {
     #expect(secondDevice.library.restoreActiveNote() == nil)
   }
 
+  @Test("selecting the same notes folder can preserve active note state")
+  func selectingSameNotesFolderCanPreserveActiveNote() throws {
+    let fixture = try Fixture()
+    defer { fixture.cleanup() }
+
+    try fixture.library.selectNotesFolder(fixture.root)
+    let note = try fixture.library.createNote(body: "Keep open", now: fixture.date)
+
+    try fixture.library.selectNotesFolder(fixture.root, preserveActiveNoteForSameFolder: true)
+
+    #expect(fixture.library.restoreActiveNote() == note)
+  }
+
+  @Test("selecting a different notes folder clears active note state even when preserving same-folder state")
+  func selectingDifferentNotesFolderClearsActiveNote() throws {
+    let fixture = try Fixture()
+    defer { fixture.cleanup() }
+
+    try fixture.library.selectNotesFolder(fixture.root)
+    _ = try fixture.library.createNote(body: "Old folder", now: fixture.date)
+
+    let otherRoot = fixture.root.appendingPathComponent("other", isDirectory: true)
+    try fixture.library.selectNotesFolder(otherRoot, preserveActiveNoteForSameFolder: true)
+
+    #expect(fixture.library.activeNoteURL() == nil)
+    #expect(fixture.library.restoreActiveNote() == nil)
+  }
+
   @Test("lists markdown notes grouped by date newest first")
   func listsNotesGroupedByDate() throws {
     let fixture = try Fixture()
