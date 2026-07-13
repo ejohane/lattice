@@ -23,6 +23,7 @@ public final class LatticeAppModel {
   private var backStack: [NavigationHistoryEntry] = []
   private var forwardStack: [NavigationHistoryEntry] = []
   private var allSections: [NoteSection] = []
+  private var lastExpandedNavigationVisibility = LatticeNavigationVisibility.all
 
   private enum ExternalSelectedNoteChange {
     case none
@@ -33,6 +34,7 @@ public final class LatticeAppModel {
 
   public var sections: [NoteSection] = []
   public var noteTitles: [String: String] = [:]
+  public var notePreviews: [String: IndexedNote] = [:]
   public var tagSummaries: [NoteTagSummary] = []
   public var selectedTagName: String?
   public var text = ""
@@ -46,6 +48,7 @@ public final class LatticeAppModel {
   public var isShowingSettings = false
   public var commandPaletteQuery = ""
   public var preferredCompactColumn = NavigationColumn.sidebar
+  public var navigationVisibility = LatticeNavigationVisibility.all
   public var editorFocusToken = 0
   public var editorFontSize = 14.0
   public var editorFontFamily = EditorFontFamily.system
@@ -624,7 +627,37 @@ public final class LatticeAppModel {
   public func selectTag(_ tag: NoteTagSummary?) {
     selectedTagName = tag?.normalizedName
     reloadNotes(selecting: selectedNote)
+    let visibleNotes = sections.flatMap(\.notes)
+    if let firstVisibleNote = visibleNotes.first,
+       !visibleNotes.contains(where: { $0 == selectedNote }) {
+      open(firstVisibleNote)
+    }
     status = tag.map { "Showing #\($0.name)" } ?? "All notes"
+  }
+
+  public func setNavigationVisibility(_ visibility: LatticeNavigationVisibility) {
+    navigationVisibility = visibility
+    if visibility != .editorOnly {
+      lastExpandedNavigationVisibility = visibility
+    }
+  }
+
+  public func toggleNavigationVisibility() {
+    if navigationVisibility == .editorOnly {
+      navigationVisibility = lastExpandedNavigationVisibility
+    } else {
+      lastExpandedNavigationVisibility = navigationVisibility
+      navigationVisibility = .editorOnly
+    }
+  }
+
+  public func toggleSourceVisibility() {
+    switch navigationVisibility {
+    case .all:
+      setNavigationVisibility(.notesAndEditor)
+    case .notesAndEditor, .editorOnly:
+      setNavigationVisibility(.all)
+    }
   }
 
   public func activateTag(at characterIndex: Int) {
@@ -635,6 +668,7 @@ public final class LatticeAppModel {
     let summary = tagSummaries.first { $0.normalizedName == occurrence.normalizedName }
       ?? NoteTagSummary(name: occurrence.name, noteCount: 1)
     selectTag(summary)
+    setNavigationVisibility(.all)
     preferredCompactColumn = .sidebar
   }
 
@@ -1864,6 +1898,12 @@ public final class LatticeAppModel {
       noteTitles = Dictionary(uniqueKeysWithValues: allSections
         .flatMap(\.notes)
         .map { ($0.id, noteLibrary.displayTitle(for: $0)) })
+      if let folderURL {
+        let indexedNotes = (try? noteIndex.indexedNotes(notesFolderURL: folderURL, limit: 2_000)) ?? []
+        notePreviews = Dictionary(uniqueKeysWithValues: indexedNotes.map { ($0.savedNote.id, $0) })
+      } else {
+        notePreviews = [:]
+      }
       if let selectedTagName, let folderURL {
         let taggedNoteIDs = Set(try noteIndex.notes(
           tagged: selectedTagName,
@@ -1883,6 +1923,7 @@ public final class LatticeAppModel {
       allSections = []
       sections = []
       noteTitles = [:]
+      notePreviews = [:]
       tagSummaries = []
       selectedTagName = nil
       selectedNote = nil
@@ -2108,6 +2149,12 @@ public final class LatticeAppModel {
 public enum NavigationColumn: Hashable {
   case sidebar
   case detail
+}
+
+public enum LatticeNavigationVisibility: Hashable, Sendable {
+  case all
+  case notesAndEditor
+  case editorOnly
 }
 
 public struct CommandPaletteCommand: Identifiable {

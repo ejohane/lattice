@@ -67,9 +67,33 @@ struct LatticeAppModelTests {
 
     #expect(model.selectedTagName == "work")
     #expect(model.sections.flatMap(\.notes) == [workNote])
+    #expect(model.selectedNote == workNote)
 
     model.selectTag(nil)
     #expect(model.sections.flatMap(\.notes).count == 2)
+  }
+
+  @Test("fully collapses navigation and restores the previous expanded layout")
+  func togglesNavigationVisibility() {
+    let model = LatticeAppModel()
+
+    #expect(model.navigationVisibility == .all)
+    model.setNavigationVisibility(.notesAndEditor)
+    model.toggleNavigationVisibility()
+    #expect(model.navigationVisibility == .editorOnly)
+
+    model.toggleNavigationVisibility()
+    #expect(model.navigationVisibility == .notesAndEditor)
+
+    model.setNavigationVisibility(.all)
+    model.toggleSourceVisibility()
+    #expect(model.navigationVisibility == .notesAndEditor)
+    model.toggleSourceVisibility()
+    #expect(model.navigationVisibility == .all)
+
+    model.toggleNavigationVisibility()
+    model.toggleNavigationVisibility()
+    #expect(model.navigationVisibility == .all)
   }
 
   @Test("suggests existing tags and commits autocomplete")
@@ -873,6 +897,11 @@ struct LatticeAppModelTests {
     model.text = "[Indexed Title](https://example.com)\n\n# Later Heading\n\nBody has nebula phrase"
     model.flushAutosave()
 
+    let savedNote = try #require(model.selectedNote)
+    let preview = try #require(model.notePreviews[savedNote.id])
+    #expect(preview.title == "Indexed Title")
+    #expect(preview.modifiedAt != nil)
+
     model.commandPaletteQuery = "nebula"
     let notes = model.commandPaletteNotes()
 
@@ -898,6 +927,7 @@ struct LatticeAppModelTests {
     let section = try #require(model.sections.first)
     let note = try #require(section.notes.first)
     #expect(try fixture.library.body(for: note) == "# Still Saves\n\nBody\n")
+    #expect(model.notePreviews.isEmpty)
 
     model.commandPaletteQuery = "still"
     let fallbackNotes = model.commandPaletteNotes()

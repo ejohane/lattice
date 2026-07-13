@@ -11,6 +11,7 @@ import UIKit
 
 public struct LatticeRootView: View {
   @Bindable private var model: LatticeAppModel
+  @State private var macColumnVisibility = NavigationSplitViewVisibility.all
   private let commandPalettePlatformCommands: @MainActor () -> [CommandPaletteCommand]
 
   public init(
@@ -134,13 +135,107 @@ public struct LatticeRootView: View {
     }
   }
 
+  @ViewBuilder
   private var splitRoot: some View {
+    #if os(macOS)
+    if model.navigationVisibility == .editorOnly {
+      editorOnlyMacRoot
+    } else {
+      expandedMacSplit
+    }
+    #else
     NavigationSplitView(preferredCompactColumn: preferredColumnBinding) {
-      NoteSidebar(model: model)
+      CompactNoteSidebar(model: model)
     } detail: {
       editorPane
     }
+    #endif
   }
+
+  #if os(macOS)
+  private var expandedMacSplit: some View {
+    NavigationSplitView(columnVisibility: $macColumnVisibility) {
+      MacNoteSourceSidebar(model: model)
+    } content: {
+      MacNoteList(model: model)
+    } detail: {
+      editorPane
+        .overlay(alignment: .leading) {
+          if model.navigationVisibility != .editorOnly {
+            Rectangle()
+              .fill(model.theme.color(.separator).opacity(0.75))
+              .frame(width: 0.5)
+              .allowsHitTesting(false)
+          }
+      }
+    }
+    .toolbar {
+      ToolbarItem(placement: .primaryAction) {
+        newNoteToolbarButton
+      }
+    }
+    .onAppear {
+      macColumnVisibility = macVisibility(for: model.navigationVisibility)
+    }
+    .onChange(of: model.navigationVisibility) { _, visibility in
+      guard visibility != .editorOnly else {
+        return
+      }
+      let target = macVisibility(for: visibility)
+      if macColumnVisibility != target {
+        macColumnVisibility = target
+      }
+    }
+    .onChange(of: macColumnVisibility) { _, visibility in
+      if visibility == .detailOnly {
+        model.setNavigationVisibility(.editorOnly)
+      } else if visibility == .doubleColumn {
+        model.setNavigationVisibility(.notesAndEditor)
+      } else if visibility == .all {
+        model.setNavigationVisibility(.all)
+      }
+    }
+  }
+
+  private var editorOnlyMacRoot: some View {
+    editorPane
+      .toolbar {
+        ToolbarItem(placement: .navigation) {
+          Button {
+            model.toggleNavigationVisibility()
+          } label: {
+            Label("Show Navigation", systemImage: "sidebar.leading")
+          }
+          .help("Show Navigation")
+        }
+        ToolbarItem(placement: .primaryAction) {
+          newNoteToolbarButton
+        }
+      }
+  }
+
+  private var newNoteToolbarButton: some View {
+    Button {
+      model.createNewNote()
+    } label: {
+      Label("New Note", systemImage: "square.and.pencil")
+    }
+    .disabled(!model.hasFolder)
+  }
+
+  private func macVisibility(
+    for visibility: LatticeNavigationVisibility
+  ) -> NavigationSplitViewVisibility {
+    switch visibility {
+    case .all:
+      return .all
+    case .notesAndEditor:
+      return .doubleColumn
+    case .editorOnly:
+      return .detailOnly
+    }
+  }
+  #endif
 
   private var preferredColumnBinding: Binding<NavigationSplitViewColumn> {
     Binding {
@@ -191,7 +286,8 @@ private extension View {
   }
 }
 
-private struct NoteSidebar: View {
+#if os(iOS)
+private struct CompactNoteSidebar: View {
   @Bindable var model: LatticeAppModel
   @Environment(\.latticeTheme) private var theme
   @State private var tagsAreExpanded = true
@@ -294,9 +390,6 @@ private struct NoteSidebar: View {
     .scrollContentBackground(.hidden)
     .background(theme.color(.sidebarBackground))
     .navigationTitle("Lattice")
-    #if os(macOS)
-    .navigationSplitViewColumnWidth(min: 140, ideal: 180, max: 260)
-    #endif
     .toolbar {
       ToolbarItem(placement: .primaryAction) {
         Button {
@@ -350,6 +443,7 @@ private struct NoteSidebar: View {
     .contentShape(Rectangle())
   }
 }
+#endif
 
 #if os(iOS)
 private struct ThemedWindowBackground: UIViewRepresentable {
