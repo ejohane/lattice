@@ -47,6 +47,9 @@ struct LatticeMacApp: App {
         ))
         .task {
           appDelegate.attachUpdateState(updateState)
+          appDelegate.attachNavigationShortcutHandler {
+            model.toggleNavigationVisibility()
+          }
           model.start()
         }
         .onChange(of: scenePhase) { _, newPhase in
@@ -144,10 +147,14 @@ struct LatticeMacApp: App {
         .disabled(!model.canNavigateForward)
       }
       CommandGroup(replacing: .sidebar) {
-        Button("Toggle Sidebar") {
-          appDelegate.toggleSidebar()
+        Button("Toggle Navigation") {
+          model.toggleNavigationVisibility()
         }
         .keyboardShortcut("s", modifiers: [.command, .option])
+
+        Button(model.navigationVisibility == .all ? "Hide Sources" : "Show Sources") {
+          model.toggleSourceVisibility()
+        }
       }
       CommandMenu("Editor") {
         Button("Add Attachment...") {
@@ -279,6 +286,29 @@ struct LatticeMacApp: App {
         keyboardShortcut: "⌘,"
       ) {
         showSettingsWindow()
+      },
+      CommandPaletteCommand(
+        id: "mac.toggleNavigation",
+        title: model.navigationVisibility == .editorOnly ? "Show Navigation" : "Hide Navigation",
+        subtitle: model.navigationVisibility == .editorOnly
+          ? "Restore sources and the note list"
+          : "Focus on the editor",
+        systemImage: "sidebar.leading",
+        isSetupSafe: true,
+        keyboardShortcut: "⌘⌥S"
+      ) {
+        model.toggleNavigationVisibility()
+      },
+      CommandPaletteCommand(
+        id: "mac.toggleSources",
+        title: model.navigationVisibility == .all ? "Hide Sources" : "Show Sources",
+        subtitle: model.navigationVisibility == .all
+          ? "Keep the note list and editor visible"
+          : "Restore the library and tag list",
+        systemImage: "sidebar.squares.leading",
+        isSetupSafe: true
+      ) {
+        model.toggleSourceVisibility()
       },
       CommandPaletteCommand(
         id: "mac.checkForUpdates",
@@ -465,79 +495,6 @@ private extension LatticeKeyboardShortcut {
   }
 }
 
-private extension NSWindow {
-  var splitViewController: NSSplitViewController? {
-    contentViewController?.firstDescendant(of: NSSplitViewController.self)
-      ?? contentView?.firstDescendant(of: NSSplitView.self)?.owningSplitViewController
-  }
-
-  var sidebarToggleButton: NSButton? {
-    contentView?.superview?.firstDescendant(of: NSButton.self) { button in
-      let label = button.accessibilityLabel() ?? button.toolTip ?? button.title
-      return label == "Show Sidebar" || label == "Hide Sidebar"
-    }
-  }
-}
-
-private extension NSApplication {
-  var activeWindow: NSWindow? {
-    keyWindow ?? mainWindow ?? windows.first(where: { $0.isVisible })
-  }
-}
-
-private extension NSViewController {
-  func firstDescendant<T: NSViewController>(of type: T.Type) -> T? {
-    if let match = self as? T {
-      return match
-    }
-    for child in children {
-      if let match = child.firstDescendant(of: type) {
-        return match
-      }
-    }
-    return nil
-  }
-}
-
-private extension NSView {
-  func firstDescendant<T: NSView>(of type: T.Type) -> T? {
-    if let match = self as? T {
-      return match
-    }
-    for subview in subviews {
-      if let match = subview.firstDescendant(of: type) {
-        return match
-      }
-    }
-    return nil
-  }
-
-  func firstDescendant<T: NSView>(of type: T.Type, where predicate: (T) -> Bool) -> T? {
-    if let match = self as? T, predicate(match) {
-      return match
-    }
-    for subview in subviews {
-      if let match = subview.firstDescendant(of: type, where: predicate) {
-        return match
-      }
-    }
-    return nil
-  }
-}
-
-private extension NSSplitView {
-  var owningSplitViewController: NSSplitViewController? {
-    var responder: NSResponder? = nextResponder
-    while let currentResponder = responder {
-      if let splitViewController = currentResponder as? NSSplitViewController {
-        return splitViewController
-      }
-      responder = currentResponder.nextResponder
-    }
-    return nil
-  }
-}
-
 private struct WindowConfiguration: NSViewRepresentable {
   let width: CGFloat
   let height: CGFloat
@@ -639,7 +596,8 @@ private struct SettingsWindowConfiguration: NSViewRepresentable {
 @MainActor
 final class MacAppDelegate: NSObject, NSApplicationDelegate, SPUUpdaterDelegate, @preconcurrency SPUStandardUserDriverDelegate {
   private var updaterController: SPUStandardUpdaterController?
-  private var sidebarShortcutMonitor: Any?
+  private var navigationShortcutMonitor: Any?
+  private var navigationShortcutHandler: (@MainActor () -> Void)?
   private weak var updateState: MacUpdateState?
   private var immediateInstallHandler: (() -> Void)?
 
@@ -660,14 +618,22 @@ final class MacAppDelegate: NSObject, NSApplicationDelegate, SPUUpdaterDelegate,
     publishUpdaterConfiguration()
   }
 
-  func applicationDidFinishLaunching(_ notification: Notification) {
-    resetStaleSidebarPersistenceIfNeeded()
+  fileprivate func attachNavigationShortcutHandler(
+    _ handler: @escaping @MainActor () -> Void
+  ) {
+    navigationShortcutHandler = handler
+  }
 
-    sidebarShortcutMonitor = NSEvent.addLocalMonitorForEvents(matching: .keyDown) { [weak self] event in
-      guard Self.isToggleSidebarShortcut(event) else {
+  func applicationDidFinishLaunching(_ notification: Notification) {
+    navigationShortcutMonitor = NSEvent.addLocalMonitorForEvents(matching: .keyDown) {
+      [weak self] event in
+      guard Self.isToggleNavigationShortcut(event) else {
         return event
       }
-      self?.toggleSidebar()
+      guard NSApp.keyWindow?.identifier?.rawValue == LatticeMacApp.mainWindowIdentifier else {
+        return event
+      }
+      self?.navigationShortcutHandler?()
       return nil
     }
 
@@ -676,8 +642,8 @@ final class MacAppDelegate: NSObject, NSApplicationDelegate, SPUUpdaterDelegate,
   }
 
   func applicationWillTerminate(_ notification: Notification) {
-    if let sidebarShortcutMonitor {
-      NSEvent.removeMonitor(sidebarShortcutMonitor)
+    if let navigationShortcutMonitor {
+      NSEvent.removeMonitor(navigationShortcutMonitor)
     }
     NSApp.sendAction(#selector(NSResponder.cancelOperation(_:)), to: nil, from: nil)
   }
@@ -729,26 +695,6 @@ final class MacAppDelegate: NSObject, NSApplicationDelegate, SPUUpdaterDelegate,
     updateState?.markUpdateAvailable(update)
   }
 
-  func toggleSidebar() {
-    if NSApp.activeWindow?.identifier?.rawValue == LatticeMacApp.settingsWindowIdentifier {
-      return
-    }
-    if let toggleSidebarItem = NSApp.activeWindow?.toolbar?.items.first(where: { $0.itemIdentifier == .toggleSidebar }),
-       let button = toggleSidebarItem.view as? NSButton {
-      button.performClick(nil)
-      return
-    }
-    if let button = NSApp.activeWindow?.sidebarToggleButton {
-      button.performClick(nil)
-      return
-    }
-    if let splitViewController = NSApp.activeWindow?.splitViewController {
-      splitViewController.toggleSidebar(nil)
-      return
-    }
-    NSApp.sendAction(#selector(NSSplitViewController.toggleSidebar(_:)), to: nil, from: nil)
-  }
-
   private func configureUpdater() {
     guard
       let feedURL = Bundle.main.object(forInfoDictionaryKey: "SUFeedURL") as? String,
@@ -769,29 +715,12 @@ final class MacAppDelegate: NSObject, NSApplicationDelegate, SPUUpdaterDelegate,
     updateState?.markUpdaterConfigured(updaterController != nil)
   }
 
-  private func resetStaleSidebarPersistenceIfNeeded() {
-    let key = "didResetSidebarPersistenceForNativeToggle"
-    let defaults = UserDefaults.standard
-    guard !defaults.bool(forKey: key) else {
-      return
-    }
-
-    for defaultsKey in defaults.dictionaryRepresentation().keys
-      where defaultsKey.hasPrefix("NSSplitView Subview Frames")
-        && defaultsKey.contains("SidebarNavigationSplitView") {
-      defaults.removeObject(forKey: defaultsKey)
-    }
-    defaults.set(true, forKey: key)
-  }
-
-  private static func isToggleSidebarShortcut(_ event: NSEvent) -> Bool {
+  private static func isToggleNavigationShortcut(_ event: NSEvent) -> Bool {
     guard event.charactersIgnoringModifiers?.lowercased() == "s" else {
       return false
     }
     let modifiers = event.modifierFlags.intersection(.deviceIndependentFlagsMask)
-    return modifiers.contains(.command)
-      && modifiers.contains(.option)
-      && !modifiers.contains(.shift)
-      && !modifiers.contains(.control)
+    return modifiers == [.command, .option]
   }
+
 }
