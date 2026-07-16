@@ -159,6 +159,11 @@ public struct WikiBacklink: Equatable, Sendable {
 public enum MarkdownDocumentMetadata {
   public static let latticeIDKey = "id"
   public static let latticeCreatedAtKey = "created_at"
+  public static let latticeKindKey = "kind"
+
+  public enum NoteKind: String, Equatable, Sendable {
+    case person
+  }
 
   public static func noteID(in rawBody: String) -> String? {
     guard let frontMatter = frontMatter(in: rawBody) else {
@@ -191,6 +196,23 @@ public enum MarkdownDocumentMetadata {
     }
     let value = (frontMatter as NSString).substring(with: match.range(at: 1))
     return ISO8601DateFormatter().date(from: value)
+  }
+
+  public static func kind(in rawBody: String) -> NoteKind? {
+    guard let frontMatter = frontMatter(in: rawBody) else {
+      return nil
+    }
+    let pattern = #"(?m)^\s*kind:\s*([A-Za-z0-9_-]+)\s*$"#
+    guard
+      let regex = try? NSRegularExpression(pattern: pattern),
+      let match = regex.firstMatch(
+        in: frontMatter,
+        range: NSRange(location: 0, length: (frontMatter as NSString).length)
+      )
+    else {
+      return nil
+    }
+    return NoteKind(rawValue: (frontMatter as NSString).substring(with: match.range(at: 1)))
   }
 
   public static func ensureNoteID(in rawBody: String, id: String = UUID().uuidString) -> String {
@@ -260,6 +282,34 @@ public enum MarkdownDocumentMetadata {
     return nsString.replacingCharacters(
       in: NSRange(location: insertionLocation, length: 0),
       with: insertionText
+    )
+  }
+
+  public static func ensurePersonMetadata(
+    in rawBody: String,
+    id: String = UUID().uuidString,
+    createdAt: Date?
+  ) -> String {
+    let body = ensureNoteMetadata(in: rawBody, id: id, createdAt: createdAt)
+    guard kind(in: body) != .person, let frontMatterRange = frontMatterRange(in: body) else {
+      return body
+    }
+
+    let nsString = body as NSString
+    let frontMatter = nsString.substring(with: frontMatterRange)
+    let frontMatterNSString = frontMatter as NSString
+    let latticePattern = #"(?m)^\s*lattice:\s*$"#
+    guard let latticeMatch = (try? NSRegularExpression(pattern: latticePattern))?.firstMatch(
+      in: frontMatter,
+      range: NSRange(location: 0, length: frontMatterNSString.length)
+    ) else {
+      return body
+    }
+    let latticeLineRange = frontMatterNSString.lineRange(for: latticeMatch.range)
+    let insertionLocation = latticeLineRange.location + latticeLineRange.length
+    return nsString.replacingCharacters(
+      in: NSRange(location: insertionLocation, length: 0),
+      with: "  kind: person\n"
     )
   }
 

@@ -122,6 +122,49 @@ struct LatticeAppModelTests {
     #expect(model.text == "Plan #Project/Lattice")
   }
 
+  @Test("creates and opens people through explicit mention autocomplete")
+  func createsAndOpensPeopleFromAutocomplete() throws {
+    let fixture = try Fixture()
+    defer { fixture.cleanup() }
+    let index = NoteIndex(appSupportURL: fixture.appSupportURL)
+    let model = LatticeAppModel(
+      noteLibrary: fixture.library,
+      folderAccessStore: fixture.folderAccessStore,
+      noteIndex: index,
+      dateProvider: { fixture.date() }
+    )
+
+    try fixture.fileManager.createDirectory(at: fixture.root, withIntermediateDirectories: true)
+    model.chooseFolder(fixture.root)
+    model.text = "Met with @Erik Johansson"
+    model.selectedRange = NSRange(location: (model.text as NSString).length, length: 0)
+    model.updateWikiAutocomplete()
+
+    let createSuggestion = try #require(model.personAutocompleteSuggestions.first)
+    #expect(createSuggestion.name == "Erik Johansson")
+    #expect(createSuggestion.targetNoteID == nil)
+    model.commitSelectedEditorAutocompleteSuggestion()
+
+    let person = try #require(try index.personCandidates(
+      prefix: "Erik",
+      notesFolderURL: fixture.root,
+      limit: 10
+    ).first)
+    #expect(model.text == "Met with \(PersonMentionParser.replacement(name: "Erik Johansson", noteID: person.noteID))")
+    #expect(MarkdownDocumentMetadata.kind(in: try fixture.library.rawBody(for: person.note)) == .person)
+    #expect(model.selectedNote == nil)
+
+    model.flushAutosave()
+    let source = try #require(model.selectedNote)
+    let sourceID = try #require(MarkdownDocumentMetadata.noteID(in: try fixture.library.rawBody(for: source)))
+    #expect(try index.personMentions(from: sourceID, notesFolderURL: fixture.root).count == 1)
+
+    let mention = try #require(PersonMentionParser.mentions(in: model.text).first)
+    model.activatePersonMention(at: mention.range.location + 2)
+    #expect(model.selectedNote == person.note)
+    #expect(model.text == "# Erik Johansson")
+  }
+
   @Test("renames and deletes tags across notes")
   func managesTagsGlobally() throws {
     let fixture = try Fixture()

@@ -639,6 +639,9 @@ private struct NoteEditorPane: View {
           onWikiLinkActivated: { characterIndex in
             model.activateWikiLink(at: characterIndex)
           },
+          onPersonMentionActivated: { characterIndex in
+            model.activatePersonMention(at: characterIndex)
+          },
           onMarkdownLinkActivated: { characterIndex in
             model.activateMarkdownLink(at: characterIndex)
           },
@@ -869,6 +872,36 @@ private struct EditorAutocompleteOverlay: View {
         .transition(.opacity.combined(with: .scale(scale: 0.98, anchor: .topLeading)))
       }
       .allowsHitTesting(true)
+    } else if let anchor, !model.personAutocompleteSuggestions.isEmpty {
+      GeometryReader { proxy in
+        let visibleRange = autocompleteVisibleRange(
+          suggestionCount: model.personAutocompleteSuggestions.count,
+          selectedIndex: model.personAutocompleteSelectionIndex,
+          maxVisibleCount: 5
+        )
+        let suggestions = Array(model.personAutocompleteSuggestions[visibleRange])
+        let selectedIndex = max(0, model.personAutocompleteSelectionIndex - visibleRange.lowerBound)
+        let width = min(420, max(0, proxy.size.width - 24))
+        let rowHeight: CGFloat = 48
+        let panelHeight = CGFloat(suggestions.count) * rowHeight + 12
+        let x = min(max(12, anchor.minX), max(12, proxy.size.width - width - 12))
+        let preferredY = anchor.maxY + 8
+        let y = preferredY + panelHeight <= proxy.size.height - 12
+          ? preferredY
+          : max(12, anchor.minY - panelHeight - 8)
+
+        PersonAutocompletePanel(
+          suggestions: suggestions,
+          selectedIndex: selectedIndex,
+          theme: theme
+        ) { suggestion in
+          model.selectPersonAutocompleteSuggestion(suggestion)
+        }
+        .frame(width: width, height: panelHeight, alignment: .top)
+        .position(x: x + width / 2, y: y + panelHeight / 2)
+        .transition(.opacity.combined(with: .scale(scale: 0.98, anchor: .topLeading)))
+      }
+      .allowsHitTesting(true)
     } else if let anchor, !model.wikiAutocompleteSuggestions.isEmpty {
       GeometryReader { proxy in
         let visibleRange = autocompleteVisibleRange(
@@ -1079,6 +1112,61 @@ private struct TagAutocompletePanel: View {
   }
 }
 
+private struct PersonAutocompletePanel: View {
+  let suggestions: [PersonAutocompleteSuggestion]
+  let selectedIndex: Int
+  let theme: LatticeTheme
+  let onSelect: (PersonAutocompleteSuggestion) -> Void
+
+  var body: some View {
+    VStack(spacing: 0) {
+      ForEach(Array(suggestions.enumerated()), id: \.element.id) { index, suggestion in
+        let isSelected = index == selectedIndex
+        Button {
+          onSelect(suggestion)
+        } label: {
+          HStack(spacing: 12) {
+            Image(systemName: suggestion.targetNoteID == nil ? "person.badge.plus" : "person")
+              .font(.system(size: 18, weight: .medium))
+              .foregroundStyle(isSelected ? theme.color(.accent) : theme.color(.secondaryText))
+              .frame(width: 28)
+
+            VStack(alignment: .leading, spacing: 2) {
+              Text("@\(suggestion.name)")
+                .font(.body.weight(isSelected ? .semibold : .regular))
+                .foregroundStyle(theme.color(.primaryText))
+                .lineLimit(1)
+              Text(suggestion.subtitle)
+                .font(.caption)
+                .foregroundStyle(theme.color(.secondaryText))
+                .lineLimit(1)
+            }
+
+            Spacer(minLength: 0)
+          }
+          .frame(height: 48)
+          .padding(.horizontal, 14)
+          .background {
+            if isSelected {
+              RoundedRectangle(cornerRadius: 8, style: .continuous)
+                .fill(theme.color(.secondaryText).opacity(0.18))
+            }
+          }
+          .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+        .accessibilityLabel("\(suggestion.subtitle) \(suggestion.name)")
+      }
+    }
+    .padding(6)
+    .background {
+      RoundedRectangle(cornerRadius: 12, style: .continuous)
+        .fill(theme.color(.barBackground).opacity(0.98))
+        .shadow(color: .black.opacity(0.2), radius: 8, x: 0, y: 4)
+    }
+  }
+}
+
 private struct ZenNoteEditorPane: View {
   @Bindable var model: LatticeAppModel
   @Environment(\.latticeTheme) private var theme
@@ -1120,6 +1208,9 @@ private struct ZenNoteEditorPane: View {
         },
         onWikiLinkActivated: { characterIndex in
           model.activateWikiLink(at: characterIndex)
+        },
+        onPersonMentionActivated: { characterIndex in
+          model.activatePersonMention(at: characterIndex)
         },
         onMarkdownLinkActivated: { characterIndex in
           model.activateMarkdownLink(at: characterIndex)
