@@ -19,7 +19,7 @@ public struct IndexedNote: Identifiable, Equatable, Sendable {
   }
 
   public var savedNote: SavedNote {
-    SavedNote(url: url, dateString: dateString, modifiedAt: modifiedAt)
+    SavedNote(url: url, dateString: dateString, createdAt: createdAt, modifiedAt: modifiedAt)
   }
 }
 
@@ -143,9 +143,9 @@ public final class NoteIndex: NoteIndexing {
     let connection = try connection(for: notesFolderURL)
     let rows = try connection.query(
       """
-      SELECT relative_path, date_string, modified_at
+      SELECT relative_path, date_string, created_at, modified_at
       FROM notes
-      ORDER BY date_string DESC, length(filename) DESC, filename DESC, modified_at DESC
+      ORDER BY created_at DESC, modified_at DESC, filename COLLATE NOCASE ASC
       LIMIT ?
       """,
       bindings: [.integer(Int64(limit))]
@@ -165,7 +165,7 @@ public final class NoteIndex: NoteIndexing {
     let connection = try connection(for: notesFolderURL)
     let rows = try connection.query(
       """
-      SELECT notes.relative_path, notes.date_string, notes.modified_at
+      SELECT notes.relative_path, notes.date_string, notes.created_at, notes.modified_at
       FROM notes_fts
       JOIN notes ON notes.id = notes_fts.rowid
       WHERE notes_fts MATCH ?
@@ -215,11 +215,11 @@ public final class NoteIndex: NoteIndexing {
     let connection = try connection(for: notesFolderURL)
     let rows = try connection.query(
       """
-      SELECT notes.relative_path, notes.date_string, notes.modified_at
+      SELECT notes.relative_path, notes.date_string, notes.created_at, notes.modified_at
       FROM note_tags
       JOIN notes ON notes.relative_path = note_tags.note_relative_path
       WHERE note_tags.normalized_name = ?
-      ORDER BY notes.date_string DESC, length(notes.filename) DESC, notes.filename DESC, notes.modified_at DESC
+      ORDER BY notes.created_at DESC, notes.modified_at DESC, notes.filename COLLATE NOCASE ASC
       LIMIT ?
       """,
       bindings: [.text(NoteTagParser.normalizedName(normalizedName)), .integer(Int64(limit))]
@@ -234,7 +234,7 @@ public final class NoteIndex: NoteIndexing {
       SELECT relative_path, note_id, date_string, filename, created_at, modified_at, size,
              fingerprint, title, excerpt, indexed_at
       FROM notes
-      ORDER BY date_string DESC, length(filename) DESC, filename DESC, modified_at DESC
+      ORDER BY created_at DESC, modified_at DESC, filename COLLATE NOCASE ASC
       LIMIT ?
       """,
       bindings: [.integer(Int64(limit))]
@@ -512,30 +512,29 @@ public final class NoteIndex: NoteIndexing {
       throw NoteIndexError.invalidNotesFolder(notesURL.path)
     }
 
-    let dateURLs = try fileManager.contentsOfDirectory(
+    let childURLs = try fileManager.contentsOfDirectory(
       at: notesURL,
-      includingPropertiesForKeys: [.isDirectoryKey],
+      includingPropertiesForKeys: [.isDirectoryKey, .isRegularFileKey],
       options: [.skipsHiddenFiles]
     )
 
     var documents: [IndexedDocument] = []
-    for dateURL in dateURLs {
-      let values = try dateURL.resourceValues(forKeys: [.isDirectoryKey])
-      guard values.isDirectory == true else {
-        continue
-      }
-
-      let noteURLs = try fileManager.contentsOfDirectory(
-        at: dateURL,
-        includingPropertiesForKeys: [.contentModificationDateKey, .fileSizeKey, .isRegularFileKey],
-        options: [.skipsHiddenFiles]
-      )
-
-      for noteURL in noteURLs where noteURL.pathExtension.lowercased() == "md" {
-        guard (try? noteURL.resourceValues(forKeys: [.isRegularFileKey]).isRegularFile) == true else {
-          continue
+    for childURL in childURLs {
+      let values = try childURL.resourceValues(forKeys: [.isDirectoryKey, .isRegularFileKey])
+      if values.isRegularFile == true, childURL.pathExtension.lowercased() == "md" {
+        documents.append(try indexedDocument(for: childURL, notesFolderURL: notesFolderURL))
+      } else if values.isDirectory == true {
+        let noteURLs = try fileManager.contentsOfDirectory(
+          at: childURL,
+          includingPropertiesForKeys: [.contentModificationDateKey, .fileSizeKey, .isRegularFileKey],
+          options: [.skipsHiddenFiles]
+        )
+        for noteURL in noteURLs where noteURL.pathExtension.lowercased() == "md" {
+          guard (try? noteURL.resourceValues(forKeys: [.isRegularFileKey]).isRegularFile) == true else {
+            continue
+          }
+          documents.append(try indexedDocument(for: noteURL, notesFolderURL: notesFolderURL))
         }
-        documents.append(try indexedDocument(for: noteURL, notesFolderURL: notesFolderURL))
       }
     }
 
@@ -556,9 +555,18 @@ public final class NoteIndex: NoteIndexing {
     let body = MarkdownDocumentMetadata.strippingFrontMatter(from: rawBody)
     let noteID = MarkdownDocumentMetadata.noteID(in: rawBody) ?? Self.stableHash(relativePath)
 
-    let resourceValues = try noteURL.resourceValues(forKeys: [.contentModificationDateKey, .fileSizeKey])
+    let resourceValues = try noteURL.resourceValues(
+      forKeys: [.contentModificationDateKey, .creationDateKey, .fileSizeKey]
+    )
     let filename = noteURL.lastPathComponent
-    let dateString = noteURL.deletingLastPathComponent().lastPathComponent
+    let createdAt = MarkdownDocumentMetadata.createdAt(in: rawBody)
+      ?? Self.createdDate(from: filename)
+      ?? resourceValues.creationDate
+      ?? resourceValues.contentModificationDate
+    let parentName = noteURL.deletingLastPathComponent().lastPathComponent
+    let dateString = parentName == "notes"
+      ? createdAt.map(Self.localDateString(from:)) ?? "Unknown"
+      : parentName
     let modifiedAt = resourceValues.contentModificationDate
     let size = Int64(resourceValues.fileSize ?? 0)
     let title = NoteLibrary.firstRenderedLine(in: body) ?? noteURL.deletingPathExtension().lastPathComponent
@@ -568,7 +576,7 @@ public final class NoteIndex: NoteIndexing {
       noteID: noteID,
       dateString: dateString,
       filename: filename,
-      createdAt: Self.createdDate(from: filename),
+      createdAt: createdAt,
       modifiedAt: modifiedAt,
       size: size,
       fingerprint: Self.fingerprint(modifiedAt: modifiedAt, size: size),
@@ -922,6 +930,7 @@ public final class NoteIndex: NoteIndexing {
     return SavedNote(
       url: notesFolderURL.appendingPathComponent(relativePath),
       dateString: dateString,
+      createdAt: Self.date(from: row["created_at"]?.stringValue),
       modifiedAt: Self.date(from: row["modified_at"]?.stringValue)
     )
   }
@@ -987,6 +996,14 @@ public final class NoteIndex: NoteIndexing {
     formatter.calendar = Calendar(identifier: .gregorian)
     formatter.dateFormat = "yyyy-MM-dd'T'HH-mm-ss"
     return formatter.date(from: base)
+  }
+
+  private static func localDateString(from date: Date) -> String {
+    let formatter = DateFormatter()
+    formatter.locale = Locale(identifier: "en_US_POSIX")
+    formatter.calendar = Calendar(identifier: .gregorian)
+    formatter.dateFormat = "yyyy-MM-dd"
+    return formatter.string(from: date)
   }
 
   private static func excerpt(from body: String) -> String {

@@ -204,6 +204,15 @@ public struct TaskSyncSettingsView: View {
         MacSettingsValueRow(title: "Theme", value: model.theme.displayName)
         MacSettingsDivider()
         MacSettingsValueRow(title: "Task Sync", value: model.taskSyncStatus)
+        if model.isNoteMigrationRequired {
+          MacSettingsDivider()
+          MacSettingsActionRow(
+            title: "Migrate Notes to Flat Storage",
+            systemImage: "folder"
+          ) {
+            presentMigrationPromptFromSettings()
+          }
+        }
       }
 
       MacSettingsSection(title: "Task Provider") {
@@ -396,6 +405,21 @@ public struct TaskSyncSettingsView: View {
       LabeledContent("Status", value: model.status)
       LabeledContent("Theme", value: model.theme.displayName)
       LabeledContent("Task Sync", value: model.taskSyncStatus)
+      if model.isNoteMigrationRequired {
+        Button {
+          presentMigrationPromptFromSettings()
+        } label: {
+          Label("Migrate Notes to Flat Storage", systemImage: "folder")
+        }
+      }
+    }
+  }
+
+  private func presentMigrationPromptFromSettings() {
+    dismiss()
+    Task { @MainActor in
+      await Task.yield()
+      model.showNoteMigrationPrompt()
     }
   }
 

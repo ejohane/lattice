@@ -100,6 +100,7 @@ struct MacNoteList: View {
               title: title(for: note),
               excerpt: excerpt(for: note),
               modifiedAt: modifiedAt(for: note),
+              isDailyNote: isDailyNote(note),
               isSelected: model.selectedNote?.id == note.id
             )
             .tag(note.id)
@@ -184,6 +185,13 @@ struct MacNoteList: View {
     model.notePreviews[note.id]?.modifiedAt ?? note.modifiedAt
   }
 
+  private func isDailyNote(_ note: SavedNote) -> Bool {
+    note.filenameTitle.range(
+      of: #"^\d{4}-\d{2}-\d{2}$"#,
+      options: .regularExpression
+    ) != nil
+  }
+
   private var sourceTitle: String {
     guard let selectedTagName = model.selectedTagName else {
       return "All Notes"
@@ -213,30 +221,45 @@ private struct MacNoteListRow: View {
   let title: String
   let excerpt: String
   let modifiedAt: Date?
+  let isDailyNote: Bool
   let isSelected: Bool
 
   @Environment(\.latticeTheme) private var theme
 
   var body: some View {
     VStack(alignment: .leading, spacing: 4) {
-      Text(title)
-        .font(.system(size: 14, weight: .semibold))
-        .foregroundStyle(.primary)
-        .lineLimit(1)
-        .truncationMode(.tail)
+      HStack(spacing: 7) {
+        if isDailyNote {
+          Image(systemName: "calendar")
+            .font(.system(size: 12, weight: .semibold))
+            .foregroundStyle(theme.color(.accent))
+            .frame(width: 14)
+            .accessibilityHidden(true)
+        }
+
+        Text(title)
+          .font(.system(size: 14, weight: .semibold))
+          .foregroundStyle(theme.color(.primaryText))
+          .lineLimit(1)
+          .truncationMode(.tail)
+      }
 
       if !excerpt.isEmpty {
         Text(excerpt)
           .font(.system(size: 13))
-          .foregroundStyle(.secondary)
+          .foregroundStyle(theme.color(.secondaryText))
           .lineLimit(2)
           .truncationMode(.tail)
+      } else if isDailyNote {
+        Text("Daily Note")
+          .font(.system(size: 12, weight: .medium))
+          .foregroundStyle(theme.color(.secondaryText))
       }
 
       if let modifiedAt {
         Text(modifiedAt, format: noteDateFormat(for: modifiedAt))
           .font(.system(size: 11))
-          .foregroundStyle(.tertiary)
+          .foregroundStyle(theme.color(.secondaryText).opacity(0.72))
       }
     }
     .frame(maxWidth: .infinity, minHeight: 66, alignment: .topLeading)

@@ -46,6 +46,32 @@ public struct LatticeRootView: View {
       } message: {
         Text(model.errorMessage ?? "")
       }
+      .confirmationDialog(
+        "Update Notes Storage?",
+        isPresented: $model.isShowingNoteMigrationPrompt,
+        titleVisibility: .visible
+      ) {
+        Button("Migrate Notes") {
+          model.migrateNotesToFlatLayout()
+        }
+        Button("Not Now", role: .cancel) {
+          model.deferNoteMigration()
+        }
+      } message: {
+        Text(
+          "Lattice will move \(model.noteMigrationPreview?.noteCount ?? 0) notes into one flat folder and rename them from their titles. Update Lattice on your other devices before continuing. A recovery copy will be created first."
+        )
+      }
+      .alert("Migration Complete", isPresented: Binding(
+        get: { model.noteMigrationSummary != nil },
+        set: { if !$0 { model.dismissNoteMigrationSummary() } }
+      )) {
+        Button("OK", role: .cancel) {
+          model.dismissNoteMigrationSummary()
+        }
+      } message: {
+        Text(model.noteMigrationSummary ?? "")
+      }
       .alert("Rename Note", isPresented: Binding(
         get: { model.renamingNote != nil },
         set: { if !$0 { model.cancelRename() } }
@@ -124,6 +150,16 @@ public struct LatticeRootView: View {
       .environment(\.latticeTheme, model.theme)
       .preferredColorScheme(model.theme.preferredColorScheme)
       .tint(model.theme.color(.accent))
+      .overlay {
+        if model.isMigratingNotes {
+          ZStack {
+            model.theme.color(.appBackground).opacity(0.82)
+              .ignoresSafeArea()
+            ProgressView("Migrating notes…")
+              .padding(24)
+          }
+        }
+      }
   }
 
   @ViewBuilder
@@ -781,7 +817,29 @@ private struct EditorAutocompleteOverlay: View {
 
   @ViewBuilder
   var body: some View {
-    if let anchor, !model.tagAutocompleteSuggestions.isEmpty {
+    if let anchor, !model.slashCommandSuggestions.isEmpty {
+      GeometryReader { proxy in
+        let width = min(420, max(0, proxy.size.width - 24))
+        let panelHeight: CGFloat = 60
+        let x = min(max(12, anchor.minX), max(12, proxy.size.width - width - 12))
+        let preferredY = anchor.maxY + 8
+        let y = preferredY + panelHeight <= proxy.size.height - 12
+          ? preferredY
+          : max(12, anchor.minY - panelHeight - 8)
+
+        SlashCommandAutocompletePanel(
+          suggestions: model.slashCommandSuggestions,
+          selectedIndex: model.slashCommandSelectionIndex,
+          theme: theme
+        ) { suggestion in
+          model.selectSlashCommandSuggestion(suggestion)
+        }
+        .frame(width: width, height: panelHeight, alignment: .top)
+        .position(x: x + width / 2, y: y + panelHeight / 2)
+        .transition(.opacity.combined(with: .scale(scale: 0.98, anchor: .topLeading)))
+      }
+      .allowsHitTesting(true)
+    } else if let anchor, !model.tagAutocompleteSuggestions.isEmpty {
       GeometryReader { proxy in
         let visibleRange = autocompleteVisibleRange(
           suggestionCount: model.tagAutocompleteSuggestions.count,
@@ -860,6 +918,60 @@ private struct EditorAutocompleteOverlay: View {
     return start..<(start + visibleCount)
   }
 
+}
+
+private struct SlashCommandAutocompletePanel: View {
+  let suggestions: [SlashCommandSuggestion]
+  let selectedIndex: Int
+  let theme: LatticeTheme
+  let onSelect: (SlashCommandSuggestion) -> Void
+
+  var body: some View {
+    VStack(spacing: 0) {
+      ForEach(Array(suggestions.enumerated()), id: \.element.id) { index, suggestion in
+        let isSelected = index == selectedIndex
+        Button {
+          onSelect(suggestion)
+        } label: {
+          HStack(spacing: 12) {
+            Image(systemName: "calendar")
+              .font(.system(size: 18, weight: .medium))
+              .foregroundStyle(isSelected ? theme.color(.accent) : theme.color(.secondaryText))
+              .frame(width: 28)
+
+            VStack(alignment: .leading, spacing: 2) {
+              Text("/\(suggestion.command)")
+                .font(.body.weight(isSelected ? .semibold : .regular))
+                .foregroundStyle(theme.color(.primaryText))
+              Text(suggestion.subtitle)
+                .font(.caption)
+                .foregroundStyle(theme.color(.secondaryText))
+                .lineLimit(1)
+            }
+
+            Spacer(minLength: 0)
+          }
+          .frame(height: 48)
+          .padding(.horizontal, 14)
+          .background {
+            if isSelected {
+              RoundedRectangle(cornerRadius: 8, style: .continuous)
+                .fill(theme.color(.secondaryText).opacity(0.18))
+            }
+          }
+          .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+        .accessibilityLabel("\(suggestion.title), \(suggestion.subtitle)")
+      }
+    }
+    .padding(6)
+    .background {
+      RoundedRectangle(cornerRadius: 12, style: .continuous)
+        .fill(theme.color(.barBackground).opacity(0.98))
+        .shadow(color: .black.opacity(0.2), radius: 8, x: 0, y: 4)
+    }
+  }
 }
 
 private struct WikiAutocompletePanel: View {

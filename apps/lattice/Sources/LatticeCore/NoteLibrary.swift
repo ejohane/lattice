@@ -3,11 +3,13 @@ import Foundation
 public struct SavedNote: Identifiable, Hashable, Sendable {
   public let url: URL
   public let dateString: String
+  public let createdAt: Date?
   public let modifiedAt: Date?
 
-  public init(url: URL, dateString: String? = nil, modifiedAt: Date? = nil) {
+  public init(url: URL, dateString: String? = nil, createdAt: Date? = nil, modifiedAt: Date? = nil) {
     self.url = url.standardizedFileURL
     self.dateString = dateString ?? url.deletingLastPathComponent().lastPathComponent
+    self.createdAt = createdAt
     self.modifiedAt = modifiedAt
   }
 
@@ -234,12 +236,14 @@ public final class NoteLibrary {
   private let fileManager: FileManager
   private let fallbackNotesFolderURLProvider: () -> URL
   private let iCloudContainerURLProvider: () -> URL?
+  private let migrationBackupRootURLProvider: () -> URL
 
   public init(
     defaults: UserDefaults = .standard,
     fileManager: FileManager = .default,
     fallbackNotesFolderURLProvider: (() -> URL)? = nil,
-    iCloudContainerURLProvider: (() -> URL?)? = nil
+    iCloudContainerURLProvider: (() -> URL?)? = nil,
+    migrationBackupRootURLProvider: (() -> URL)? = nil
   ) {
     self.defaults = defaults
     self.fileManager = fileManager
@@ -251,6 +255,13 @@ public final class NoteLibrary {
     }
     self.iCloudContainerURLProvider = iCloudContainerURLProvider ?? {
       resolvedFileManager.url(forUbiquityContainerIdentifier: Self.iCloudContainerIdentifier)
+    }
+    self.migrationBackupRootURLProvider = migrationBackupRootURLProvider ?? {
+      let baseURL = resolvedFileManager.urls(for: .applicationSupportDirectory, in: .userDomainMask).first
+        ?? resolvedFileManager.temporaryDirectory
+      return baseURL
+        .appendingPathComponent("Lattice", isDirectory: true)
+        .appendingPathComponent("Migration Backups", isDirectory: true)
     }
   }
 
@@ -377,6 +388,33 @@ public final class NoteLibrary {
     try createDirectory(notesDirectory(in: url))
   }
 
+  public func flatNoteMigrationPreview() throws -> NoteStorageMigrationPreview? {
+    guard let folderURL = activeNotesFolderURL() else {
+      throw NoteLibraryError.noActiveNotesFolder
+    }
+    let legacyURLs = try NoteStorageMigrator(fileManager: fileManager)
+      .legacyNoteURLs(in: notesDirectory(in: folderURL))
+    return legacyURLs.isEmpty ? nil : NoteStorageMigrationPreview(noteCount: legacyURLs.count)
+  }
+
+  @discardableResult
+  public func migrateNotesToFlatLayout(now: Date = Date()) throws -> NoteStorageMigrationResult {
+    guard let folderURL = activeNotesFolderURL() else {
+      throw NoteLibraryError.noActiveNotesFolder
+    }
+    try initializeNotesFolder(at: folderURL)
+    let migration = try NoteStorageMigrator(fileManager: fileManager).migrate(
+      notesURL: notesDirectory(in: folderURL),
+      activeNoteURL: activeNoteURL(),
+      backupRootURL: migrationBackupRootURLProvider(),
+      now: now
+    )
+    if let activeURL = migration.activeNoteURL {
+      defaults.set(activeURL.standardizedFileURL.path, forKey: Self.activeNotePathKey)
+    }
+    return migration.result
+  }
+
   public func migrateFallbackNotesToICloudIfNeeded(iCloudFolderURL: URL) throws {
     let sourceRootURL = fallbackNotesFolderURL.standardizedFileURL
     let destinationRootURL = iCloudFolderURL.standardizedFileURL
@@ -401,42 +439,41 @@ public final class NoteLibrary {
 
     try initializeNotesFolder(at: folderURL)
     let notesURL = notesDirectory(in: folderURL)
-    let dateURLs = try fileManager.contentsOfDirectory(
+    let childURLs = try fileManager.contentsOfDirectory(
       at: notesURL,
-      includingPropertiesForKeys: [.isDirectoryKey],
+      includingPropertiesForKeys: [.isDirectoryKey, .isRegularFileKey, .contentModificationDateKey, .creationDateKey],
       options: [.skipsHiddenFiles]
     )
 
-    var sections: [NoteSection] = []
-    for dateURL in dateURLs {
-      let resourceValues = try dateURL.resourceValues(forKeys: [.isDirectoryKey])
-      guard resourceValues.isDirectory == true else {
-        continue
-      }
-
-      let noteURLs = try fileManager.contentsOfDirectory(
-        at: dateURL,
-        includingPropertiesForKeys: [.contentModificationDateKey, .isRegularFileKey],
-        options: [.skipsHiddenFiles]
-      )
-
-      let notes = noteURLs
-        .filter { $0.pathExtension.lowercased() == "md" }
-        .compactMap { noteURL -> SavedNote? in
-          guard (try? noteURL.resourceValues(forKeys: [.isRegularFileKey]).isRegularFile) == true else {
+    var notes: [SavedNote] = []
+    for childURL in childURLs {
+      let resourceValues = try childURL.resourceValues(forKeys: [.isDirectoryKey, .isRegularFileKey])
+      if resourceValues.isRegularFile == true, childURL.pathExtension.lowercased() == "md" {
+        notes.append(note(at: childURL))
+      } else if resourceValues.isDirectory == true {
+        let nestedURLs = try fileManager.contentsOfDirectory(
+          at: childURL,
+          includingPropertiesForKeys: [.contentModificationDateKey, .creationDateKey, .isRegularFileKey],
+          options: [.skipsHiddenFiles]
+        )
+        notes.append(contentsOf: nestedURLs.compactMap { noteURL in
+          guard
+            noteURL.pathExtension.lowercased() == "md",
+            (try? noteURL.resourceValues(forKeys: [.isRegularFileKey]).isRegularFile) == true
+          else {
             return nil
           }
-          return note(at: noteURL, dateString: dateURL.lastPathComponent)
-        }
-        .sorted(by: compareNotesDescending)
-
-      if !notes.isEmpty {
-        sections.append(NoteSection(dateString: dateURL.lastPathComponent, notes: notes))
+          return note(at: noteURL, dateString: childURL.lastPathComponent)
+        })
       }
     }
 
-    return sections.sorted { lhs, rhs in
-      lhs.dateString > rhs.dateString
+    let grouped = Dictionary(grouping: notes, by: \.dateString)
+    return grouped.keys.sorted(by: >).map { dateString in
+      NoteSection(
+        dateString: dateString,
+        notes: (grouped[dateString] ?? []).sorted(by: compareNotesDescending)
+      )
     }
   }
 
@@ -452,14 +489,27 @@ public final class NoteLibrary {
     }
     try initializeNotesFolder(at: folderURL)
 
-    let dateDirectory = notesDirectory(in: folderURL)
-      .appendingPathComponent(Self.localDateString(from: now), isDirectory: true)
-    try createDirectory(dateDirectory)
-
-    let noteURL = try availableNoteURL(in: dateDirectory, now: now)
-    try writeNoteBody(MarkdownDocumentMetadata.ensureNoteID(in: normalizedBody), to: noteURL)
+    let noteID = UUID().uuidString
+    let noteURL: URL
+    if try flatNoteMigrationPreview() != nil {
+      let dateDirectory = noteDateDirectory(in: folderURL, now: now)
+      try createDirectory(dateDirectory)
+      noteURL = try availableLegacyNoteURL(in: dateDirectory, now: now)
+    } else {
+      let title = Self.firstRenderedLine(in: normalizedBody) ?? "Untitled"
+      noteURL = try availableFlatNoteURL(
+        title: title,
+        noteID: noteID,
+        sourceIdentity: noteID,
+        in: notesDirectory(in: folderURL)
+      )
+    }
+    try writeNoteBody(
+      MarkdownDocumentMetadata.ensureNoteMetadata(in: normalizedBody, id: noteID, createdAt: now),
+      to: noteURL
+    )
     defaults.set(noteURL.standardizedFileURL.path, forKey: Self.activeNotePathKey)
-    return SavedNote(url: noteURL)
+    return note(at: noteURL)
   }
 
   @discardableResult
@@ -474,15 +524,63 @@ public final class NoteLibrary {
     }
     try initializeNotesFolder(at: folderURL)
 
-    let dateDirectory = notesDirectory(in: folderURL)
-      .appendingPathComponent(Self.localDateString(from: now), isDirectory: true)
-    try createDirectory(dateDirectory)
-
-    let noteURL = try availableLinkedNoteURL(title: trimmedTitle, in: dateDirectory)
-    let body = MarkdownDocumentMetadata.ensureNoteID(in: "# \(trimmedTitle)\n")
-    try writeNoteBody(body, to: noteURL)
+    let noteID = UUID().uuidString
+    let directoryURL: URL
+    if try flatNoteMigrationPreview() != nil {
+      directoryURL = noteDateDirectory(in: folderURL, now: now)
+      try createDirectory(directoryURL)
+    } else {
+      directoryURL = notesDirectory(in: folderURL)
+    }
+    let noteURL = try availableFlatNoteURL(
+      title: trimmedTitle,
+      noteID: noteID,
+      sourceIdentity: noteID,
+      in: directoryURL
+    )
+    try writeNoteBody(
+      MarkdownDocumentMetadata.ensureNoteMetadata(in: "# \(trimmedTitle)\n", id: noteID, createdAt: now),
+      to: noteURL
+    )
     defaults.set(noteURL.standardizedFileURL.path, forKey: Self.activeNotePathKey)
-    return SavedNote(url: noteURL)
+    return note(at: noteURL)
+  }
+
+  @discardableResult
+  public func ensureDailyNote(now: Date = Date()) throws -> SavedNote {
+    guard let folderURL = activeNotesFolderURL() else {
+      throw NoteLibraryError.noActiveNotesFolder
+    }
+    guard try flatNoteMigrationPreview() == nil else {
+      throw NoteLibraryError.invalidNotesFolder("Migrate this notes folder before creating daily notes.")
+    }
+    let dateString = Self.localDateString(from: now)
+    let noteURL = notesDirectory(in: folderURL).appendingPathComponent("\(dateString).md")
+    if fileManager.fileExists(atPath: noteURL.path) {
+      let rawBody = try String(contentsOf: noteURL, encoding: .utf8)
+      let withMetadata = MarkdownDocumentMetadata.ensureNoteMetadata(in: rawBody, createdAt: now)
+      if withMetadata != rawBody {
+        try writeNoteBody(withMetadata, to: noteURL)
+      }
+      return note(at: noteURL)
+    }
+
+    let noteID = UUID().uuidString
+    let heading = Self.dailyNoteHeading(from: now)
+    let body = MarkdownDocumentMetadata.ensureNoteMetadata(
+      in: "# \(heading)\n",
+      id: noteID,
+      createdAt: now
+    )
+    try writeNoteBody(body, to: noteURL)
+    return note(at: noteURL)
+  }
+
+  public func draftNoteDirectory(in rootURL: URL, now: Date = Date()) -> URL {
+    if (try? flatNoteMigrationPreview()) != nil {
+      return noteDateDirectory(in: rootURL, now: now)
+    }
+    return notesDirectory(in: rootURL)
   }
 
   @discardableResult
@@ -492,13 +590,14 @@ public final class NoteLibrary {
       throw NoteLibraryError.missingNote(note.url.path)
     }
 
-    let existingID = (try? rawBody(for: note)).flatMap { MarkdownDocumentMetadata.noteID(in: $0) }
-    let nextBody = normalizedBody.isEmpty
-      ? ""
-      : MarkdownDocumentMetadata.ensureNoteID(
-        in: normalizedBody,
-        id: existingID ?? UUID().uuidString
-      )
+    let existingRawBody = try? rawBody(for: note)
+    let existingID = existingRawBody.flatMap { MarkdownDocumentMetadata.noteID(in: $0) }
+    let existingCreatedAt = existingRawBody.flatMap { MarkdownDocumentMetadata.createdAt(in: $0) }
+    let nextBody = MarkdownDocumentMetadata.ensureNoteMetadata(
+      in: normalizedBody,
+      id: existingID ?? UUID().uuidString,
+      createdAt: existingCreatedAt ?? note.createdAt
+    )
     try writeNoteBody(nextBody, to: note.url)
     defaults.set(note.url.standardizedFileURL.path, forKey: Self.activeNotePathKey)
     return note
@@ -521,7 +620,12 @@ public final class NoteLibrary {
       throw NoteLibraryError.invalidNotesFolder("A note named \(trimmedTitle).md already exists in this folder.")
     }
     try fileManager.moveItem(at: note.url, to: destination)
-    let renamed = SavedNote(url: destination, dateString: note.dateString)
+    let renamed = SavedNote(
+      url: destination,
+      dateString: note.dateString,
+      createdAt: note.createdAt,
+      modifiedAt: note.modifiedAt
+    )
     defaults.set(renamed.url.standardizedFileURL.path, forKey: Self.activeNotePathKey)
     return renamed
   }
@@ -561,7 +665,14 @@ public final class NoteLibrary {
         }
         if didChange {
           let id = MarkdownDocumentMetadata.noteID(in: raw) ?? UUID().uuidString
-          try writeNoteBody(MarkdownDocumentMetadata.ensureNoteID(in: body, id: id), to: note.url)
+          try writeNoteBody(
+            MarkdownDocumentMetadata.ensureNoteMetadata(
+              in: body,
+              id: id,
+              createdAt: MarkdownDocumentMetadata.createdAt(in: raw) ?? note.createdAt
+            ),
+            to: note.url
+          )
         }
       }
     }
@@ -605,7 +716,14 @@ public final class NoteLibrary {
         }
         if didChange {
           let id = MarkdownDocumentMetadata.noteID(in: raw) ?? UUID().uuidString
-          try writeNoteBody(MarkdownDocumentMetadata.ensureNoteID(in: body, id: id), to: note.url)
+          try writeNoteBody(
+            MarkdownDocumentMetadata.ensureNoteMetadata(
+              in: body,
+              id: id,
+              createdAt: MarkdownDocumentMetadata.createdAt(in: raw) ?? note.createdAt
+            ),
+            to: note.url
+          )
         }
       }
     }
@@ -693,17 +811,28 @@ public final class NoteLibrary {
   }
 
   private func note(at url: URL, dateString: String? = nil) -> SavedNote {
-    let resourceValues = try? url.resourceValues(forKeys: [.contentModificationDateKey])
+    let resourceValues = try? url.resourceValues(
+      forKeys: [.contentModificationDateKey, .creationDateKey]
+    )
+    let rawBody = try? String(contentsOf: url, encoding: .utf8)
+    let createdAt = rawBody.flatMap(MarkdownDocumentMetadata.createdAt(in:))
+      ?? Self.timestampDate(from: url.deletingPathExtension().lastPathComponent)
+      ?? resourceValues?.creationDate
+      ?? resourceValues?.contentModificationDate
+    let resolvedDateString = dateString
+      ?? createdAt.map(Self.localDateString(from:))
+      ?? Self.localDateString(from: Date())
     return SavedNote(
       url: url,
-      dateString: dateString,
+      dateString: resolvedDateString,
+      createdAt: createdAt,
       modifiedAt: resourceValues?.contentModificationDate
     )
   }
 
   private func compareNotesDescending(_ lhs: SavedNote, _ rhs: SavedNote) -> Bool {
-    if lhs.filenameTitle != rhs.filenameTitle {
-      return lhs.filenameTitle > rhs.filenameTitle
+    if let lhsCreatedAt = lhs.createdAt, let rhsCreatedAt = rhs.createdAt, lhsCreatedAt != rhsCreatedAt {
+      return lhsCreatedAt > rhsCreatedAt
     }
     switch (lhs.modifiedAt, rhs.modifiedAt) {
     case let (lhsDate?, rhsDate?):
@@ -717,7 +846,7 @@ public final class NoteLibrary {
     }
   }
 
-  private func availableNoteURL(in directoryURL: URL, now: Date) throws -> URL {
+  private func availableLegacyNoteURL(in directoryURL: URL, now: Date) throws -> URL {
     let baseName = Self.timestampString(from: now)
     let firstURL = directoryURL.appendingPathComponent("\(baseName).md")
     if !fileManager.fileExists(atPath: firstURL.path) {
@@ -735,20 +864,34 @@ public final class NoteLibrary {
     throw NoteLibraryError.invalidNotesFolder("Could not create a unique note filename.")
   }
 
-  private func availableLinkedNoteURL(title: String, in directoryURL: URL) throws -> URL {
-    let firstURL = directoryURL.appendingPathComponent("\(title).md")
+  private func availableFlatNoteURL(
+    title: String,
+    noteID: String,
+    sourceIdentity: String,
+    in directoryURL: URL
+  ) throws -> URL {
+    let stem = NoteStorageMigrator.sanitizedNoteStem(title)
+    let firstURL = directoryURL.appendingPathComponent("\(stem).md")
     if !fileManager.fileExists(atPath: firstURL.path) {
       return firstURL
     }
+    let suffix = NoteStorageMigrator.shortIdentifier(
+      noteID: noteID,
+      sourceURL: directoryURL.appendingPathComponent(sourceIdentity)
+    )
+    let suffixedURL = directoryURL.appendingPathComponent("\(stem)--\(suffix).md")
+    if !fileManager.fileExists(atPath: suffixedURL.path) {
+      return suffixedURL
+    }
 
-    for index in 2..<100 {
-      let candidate = directoryURL.appendingPathComponent("\(title) \(index).md")
+    for _ in 0..<20 {
+      let fallbackSuffix = UUID().uuidString.prefix(8).lowercased()
+      let candidate = directoryURL.appendingPathComponent("\(stem)--\(fallbackSuffix).md")
       if !fileManager.fileExists(atPath: candidate.path) {
         return candidate
       }
     }
-
-    throw NoteLibraryError.invalidNotesFolder("Could not create a unique note filename for \(title).")
+    throw NoteLibraryError.invalidNotesFolder("Could not create a unique note filename.")
   }
 
   private func availableAttachmentURL(
@@ -874,6 +1017,22 @@ public final class NoteLibrary {
     formatter.calendar = Calendar(identifier: .gregorian)
     formatter.dateFormat = "yyyy-MM-dd"
     return formatter.string(from: date)
+  }
+
+  private static func dailyNoteHeading(from date: Date) -> String {
+    let formatter = DateFormatter()
+    formatter.locale = Locale(identifier: "en_US_POSIX")
+    formatter.calendar = Calendar(identifier: .gregorian)
+    formatter.dateFormat = "EEEE, MMMM d, yyyy"
+    return formatter.string(from: date)
+  }
+
+  private static func timestampDate(from stem: String) -> Date? {
+    let formatter = DateFormatter()
+    formatter.locale = Locale(identifier: "en_US_POSIX")
+    formatter.calendar = Calendar(identifier: .gregorian)
+    formatter.dateFormat = "yyyy-MM-dd'T'HH-mm-ss"
+    return formatter.date(from: String(stem.prefix(19)))
   }
 
   private static func timestampString(from date: Date) -> String {

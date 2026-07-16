@@ -48,7 +48,7 @@ struct WikiLinkTests {
     try fixture.library.selectNotesFolder(fixture.root)
     let note = try fixture.library.createLinkedNote(title: "Project Plan", now: fixture.date)
 
-    #expect(note.url.path.hasSuffix("/notes/2026-06-17/Project Plan.md"))
+    #expect(note.url.path.hasSuffix("/notes/Project Plan.md"))
     #expect(try fixture.library.body(for: note) == "# Project Plan\n")
     #expect(MarkdownDocumentMetadata.noteID(in: try fixture.library.rawBody(for: note)) != nil)
   }

@@ -73,6 +73,12 @@ public final class LatticeAppModel {
     }
   }
   public var tagAutocompleteSelectionIndex = 0
+  public var slashCommandSuggestions: [SlashCommandSuggestion] = [] {
+    didSet {
+      clampSlashCommandSelection()
+    }
+  }
+  public var slashCommandSelectionIndex = 0
   public var ambiguousWikiLink: AmbiguousWikiLinkResolution?
   public var renamingNote: SavedNote?
   public var renameTitle = ""
@@ -88,6 +94,10 @@ public final class LatticeAppModel {
   public var taskSyncErrorMessage: String?
   public var pendingInitialSyncTaskCount: Int?
   public var todayActivityEvents: [ActivityEvent] = []
+  public var noteMigrationPreview: NoteStorageMigrationPreview?
+  public var isShowingNoteMigrationPrompt = false
+  public var isMigratingNotes = false
+  public var noteMigrationSummary: String?
   public init(
     noteLibrary: NoteLibrary = NoteLibrary(),
     folderAccessStore: FolderAccessStore = FolderAccessStore(),
@@ -124,7 +134,13 @@ public final class LatticeAppModel {
   }
 
   public var hasEditorAutocompleteSuggestions: Bool {
-    !tagAutocompleteSuggestions.isEmpty || !wikiAutocompleteSuggestions.isEmpty
+    !slashCommandSuggestions.isEmpty
+      || !tagAutocompleteSuggestions.isEmpty
+      || !wikiAutocompleteSuggestions.isEmpty
+  }
+
+  public var isNoteMigrationRequired: Bool {
+    noteMigrationPreview != nil
   }
 
   public var canCommitTagRename: Bool {
@@ -206,6 +222,55 @@ public final class LatticeAppModel {
 
   public func showSettings() {
     isShowingSettings = true
+  }
+
+  public func showNoteMigrationPrompt() {
+    guard isNoteMigrationRequired else {
+      return
+    }
+    isShowingNoteMigrationPrompt = true
+  }
+
+  public func deferNoteMigration() {
+    isShowingNoteMigrationPrompt = false
+  }
+
+  public func dismissNoteMigrationSummary() {
+    noteMigrationSummary = nil
+  }
+
+  public func migrateNotesToFlatLayout() {
+    guard isNoteMigrationRequired, !isMigratingNotes else {
+      return
+    }
+    flushAutosave()
+    isShowingNoteMigrationPrompt = false
+    isMigratingNotes = true
+    notesFolderChangeMonitor.stop()
+    do {
+      let result = try noteLibrary.migrateNotesToFlatLayout(now: dateProvider())
+      noteMigrationPreview = nil
+      clearNavigationHistory()
+      rebuildNoteIndex()
+      restoreActiveNote()
+      startNotesFolderChangeMonitor()
+      isMigratingNotes = false
+      status = "Notes migrated"
+      var summary = "Migrated \(result.migratedNoteCount) notes and renamed \(result.renamedNoteCount) files."
+      if result.collisionCount > 0 {
+        summary += " \(result.collisionCount) filename collisions received stable suffixes."
+      }
+      if result.ambiguousLinkCount > 0 {
+        summary += " \(result.ambiguousLinkCount) ambiguous links were left unchanged."
+      }
+      summary += " A recovery copy is at \(result.backupURL.path)."
+      noteMigrationSummary = summary
+    } catch {
+      isMigratingNotes = false
+      startNotesFolderChangeMonitor()
+      errorMessage = error.localizedDescription
+      refreshNoteMigrationRequirement(presentPrompt: false)
+    }
   }
 
   public func dismissCommandPalette() {
@@ -326,6 +391,7 @@ public final class LatticeAppModel {
     }
 
     let previousNoteListSignature = noteListSignature
+    refreshNoteMigrationRequirement(presentPrompt: false)
     let selectedChange = refreshSelectedNoteForExternalChanges()
     reloadNotes(selecting: selectedNote)
     rebuildNoteIndex()
@@ -374,6 +440,7 @@ public final class LatticeAppModel {
     imagePreviewStates = []
     wikiAutocompleteSuggestions = []
     tagAutocompleteSuggestions = []
+    slashCommandSuggestions = []
     ambiguousWikiLink = nil
     status = "New note"
     preferredCompactColumn = .detail
@@ -759,6 +826,7 @@ public final class LatticeAppModel {
     selectedRange = NSRange(location: suggestion.replacementRange.location + (suggestion.replacement as NSString).length, length: 0)
     wikiAutocompleteSuggestions = []
     tagAutocompleteSuggestions = []
+    slashCommandSuggestions = []
     scheduleAutosave()
     refreshWikiLinkStates()
     refreshImagePreviewStates()
@@ -786,6 +854,8 @@ public final class LatticeAppModel {
     wikiAutocompleteSelectionIndex = 0
     tagAutocompleteSuggestions = []
     tagAutocompleteSelectionIndex = 0
+    slashCommandSuggestions = []
+    slashCommandSelectionIndex = 0
   }
 
   public func selectTagAutocompleteSuggestion(_ suggestion: TagAutocompleteSuggestion) {
@@ -800,14 +870,54 @@ public final class LatticeAppModel {
     )
     tagAutocompleteSuggestions = []
     wikiAutocompleteSuggestions = []
+    slashCommandSuggestions = []
     scheduleAutosave()
     refreshWikiLinkStates()
     refreshImagePreviewStates()
     editorFocusToken += 1
   }
 
+  public func selectSlashCommandSuggestion(_ suggestion: SlashCommandSuggestion) {
+    guard suggestion.command == "today", folderURL != nil else {
+      return
+    }
+    let nsString = text as NSString
+    guard NSMaxRange(suggestion.replacementRange) <= nsString.length else {
+      return
+    }
+    do {
+      let dailyNote = try noteLibrary.ensureDailyNote(now: dateProvider())
+      refreshNoteIndex(for: dailyNote)
+      let rawBody = try noteLibrary.rawBody(for: dailyNote)
+      guard let noteID = MarkdownDocumentMetadata.noteID(in: rawBody) else {
+        throw NoteLibraryError.invalidNotesFolder("Could not identify today's daily note.")
+      }
+      let dateStem = dailyNote.filenameTitle
+      let replacement = "[[\(dateStem)]]\(WikiLinkParser.targetComment(noteID: noteID))"
+      text = nsString.replacingCharacters(in: suggestion.replacementRange, with: replacement)
+      selectedRange = NSRange(
+        location: suggestion.replacementRange.location + (replacement as NSString).length,
+        length: 0
+      )
+      slashCommandSuggestions = []
+      tagAutocompleteSuggestions = []
+      wikiAutocompleteSuggestions = []
+      scheduleAutosave()
+      refreshWikiLinkStates()
+      refreshImagePreviewStates()
+      editorFocusToken += 1
+      status = "Linked \(dateStem)"
+      reloadNotes(selecting: selectedNote)
+    } catch {
+      errorMessage = error.localizedDescription
+    }
+  }
+
   public func moveEditorAutocompleteSelection(by delta: Int) {
-    if !tagAutocompleteSuggestions.isEmpty {
+    if !slashCommandSuggestions.isEmpty {
+      let count = slashCommandSuggestions.count
+      slashCommandSelectionIndex = (slashCommandSelectionIndex + delta + count) % count
+    } else if !tagAutocompleteSuggestions.isEmpty {
       let count = tagAutocompleteSuggestions.count
       tagAutocompleteSelectionIndex = (tagAutocompleteSelectionIndex + delta + count) % count
     } else {
@@ -816,7 +926,9 @@ public final class LatticeAppModel {
   }
 
   public func commitSelectedEditorAutocompleteSuggestion() {
-    if tagAutocompleteSuggestions.indices.contains(tagAutocompleteSelectionIndex) {
+    if slashCommandSuggestions.indices.contains(slashCommandSelectionIndex) {
+      selectSlashCommandSuggestion(slashCommandSuggestions[slashCommandSelectionIndex])
+    } else if tagAutocompleteSuggestions.indices.contains(tagAutocompleteSelectionIndex) {
       selectTagAutocompleteSuggestion(tagAutocompleteSuggestions[tagAutocompleteSelectionIndex])
     } else {
       commitSelectedWikiAutocompleteSuggestion()
@@ -825,10 +937,31 @@ public final class LatticeAppModel {
 
   public func updateWikiAutocomplete() {
     guard let folderURL else {
+      slashCommandSuggestions = []
       tagAutocompleteSuggestions = []
       wikiAutocompleteSuggestions = []
       return
     }
+
+    if !isNoteMigrationRequired,
+       let context = SlashCommandParser.autocompleteContext(in: text, selection: selectedRange) {
+      let prefix = context.prefix.lowercased()
+      if prefix.isEmpty || "today".hasPrefix(prefix) {
+        tagAutocompleteSuggestions = []
+        wikiAutocompleteSuggestions = []
+        slashCommandSuggestions = [
+          SlashCommandSuggestion(
+            command: "today",
+            title: "Today's Daily Note",
+            subtitle: "Insert a link to today's date",
+            replacementRange: context.replacementRange
+          )
+        ]
+        return
+      }
+    }
+
+    slashCommandSuggestions = []
 
     if let context = NoteTagParser.autocompleteContext(in: text, selection: selectedRange) {
       wikiAutocompleteSuggestions = []
@@ -865,10 +998,12 @@ public final class LatticeAppModel {
           }
           .prefix(8)
         wikiAutocompleteSuggestions = notes.map { note in
+          let stem = note.url.deletingPathExtension().lastPathComponent
+          let target = stem == note.title ? stem : "\(stem)|\(note.title)"
           return WikiAutocompleteSuggestion(
             title: note.title,
             subtitle: note.relativePath,
-            replacement: "[[\(note.title)]]\(WikiLinkParser.targetComment(noteID: note.noteID))",
+            replacement: "[[\(target)]]\(WikiLinkParser.targetComment(noteID: note.noteID))",
             replacementRange: replacementRange
           )
         }
@@ -938,6 +1073,17 @@ public final class LatticeAppModel {
     )
   }
 
+  private func clampSlashCommandSelection() {
+    guard !slashCommandSuggestions.isEmpty else {
+      slashCommandSelectionIndex = 0
+      return
+    }
+    slashCommandSelectionIndex = min(
+      max(slashCommandSelectionIndex, 0),
+      slashCommandSuggestions.count - 1
+    )
+  }
+
   public func indentSelectedListItems() {
     applyListIndentation { body, selection in
       MarkdownListIndentation.applyIndent(to: body, selection: selection)
@@ -980,7 +1126,7 @@ public final class LatticeAppModel {
     let now = dateProvider()
     do {
       let noteDirectory = selectedNote?.url.deletingLastPathComponent()
-        ?? noteLibrary.noteDateDirectory(in: folderURL, now: now)
+        ?? noteLibrary.draftNoteDirectory(in: folderURL, now: now)
       for imageImport in imports {
         let attachment = try noteLibrary.saveImageAttachment(
           data: imageImport.data,
@@ -1205,6 +1351,7 @@ public final class LatticeAppModel {
     selectedTagName = nil
     tagSummaries = []
     status = url.lastPathComponent
+    refreshNoteMigrationRequirement(presentPrompt: true)
     reloadNotes()
     startNotesFolderChangeMonitor()
     isZenModeEnabled = false
@@ -1319,6 +1466,20 @@ public final class LatticeAppModel {
     }
   }
 
+  private func refreshNoteMigrationRequirement(presentPrompt: Bool) {
+    do {
+      noteMigrationPreview = try noteLibrary.flatNoteMigrationPreview()
+      if presentPrompt, noteMigrationPreview != nil {
+        isShowingNoteMigrationPrompt = true
+      }
+    } catch {
+      noteMigrationPreview = nil
+      if presentPrompt {
+        errorMessage = error.localizedDescription
+      }
+    }
+  }
+
   private func refreshNoteIndex(for note: SavedNote) {
     guard let folderURL else {
       return
@@ -1388,6 +1549,7 @@ public final class LatticeAppModel {
     wikiLinkStates = []
     wikiAutocompleteSuggestions = []
     tagAutocompleteSuggestions = []
+    slashCommandSuggestions = []
     ambiguousWikiLink = nil
     preferredCompactColumn = .sidebar
     reloadNotes(selecting: nil)
@@ -1415,7 +1577,7 @@ public final class LatticeAppModel {
       return
     }
     let baseDirectory = selectedNote?.url.deletingLastPathComponent()
-      ?? noteLibrary.noteDateDirectory(in: folderURL, now: dateProvider())
+      ?? noteLibrary.draftNoteDirectory(in: folderURL, now: dateProvider())
     imagePreviewStates = MarkdownImageParser.links(in: text).compactMap { link in
       guard let url = resolvedLocalImageURL(
         destination: link.destination,
@@ -1438,7 +1600,8 @@ public final class LatticeAppModel {
 
   private func updateWikiAutocompleteIfNeeded() {
     guard
-      NoteTagParser.autocompleteContext(in: text, selection: selectedRange) != nil
+      (!isNoteMigrationRequired && SlashCommandParser.autocompleteContext(in: text, selection: selectedRange) != nil)
+        || NoteTagParser.autocompleteContext(in: text, selection: selectedRange) != nil
         || WikiLinkParser.autocompleteContext(in: text, selection: selectedRange) != nil
     else {
       if !wikiAutocompleteSuggestions.isEmpty {
@@ -1446,6 +1609,9 @@ public final class LatticeAppModel {
       }
       if !tagAutocompleteSuggestions.isEmpty {
         tagAutocompleteSuggestions = []
+      }
+      if !slashCommandSuggestions.isEmpty {
+        slashCommandSuggestions = []
       }
       return
     }
@@ -2223,6 +2389,26 @@ public struct TagAutocompleteSuggestion: Identifiable, Equatable {
     self.name = name
     self.noteCount = noteCount
     self.replacement = replacement
+    self.replacementRange = replacementRange
+  }
+}
+
+public struct SlashCommandSuggestion: Identifiable, Equatable {
+  public let id = UUID()
+  public let command: String
+  public let title: String
+  public let subtitle: String
+  public let replacementRange: NSRange
+
+  public init(
+    command: String,
+    title: String,
+    subtitle: String,
+    replacementRange: NSRange
+  ) {
+    self.command = command
+    self.title = title
+    self.subtitle = subtitle
     self.replacementRange = replacementRange
   }
 }
