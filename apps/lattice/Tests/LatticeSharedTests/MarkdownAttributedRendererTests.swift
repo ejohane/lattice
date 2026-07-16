@@ -257,6 +257,28 @@ struct MarkdownAttributedRendererTests {
     #expect(linkUnderline == NSUnderlineStyle.single.rawValue)
   }
 
+  @Test("styles person mentions and hides durable target metadata")
+  func stylesPersonMentions() throws {
+    let text = "Met @Erik Johansson<!-- lattice:mention=person-1 --> today"
+    let string = text as NSString
+    let mentionRange = string.range(of: "@Erik Johansson")
+    let metadataRange = string.range(of: "<!-- lattice:mention=person-1 -->")
+    let attributed = MarkdownAttributedRenderer.render(
+      text,
+      activeRanges: [NSRange(location: string.length, length: 0)]
+    )
+
+    let mentionColor = attributed.attribute(.foregroundColor, at: mentionRange.location, effectiveRange: nil) as? NSColor
+    let underline = attributed.attribute(.underlineStyle, at: mentionRange.location, effectiveRange: nil) as? Int
+    let metadataColor = attributed.attribute(.foregroundColor, at: metadataRange.location, effectiveRange: nil) as? NSColor
+    let metadataFont = try #require(attributed.attribute(.font, at: metadataRange.location, effectiveRange: nil) as? NSFont)
+
+    #expect(mentionColor == NSColor.controlAccentColor)
+    #expect(underline == NSUnderlineStyle.single.rawValue)
+    #expect(metadataColor == NSColor.clear)
+    #expect(metadataFont.pointSize <= 0.2)
+  }
+
   @Test("shows active wiki link delimiters as editable source")
   func showsActiveWikiLinkDelimiters() throws {
     let text = "Linked [[Project Plan]]"

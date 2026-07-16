@@ -84,6 +84,7 @@ public struct MarkdownTextEditor: NSViewRepresentable {
   let onTextChange: () -> Void
   let onSelectionChange: () -> Void
   let onWikiLinkActivated: (Int) -> Void
+  let onPersonMentionActivated: (Int) -> Void
   let onMarkdownLinkActivated: (Int) -> Void
   let onTagActivated: (Int) -> Void
   let onDismissAutocomplete: () -> Void
@@ -113,6 +114,7 @@ public struct MarkdownTextEditor: NSViewRepresentable {
     onTextChange: @escaping () -> Void,
     onSelectionChange: @escaping () -> Void,
     onWikiLinkActivated: @escaping (Int) -> Void,
+    onPersonMentionActivated: @escaping (Int) -> Void,
     onMarkdownLinkActivated: @escaping (Int) -> Void,
     onTagActivated: @escaping (Int) -> Void,
     onDismissAutocomplete: @escaping () -> Void,
@@ -141,6 +143,7 @@ public struct MarkdownTextEditor: NSViewRepresentable {
     self.onTextChange = onTextChange
     self.onSelectionChange = onSelectionChange
     self.onWikiLinkActivated = onWikiLinkActivated
+    self.onPersonMentionActivated = onPersonMentionActivated
     self.onMarkdownLinkActivated = onMarkdownLinkActivated
     self.onTagActivated = onTagActivated
     self.onDismissAutocomplete = onDismissAutocomplete
@@ -900,6 +903,12 @@ private final class MarkdownTextView: NSTextView {
     if let characterIndex = characterIndex(at: event),
        WikiLinkParser.link(at: characterIndex, in: string) != nil {
       coordinator?.parent.onWikiLinkActivated(characterIndex)
+      return
+    }
+
+    if let characterIndex = characterIndex(at: event),
+       PersonMentionParser.mention(at: characterIndex, in: string) != nil {
+      coordinator?.parent.onPersonMentionActivated(characterIndex)
       return
     }
 
@@ -1884,6 +1893,7 @@ public struct MarkdownTextEditor: UIViewRepresentable {
   let onTextChange: () -> Void
   let onSelectionChange: () -> Void
   let onWikiLinkActivated: (Int) -> Void
+  let onPersonMentionActivated: (Int) -> Void
   let onMarkdownLinkActivated: (Int) -> Void
   let onTagActivated: (Int) -> Void
   let onDismissAutocomplete: () -> Void
@@ -1913,6 +1923,7 @@ public struct MarkdownTextEditor: UIViewRepresentable {
     onTextChange: @escaping () -> Void,
     onSelectionChange: @escaping () -> Void,
     onWikiLinkActivated: @escaping (Int) -> Void,
+    onPersonMentionActivated: @escaping (Int) -> Void,
     onMarkdownLinkActivated: @escaping (Int) -> Void,
     onTagActivated: @escaping (Int) -> Void,
     onDismissAutocomplete: @escaping () -> Void,
@@ -1941,6 +1952,7 @@ public struct MarkdownTextEditor: UIViewRepresentable {
     self.onTextChange = onTextChange
     self.onSelectionChange = onSelectionChange
     self.onWikiLinkActivated = onWikiLinkActivated
+    self.onPersonMentionActivated = onPersonMentionActivated
     self.onMarkdownLinkActivated = onMarkdownLinkActivated
     self.onTagActivated = onTagActivated
     self.onDismissAutocomplete = onDismissAutocomplete
@@ -2322,6 +2334,7 @@ public struct MarkdownTextEditor: UIViewRepresentable {
 
       return MarkdownTaskList.toggleTask(at: location, in: textView.text, selection: textView.selectedRange) != nil
         || WikiLinkParser.link(at: location, in: textView.text) != nil
+        || PersonMentionParser.mention(at: location, in: textView.text) != nil
         || MarkdownLocalLinkParser.link(at: location, in: textView.text) != nil
         || NoteTagParser.tag(at: location, in: textView.text) != nil
     }
@@ -2337,6 +2350,11 @@ public struct MarkdownTextEditor: UIViewRepresentable {
 
       if WikiLinkParser.link(at: location, in: textView.text) != nil {
         parent.onWikiLinkActivated(location)
+        return
+      }
+
+      if PersonMentionParser.mention(at: location, in: textView.text) != nil {
+        parent.onPersonMentionActivated(location)
         return
       }
 

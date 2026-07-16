@@ -36,7 +36,7 @@ struct NoteIndexTests {
     try fixture.index.rebuild(notesFolderURL: fixture.root)
 
     let notes = try fixture.index.indexedNotes(notesFolderURL: fixture.root)
-    #expect(try fixture.index.schemaVersion(notesFolderURL: fixture.root) == 3)
+    #expect(try fixture.index.schemaVersion(notesFolderURL: fixture.root) == 4)
     #expect(notes.count == 1)
     let note = try #require(notes.first)
     #expect(note.relativePath == "notes/2026-06-17/2026-06-17T14-32-10.md")
@@ -44,6 +44,40 @@ struct NoteIndexTests {
     #expect(note.title == "Project Brief")
     #expect(note.excerpt == "**Project Brief**")
     #expect(note.createdAt != nil)
+  }
+
+  @Test("indexes person notes and durable mention connections")
+  func indexesPeopleAndMentions() throws {
+    let fixture = try Fixture()
+    defer { fixture.cleanup() }
+
+    try fixture.writeNote(
+      relativePath: "notes/Erik Johansson.md",
+      body: "---\nlattice:\n  id: person-1\n  kind: person\n---\n\n# Erik Johansson\n\n#design"
+    )
+    try fixture.writeNote(
+      relativePath: "notes/Meeting.md",
+      body: "---\nlattice:\n  id: meeting-1\n---\n\n# Meeting\n\nTalked to @Erik Johansson<!-- lattice:mention=person-1 --> about #design."
+    )
+
+    try fixture.index.rebuild(notesFolderURL: fixture.root)
+
+    let candidates = try fixture.index.personCandidates(prefix: "Erik J", notesFolderURL: fixture.root)
+    #expect(candidates.map(\.name) == ["Erik Johansson"])
+    #expect(candidates.first?.noteID == "person-1")
+    let connections = try fixture.index.personMentions(from: "meeting-1", notesFolderURL: fixture.root)
+    #expect(connections == [PersonMentionConnection(
+      sourceNoteID: "meeting-1",
+      targetNoteID: "person-1",
+      name: "Erik Johansson"
+    )])
+    let meeting = try #require(try fixture.index.indexedNotes(notesFolderURL: fixture.root).first {
+      $0.noteID == "meeting-1"
+    })
+    #expect(meeting.excerpt == "Talked to @Erik Johansson about #design.")
+
+    let design = try #require(try fixture.index.tagSummaries(notesFolderURL: fixture.root).first)
+    #expect(design.noteCount == 2)
   }
 
   @Test("indexes flat notes using durable creation metadata")

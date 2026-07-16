@@ -31,6 +31,8 @@ public protocol NoteIndexing: AnyObject {
   func tagSummaries(notesFolderURL: URL) throws -> [NoteTagSummary]
   func notes(tagged normalizedName: String, notesFolderURL: URL, limit: Int) throws -> [SavedNote]
   func indexedNotes(notesFolderURL: URL, limit: Int) throws -> [IndexedNote]
+  func personCandidates(prefix: String, notesFolderURL: URL, limit: Int) throws -> [PersonCandidate]
+  func personMentions(from sourceNoteID: String, notesFolderURL: URL) throws -> [PersonMentionConnection]
   func wikiNoteCandidates(stem: String, notesFolderURL: URL, limit: Int) throws -> [WikiNoteCandidate]
   func wikiHeadingCandidates(
     noteID: String?,
@@ -54,6 +56,14 @@ public extension NoteIndexing {
   }
 
   func notes(tagged normalizedName: String, notesFolderURL: URL, limit: Int) throws -> [SavedNote] {
+    []
+  }
+
+  func personCandidates(prefix: String, notesFolderURL: URL, limit: Int) throws -> [PersonCandidate] {
+    []
+  }
+
+  func personMentions(from sourceNoteID: String, notesFolderURL: URL) throws -> [PersonMentionConnection] {
     []
   }
 }
@@ -103,6 +113,7 @@ public final class NoteIndex: NoteIndexing {
     do {
       try connection.execute("DELETE FROM note_tags")
       try connection.execute("DELETE FROM tags")
+      try connection.execute("DELETE FROM person_mentions")
       for document in notes {
         try upsert(document, connection: connection)
       }
@@ -242,6 +253,75 @@ public final class NoteIndex: NoteIndexing {
 
     return rows.compactMap { row in
       indexedNote(from: row, notesFolderURL: notesFolderURL)
+    }
+  }
+
+  public func personCandidates(
+    prefix: String,
+    notesFolderURL: URL,
+    limit: Int = 20
+  ) throws -> [PersonCandidate] {
+    let connection = try connection(for: notesFolderURL)
+    let normalizedPrefix = prefix.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+    let rows = try connection.query(
+      """
+      SELECT relative_path, note_id, date_string, modified_at, title
+      FROM notes
+      WHERE kind = 'person' AND (? = '' OR lower(title) LIKE ?)
+      ORDER BY title COLLATE NOCASE ASC, relative_path ASC
+      LIMIT ?
+      """,
+      bindings: [
+        .text(normalizedPrefix),
+        .text("\(normalizedPrefix)%"),
+        .integer(Int64(limit))
+      ]
+    )
+    return rows.compactMap { row in
+      guard
+        let relativePath = row["relative_path"]?.stringValue,
+        let noteID = row["note_id"]?.stringValue,
+        let dateString = row["date_string"]?.stringValue,
+        let name = row["title"]?.stringValue
+      else {
+        return nil
+      }
+      return PersonCandidate(
+        note: SavedNote(
+          url: notesFolderURL.appendingPathComponent(relativePath),
+          dateString: dateString,
+          modifiedAt: Self.date(from: row["modified_at"]?.stringValue)
+        ),
+        noteID: noteID,
+        name: name,
+        relativePath: relativePath
+      )
+    }
+  }
+
+  public func personMentions(
+    from sourceNoteID: String,
+    notesFolderURL: URL
+  ) throws -> [PersonMentionConnection] {
+    let connection = try connection(for: notesFolderURL)
+    let rows = try connection.query(
+      """
+      SELECT source_note_id, target_note_id, display_name
+      FROM person_mentions
+      WHERE source_note_id = ?
+      ORDER BY range_location ASC
+      """,
+      bindings: [.text(sourceNoteID)]
+    )
+    return rows.compactMap { row in
+      guard
+        let sourceNoteID = row["source_note_id"]?.stringValue,
+        let targetNoteID = row["target_note_id"]?.stringValue,
+        let name = row["display_name"]?.stringValue
+      else {
+        return nil
+      }
+      return PersonMentionConnection(sourceNoteID: sourceNoteID, targetNoteID: targetNoteID, name: name)
     }
   }
 
@@ -418,6 +498,7 @@ public final class NoteIndex: NoteIndexing {
       """
     )
     try ensureColumn("notes", column: "note_id", definition: "TEXT NOT NULL DEFAULT ''", connection: connection)
+    try ensureColumn("notes", column: "kind", definition: "TEXT", connection: connection)
     let ftsTables = try connection.query(
       "SELECT sql FROM sqlite_master WHERE type = 'table' AND name = 'notes_fts'"
     )
@@ -482,11 +563,26 @@ public final class NoteIndex: NoteIndexing {
       )
       """
     )
+    try connection.execute(
+      """
+      CREATE TABLE IF NOT EXISTS person_mentions (
+        id INTEGER PRIMARY KEY,
+        source_relative_path TEXT NOT NULL,
+        source_note_id TEXT NOT NULL,
+        target_note_id TEXT NOT NULL,
+        display_name TEXT NOT NULL,
+        range_location INTEGER NOT NULL,
+        range_length INTEGER NOT NULL
+      )
+      """
+    )
     try connection.execute("CREATE INDEX IF NOT EXISTS idx_notes_filename_stem ON notes(filename)")
     try connection.execute("CREATE INDEX IF NOT EXISTS idx_headings_note ON note_headings(note_id)")
     try connection.execute("CREATE INDEX IF NOT EXISTS idx_wiki_links_target ON wiki_links(target_note_id)")
     try connection.execute("CREATE INDEX IF NOT EXISTS idx_note_tags_name ON note_tags(normalized_name)")
-    try connection.execute("PRAGMA user_version = 3")
+    try connection.execute("CREATE INDEX IF NOT EXISTS idx_person_mentions_source ON person_mentions(source_note_id)")
+    try connection.execute("CREATE INDEX IF NOT EXISTS idx_person_mentions_target ON person_mentions(target_note_id)")
+    try connection.execute("PRAGMA user_version = 4")
   }
 
   private func ensureColumn(
@@ -585,7 +681,7 @@ public final class NoteIndex: NoteIndexing {
       indexedAt: Date()
     )
 
-    return IndexedDocument(note: note, body: body)
+    return IndexedDocument(note: note, body: body, kind: MarkdownDocumentMetadata.kind(in: rawBody))
   }
 
   private func upsert(_ document: IndexedDocument, connection: SQLiteConnection) throws {
@@ -598,9 +694,9 @@ public final class NoteIndex: NoteIndexing {
       """
       INSERT INTO notes (
         relative_path, note_id, date_string, filename, created_at, modified_at, size,
-        fingerprint, title, excerpt, indexed_at
+        fingerprint, title, excerpt, indexed_at, kind
       )
-      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
       ON CONFLICT(relative_path) DO UPDATE SET
         note_id = excluded.note_id,
         date_string = excluded.date_string,
@@ -611,7 +707,8 @@ public final class NoteIndex: NoteIndexing {
         fingerprint = excluded.fingerprint,
         title = excluded.title,
         excerpt = excluded.excerpt,
-        indexed_at = excluded.indexed_at
+        indexed_at = excluded.indexed_at,
+        kind = excluded.kind
       """,
       bindings: [
         .text(document.note.relativePath),
@@ -624,7 +721,8 @@ public final class NoteIndex: NoteIndexing {
         .text(document.note.fingerprint),
         .text(document.note.title),
         .text(document.note.excerpt),
-        .text(Self.isoString(from: document.note.indexedAt) ?? "")
+        .text(Self.isoString(from: document.note.indexedAt) ?? ""),
+        .nullableText(document.kind?.rawValue)
       ]
     )
 
@@ -647,6 +745,7 @@ public final class NoteIndex: NoteIndexing {
     try upsertHeadings(document, connection: connection)
     try upsertWikiLinks(for: document, connection: connection)
     try upsertTags(for: document, connection: connection)
+    try upsertPersonMentions(for: document, connection: connection)
   }
 
   private func deleteRowsNotIn(_ relativePaths: Set<String>, connection: SQLiteConnection) throws {
@@ -663,6 +762,7 @@ public final class NoteIndex: NoteIndexing {
       try connection.execute("DELETE FROM note_headings WHERE note_relative_path = ?", bindings: [.text(relativePath)])
       try connection.execute("DELETE FROM wiki_links WHERE source_relative_path = ?", bindings: [.text(relativePath)])
       try connection.execute("DELETE FROM note_tags WHERE note_relative_path = ?", bindings: [.text(relativePath)])
+      try connection.execute("DELETE FROM person_mentions WHERE source_relative_path = ?", bindings: [.text(relativePath)])
       try connection.execute("DELETE FROM notes WHERE id = ?", bindings: [.integer(rowID)])
     }
     try deleteUnusedTags(connection: connection)
@@ -679,6 +779,7 @@ public final class NoteIndex: NoteIndexing {
     try connection.execute("DELETE FROM note_headings WHERE note_relative_path = ?", bindings: [.text(relativePath)])
     try connection.execute("DELETE FROM wiki_links WHERE source_relative_path = ?", bindings: [.text(relativePath)])
     try connection.execute("DELETE FROM note_tags WHERE note_relative_path = ?", bindings: [.text(relativePath)])
+    try connection.execute("DELETE FROM person_mentions WHERE source_relative_path = ?", bindings: [.text(relativePath)])
     try connection.execute("DELETE FROM notes WHERE id = ?", bindings: [.integer(rowID)])
     try deleteUnusedTags(connection: connection)
   }
@@ -703,6 +804,7 @@ public final class NoteIndex: NoteIndexing {
       try connection.execute("DELETE FROM note_headings WHERE note_relative_path = ?", bindings: [.text(relativePath)])
       try connection.execute("DELETE FROM wiki_links WHERE source_relative_path = ?", bindings: [.text(relativePath)])
       try connection.execute("DELETE FROM note_tags WHERE note_relative_path = ?", bindings: [.text(relativePath)])
+      try connection.execute("DELETE FROM person_mentions WHERE source_relative_path = ?", bindings: [.text(relativePath)])
       try connection.execute("DELETE FROM notes WHERE id = ?", bindings: [.integer(rowID)])
     }
     try deleteUnusedTags(connection: connection)
@@ -726,6 +828,31 @@ public final class NoteIndex: NoteIndexing {
       )
     }
     try deleteUnusedTags(connection: connection)
+  }
+
+  private func upsertPersonMentions(for document: IndexedDocument, connection: SQLiteConnection) throws {
+    try connection.execute(
+      "DELETE FROM person_mentions WHERE source_relative_path = ?",
+      bindings: [.text(document.note.relativePath)]
+    )
+    for mention in PersonMentionParser.mentions(in: document.body) {
+      try connection.execute(
+        """
+        INSERT INTO person_mentions (
+          source_relative_path, source_note_id, target_note_id, display_name,
+          range_location, range_length
+        ) VALUES (?, ?, ?, ?, ?, ?)
+        """,
+        bindings: [
+          .text(document.note.relativePath),
+          .text(document.note.noteID),
+          .text(mention.targetNoteID),
+          .text(mention.name),
+          .integer(Int64(mention.range.location)),
+          .integer(Int64(mention.range.length))
+        ]
+      )
+    }
   }
 
   private func deleteUnusedTags(connection: SQLiteConnection) throws {
@@ -1012,7 +1139,12 @@ public final class NoteIndex: NoteIndexing {
       guard !trimmed.isEmpty, !trimmed.hasPrefix("#") else {
         continue
       }
-      return String(trimmed.prefix(240))
+      let visible = MarkdownPlainTextRenderer.strippingHTMLComments(from: trimmed)
+        .trimmingCharacters(in: .whitespacesAndNewlines)
+      guard !visible.isEmpty else {
+        continue
+      }
+      return String(visible.prefix(240))
     }
     return ""
   }
@@ -1054,4 +1186,5 @@ public final class NoteIndex: NoteIndexing {
 private struct IndexedDocument {
   let note: IndexedNote
   let body: String
+  let kind: MarkdownDocumentMetadata.NoteKind?
 }

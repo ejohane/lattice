@@ -73,6 +73,12 @@ public final class LatticeAppModel {
     }
   }
   public var tagAutocompleteSelectionIndex = 0
+  public var personAutocompleteSuggestions: [PersonAutocompleteSuggestion] = [] {
+    didSet {
+      clampPersonAutocompleteSelection()
+    }
+  }
+  public var personAutocompleteSelectionIndex = 0
   public var slashCommandSuggestions: [SlashCommandSuggestion] = [] {
     didSet {
       clampSlashCommandSelection()
@@ -136,6 +142,7 @@ public final class LatticeAppModel {
   public var hasEditorAutocompleteSuggestions: Bool {
     !slashCommandSuggestions.isEmpty
       || !tagAutocompleteSuggestions.isEmpty
+      || !personAutocompleteSuggestions.isEmpty
       || !wikiAutocompleteSuggestions.isEmpty
   }
 
@@ -586,6 +593,23 @@ public final class LatticeAppModel {
     }
   }
 
+  public func activatePersonMention(at characterIndex: Int) {
+    guard
+      let folderURL,
+      let mention = PersonMentionParser.mention(at: characterIndex, in: text)
+    else {
+      return
+    }
+    do {
+      guard let target = try indexedNote(noteID: mention.targetNoteID, notesFolderURL: folderURL) else {
+        return
+      }
+      open(target.savedNote, heading: nil, selection: nil, recordHistory: true)
+    } catch {
+      errorMessage = error.localizedDescription
+    }
+  }
+
   public func activateMarkdownLink(at characterIndex: Int) {
     guard
       let folderURL,
@@ -826,6 +850,7 @@ public final class LatticeAppModel {
     selectedRange = NSRange(location: suggestion.replacementRange.location + (suggestion.replacement as NSString).length, length: 0)
     wikiAutocompleteSuggestions = []
     tagAutocompleteSuggestions = []
+    personAutocompleteSuggestions = []
     slashCommandSuggestions = []
     scheduleAutosave()
     refreshWikiLinkStates()
@@ -854,6 +879,8 @@ public final class LatticeAppModel {
     wikiAutocompleteSelectionIndex = 0
     tagAutocompleteSuggestions = []
     tagAutocompleteSelectionIndex = 0
+    personAutocompleteSuggestions = []
+    personAutocompleteSelectionIndex = 0
     slashCommandSuggestions = []
     slashCommandSelectionIndex = 0
   }
@@ -869,12 +896,54 @@ public final class LatticeAppModel {
       length: 0
     )
     tagAutocompleteSuggestions = []
+    personAutocompleteSuggestions = []
     wikiAutocompleteSuggestions = []
     slashCommandSuggestions = []
     scheduleAutosave()
     refreshWikiLinkStates()
     refreshImagePreviewStates()
     editorFocusToken += 1
+  }
+
+  public func selectPersonAutocompleteSuggestion(_ suggestion: PersonAutocompleteSuggestion) {
+    guard let folderURL else {
+      return
+    }
+    let nsString = text as NSString
+    guard NSMaxRange(suggestion.replacementRange) <= nsString.length else {
+      return
+    }
+
+    do {
+      let noteID: String
+      if let existingNoteID = suggestion.targetNoteID {
+        noteID = existingNoteID
+      } else {
+        let person = try noteLibrary.createPersonNote(name: suggestion.name, now: dateProvider())
+        refreshNoteIndex(for: person)
+        let indexed = try indexedNote(for: person, notesFolderURL: folderURL)
+        noteID = indexed.noteID
+        reloadNotes(selecting: selectedNote)
+        status = "Created @\(suggestion.name)"
+      }
+
+      let replacement = PersonMentionParser.replacement(name: suggestion.name, noteID: noteID)
+      text = nsString.replacingCharacters(in: suggestion.replacementRange, with: replacement)
+      selectedRange = NSRange(
+        location: suggestion.replacementRange.location + (replacement as NSString).length,
+        length: 0
+      )
+      personAutocompleteSuggestions = []
+      tagAutocompleteSuggestions = []
+      wikiAutocompleteSuggestions = []
+      slashCommandSuggestions = []
+      scheduleAutosave()
+      refreshWikiLinkStates()
+      refreshImagePreviewStates()
+      editorFocusToken += 1
+    } catch {
+      errorMessage = error.localizedDescription
+    }
   }
 
   public func selectSlashCommandSuggestion(_ suggestion: SlashCommandSuggestion) {
@@ -901,6 +970,7 @@ public final class LatticeAppModel {
       )
       slashCommandSuggestions = []
       tagAutocompleteSuggestions = []
+      personAutocompleteSuggestions = []
       wikiAutocompleteSuggestions = []
       scheduleAutosave()
       refreshWikiLinkStates()
@@ -920,6 +990,9 @@ public final class LatticeAppModel {
     } else if !tagAutocompleteSuggestions.isEmpty {
       let count = tagAutocompleteSuggestions.count
       tagAutocompleteSelectionIndex = (tagAutocompleteSelectionIndex + delta + count) % count
+    } else if !personAutocompleteSuggestions.isEmpty {
+      let count = personAutocompleteSuggestions.count
+      personAutocompleteSelectionIndex = (personAutocompleteSelectionIndex + delta + count) % count
     } else {
       moveWikiAutocompleteSelection(by: delta)
     }
@@ -930,6 +1003,8 @@ public final class LatticeAppModel {
       selectSlashCommandSuggestion(slashCommandSuggestions[slashCommandSelectionIndex])
     } else if tagAutocompleteSuggestions.indices.contains(tagAutocompleteSelectionIndex) {
       selectTagAutocompleteSuggestion(tagAutocompleteSuggestions[tagAutocompleteSelectionIndex])
+    } else if personAutocompleteSuggestions.indices.contains(personAutocompleteSelectionIndex) {
+      selectPersonAutocompleteSuggestion(personAutocompleteSuggestions[personAutocompleteSelectionIndex])
     } else {
       commitSelectedWikiAutocompleteSuggestion()
     }
@@ -939,6 +1014,7 @@ public final class LatticeAppModel {
     guard let folderURL else {
       slashCommandSuggestions = []
       tagAutocompleteSuggestions = []
+      personAutocompleteSuggestions = []
       wikiAutocompleteSuggestions = []
       return
     }
@@ -948,6 +1024,7 @@ public final class LatticeAppModel {
       let prefix = context.prefix.lowercased()
       if prefix.isEmpty || "today".hasPrefix(prefix) {
         tagAutocompleteSuggestions = []
+        personAutocompleteSuggestions = []
         wikiAutocompleteSuggestions = []
         slashCommandSuggestions = [
           SlashCommandSuggestion(
@@ -965,6 +1042,7 @@ public final class LatticeAppModel {
 
     if let context = NoteTagParser.autocompleteContext(in: text, selection: selectedRange) {
       wikiAutocompleteSuggestions = []
+      personAutocompleteSuggestions = []
       let normalizedPrefix = NoteTagParser.normalizedName(context.prefix)
       tagAutocompleteSuggestions = tagSummaries
         .filter { normalizedPrefix.isEmpty || $0.normalizedName.hasPrefix(normalizedPrefix) }
@@ -981,6 +1059,42 @@ public final class LatticeAppModel {
     }
 
     tagAutocompleteSuggestions = []
+    if let context = PersonMentionParser.autocompleteContext(in: text, selection: selectedRange) {
+      wikiAutocompleteSuggestions = []
+      do {
+        let trimmedName = context.name.trimmingCharacters(in: .whitespaces)
+        let candidates = try noteIndex.personCandidates(
+          prefix: trimmedName,
+          notesFolderURL: folderURL,
+          limit: 8
+        )
+        var suggestions = candidates.map { candidate in
+          PersonAutocompleteSuggestion(
+            name: candidate.name,
+            subtitle: "Person",
+            targetNoteID: candidate.noteID,
+            replacementRange: context.replacementRange
+          )
+        }
+        let hasExactMatch = candidates.contains {
+          $0.name.compare(trimmedName, options: [.caseInsensitive, .diacriticInsensitive]) == .orderedSame
+        }
+        if PersonMentionParser.isValidName(trimmedName), !hasExactMatch {
+          suggestions.append(PersonAutocompleteSuggestion(
+            name: trimmedName,
+            subtitle: "Create person",
+            targetNoteID: nil,
+            replacementRange: context.replacementRange
+          ))
+        }
+        personAutocompleteSuggestions = Array(suggestions.prefix(8))
+      } catch {
+        personAutocompleteSuggestions = []
+      }
+      return
+    }
+
+    personAutocompleteSuggestions = []
     guard let context = WikiLinkParser.autocompleteContext(in: text, selection: selectedRange) else {
       wikiAutocompleteSuggestions = []
       return
@@ -1070,6 +1184,17 @@ public final class LatticeAppModel {
     tagAutocompleteSelectionIndex = min(
       max(tagAutocompleteSelectionIndex, 0),
       tagAutocompleteSuggestions.count - 1
+    )
+  }
+
+  private func clampPersonAutocompleteSelection() {
+    guard !personAutocompleteSuggestions.isEmpty else {
+      personAutocompleteSelectionIndex = 0
+      return
+    }
+    personAutocompleteSelectionIndex = min(
+      max(personAutocompleteSelectionIndex, 0),
+      personAutocompleteSuggestions.count - 1
     )
   }
 
@@ -1602,6 +1727,7 @@ public final class LatticeAppModel {
     guard
       (!isNoteMigrationRequired && SlashCommandParser.autocompleteContext(in: text, selection: selectedRange) != nil)
         || NoteTagParser.autocompleteContext(in: text, selection: selectedRange) != nil
+        || PersonMentionParser.autocompleteContext(in: text, selection: selectedRange) != nil
         || WikiLinkParser.autocompleteContext(in: text, selection: selectedRange) != nil
     else {
       if !wikiAutocompleteSuggestions.isEmpty {
@@ -2389,6 +2515,26 @@ public struct TagAutocompleteSuggestion: Identifiable, Equatable {
     self.name = name
     self.noteCount = noteCount
     self.replacement = replacement
+    self.replacementRange = replacementRange
+  }
+}
+
+public struct PersonAutocompleteSuggestion: Identifiable, Equatable {
+  public let id = UUID()
+  public let name: String
+  public let subtitle: String
+  public let targetNoteID: String?
+  public let replacementRange: NSRange
+
+  public init(
+    name: String,
+    subtitle: String,
+    targetNoteID: String?,
+    replacementRange: NSRange
+  ) {
+    self.name = name
+    self.subtitle = subtitle
+    self.targetNoteID = targetNoteID
     self.replacementRange = replacementRange
   }
 }

@@ -547,6 +547,41 @@ public final class NoteLibrary {
   }
 
   @discardableResult
+  public func createPersonNote(name: String, now: Date = Date()) throws -> SavedNote {
+    let trimmedName = name.trimmingCharacters(in: .whitespacesAndNewlines)
+    guard PersonMentionParser.isValidName(trimmedName) else {
+      throw NoteLibraryError.emptyNote
+    }
+
+    guard let folderURL = activeNotesFolderURL() else {
+      throw NoteLibraryError.noActiveNotesFolder
+    }
+    try initializeNotesFolder(at: folderURL)
+
+    let noteID = UUID().uuidString
+    let directoryURL: URL
+    if try flatNoteMigrationPreview() != nil {
+      directoryURL = noteDateDirectory(in: folderURL, now: now)
+      try createDirectory(directoryURL)
+    } else {
+      directoryURL = notesDirectory(in: folderURL)
+    }
+    let noteURL = try availableFlatNoteURL(
+      title: trimmedName,
+      noteID: noteID,
+      sourceIdentity: noteID,
+      in: directoryURL
+    )
+    let body = MarkdownDocumentMetadata.ensurePersonMetadata(
+      in: "# \(trimmedName)\n",
+      id: noteID,
+      createdAt: now
+    )
+    try writeNoteBody(body, to: noteURL)
+    return note(at: noteURL)
+  }
+
+  @discardableResult
   public func ensureDailyNote(now: Date = Date()) throws -> SavedNote {
     guard let folderURL = activeNotesFolderURL() else {
       throw NoteLibraryError.noActiveNotesFolder

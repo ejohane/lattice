@@ -37,7 +37,7 @@ public enum MarkdownPlainTextRenderer {
     text = text.replacingRegex(#"\s+#{1,}\s*$"#, with: "")
     text = text.replacingRegex(#"^\s{0,3}(?:[-+*]|\d+[.)])\s+"#, with: "")
     text = text.replacingRegex(#"^\[[ xX]\]\s+"#, with: "")
-    text = text.replacingRegex(#"\s*<!--.*?-->\s*"#, with: " ")
+    text = strippingHTMLComments(from: text)
     text = text.replacingRegex(#"!\[([^\]]*)\]\([^)]+\)"#, with: "$1")
     text = text.replacingRegex(#"\[([^\]]+)\]\([^)]+\)"#, with: "$1")
     text = text.replacingRegex(#"\[\[[^\]|]+(?:#[^\]|]+)?\|([^\]]+)\]\]"#, with: "$1")
@@ -53,6 +53,10 @@ public enum MarkdownPlainTextRenderer {
     text = text.replacingRegex(#"\s+"#, with: " ")
 
     return text.trimmingCharacters(in: .whitespacesAndNewlines)
+  }
+
+  public static func strippingHTMLComments(from text: String) -> String {
+    text.replacingRegex(#"\s*<!--.*?-->\s*"#, with: " ")
   }
 
   private static func isCodeFence(_ line: String) -> Bool {
