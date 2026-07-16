@@ -12,7 +12,7 @@ bun install
 [[actions]]
 name = "Run Mac App"
 icon = "run"
-command = "bun run mac:run"
+command = "./script/build_and_run.sh"
 
 [[actions]]
 name = "Build Mac App"

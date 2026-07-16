@@ -159,6 +159,76 @@ struct LatticeAppModelTests {
     #expect(try notes.allSatisfy { try !fixture.library.body(for: $0).contains("#career") })
   }
 
+  @Test("today slash command creates a daily note and inserts a durable fixed-date link")
+  func insertsTodaySlashCommand() throws {
+    let fixture = try Fixture()
+    defer { fixture.cleanup() }
+    let now = fixture.date()
+    let model = LatticeAppModel(
+      noteLibrary: fixture.library,
+      folderAccessStore: fixture.folderAccessStore,
+      noteIndex: NoteIndex(appSupportURL: fixture.appSupportURL),
+      dateProvider: { now }
+    )
+
+    try fixture.fileManager.createDirectory(at: fixture.root, withIntermediateDirectories: true)
+    model.chooseFolder(fixture.root)
+    model.text = "Decision /to"
+    model.selectedRange = NSRange(location: (model.text as NSString).length, length: 0)
+    model.updateWikiAutocomplete()
+
+    let suggestion = try #require(model.slashCommandSuggestions.first)
+    #expect(suggestion.command == "today")
+    #expect(model.selectedNote == nil)
+    model.commitSelectedEditorAutocompleteSuggestion()
+
+    let dailyURL = fixture.root.appendingPathComponent("notes/2026-06-26.md")
+    let dailyRawBody = try String(contentsOf: dailyURL, encoding: .utf8)
+    let dailyID = try #require(MarkdownDocumentMetadata.noteID(in: dailyRawBody))
+    #expect(model.text == "Decision [[2026-06-26]]\(WikiLinkParser.targetComment(noteID: dailyID))")
+    #expect(model.slashCommandSuggestions.isEmpty)
+    #expect(model.selectedNote == nil)
+    #expect(MarkdownDocumentMetadata.strippingFrontMatter(from: dailyRawBody).hasPrefix("# Friday, June 26, 2026"))
+  }
+
+  @Test("legacy folders prompt once and migrate through the app model")
+  func promptsForAndRunsFlatNoteMigration() throws {
+    let fixture = try Fixture()
+    defer { fixture.cleanup() }
+    let legacyURL = fixture.root.appendingPathComponent(
+      "notes/2026-06-25/2026-06-25T09-00-00.md"
+    )
+    try fixture.fileManager.createDirectory(
+      at: legacyURL.deletingLastPathComponent(),
+      withIntermediateDirectories: true
+    )
+    try "# Legacy Note\n\nBody".write(to: legacyURL, atomically: true, encoding: .utf8)
+    let model = LatticeAppModel(
+      noteLibrary: fixture.library,
+      folderAccessStore: fixture.folderAccessStore,
+      noteIndex: NoteIndex(appSupportURL: fixture.appSupportURL),
+      dateProvider: { fixture.date() }
+    )
+
+    model.chooseFolder(fixture.root)
+    #expect(model.isNoteMigrationRequired)
+    #expect(model.isShowingNoteMigrationPrompt)
+
+    model.deferNoteMigration()
+    #expect(!model.isShowingNoteMigrationPrompt)
+    #expect(fixture.fileManager.fileExists(atPath: legacyURL.path))
+
+    model.showNoteMigrationPrompt()
+    model.migrateNotesToFlatLayout()
+
+    #expect(!model.isNoteMigrationRequired)
+    #expect(model.noteMigrationSummary != nil)
+    #expect(fixture.fileManager.fileExists(
+      atPath: fixture.root.appendingPathComponent("notes/Legacy Note.md").path
+    ))
+    #expect(!fixture.fileManager.fileExists(atPath: legacyURL.path))
+  }
+
   @Test("start restores the last active note instead of creating a new draft")
   func startRestoresLastActiveNote() throws {
     let fixture = try Fixture()
@@ -256,12 +326,14 @@ struct LatticeAppModelTests {
     ])
 
     let note = try #require(model.selectedNote)
-    let expectedMarkdown = "![Screen Shot](../../attachments/2026-06-27/Screen Shot-\(note.filenameTitle).png)\n"
-    #expect(note.url.path.hasSuffix("/notes/2026-06-27/\(note.filenameTitle).md"))
+    let attachmentDate = fixture.localDateString(from: now)
+    let attachmentName = "Screen Shot-\(fixture.timestampString(from: now)).png"
+    let expectedMarkdown = "![Screen Shot](../attachments/\(attachmentDate)/\(attachmentName))\n"
+    #expect(note.url.path.hasSuffix("/notes/Screen Shot.md"))
     #expect(model.text == expectedMarkdown)
     #expect(model.selectedRange.location == (model.text as NSString).range(of: ")").location + 1)
     #expect(try fixture.library.body(for: note) == model.text)
-    #expect(try Data(contentsOf: fixture.root.appendingPathComponent("attachments/2026-06-27/Screen Shot-\(note.filenameTitle).png")) == Data("png-bytes".utf8))
+    #expect(try Data(contentsOf: fixture.root.appendingPathComponent("attachments/\(attachmentDate)/\(attachmentName)")) == Data("png-bytes".utf8))
     #expect(model.imagePreviewStates.count == 1)
   }
 
@@ -292,7 +364,9 @@ struct LatticeAppModelTests {
       )
     ])
 
-    #expect(model.text == "Before \n\n![diagram](../../attachments/2026-06-26/diagram-\(note.filenameTitle).jpg)\n\n after")
+    let attachmentDate = fixture.localDateString(from: now)
+    let attachmentName = "diagram-\(fixture.timestampString(from: now)).jpg"
+    #expect(model.text == "Before \n\n![diagram](../attachments/\(attachmentDate)/\(attachmentName))\n\n after")
     #expect(try fixture.library.body(for: note) == "\(model.text)\n")
     #expect(MarkdownDocumentMetadata.noteID(in: try fixture.library.rawBody(for: note)) == existingID)
     #expect(model.imagePreviewStates.count == 1)
@@ -313,7 +387,7 @@ struct LatticeAppModelTests {
     try fixture.fileManager.createDirectory(at: attachmentURL.deletingLastPathComponent(), withIntermediateDirectories: true)
     try Data("image".utf8).write(to: attachmentURL)
     let note = try fixture.library.createNote(
-      body: "Before\n\n![Screenshot](../../attachments/2026-06-26/image.png)\n\nAfter",
+      body: "Before\n\n![Screenshot](../attachments/2026-06-26/image.png)\n\nAfter",
       now: fixture.date()
     )
 
@@ -323,9 +397,9 @@ struct LatticeAppModelTests {
     model.resizeImageAttachment(lineLocation: image.lineRange.location, width: 720)
     model.flushAutosave()
 
-    #expect(model.text.contains("![Screenshot|720](../../attachments/2026-06-26/image.png)"))
+    #expect(model.text.contains("![Screenshot|720](../attachments/2026-06-26/image.png)"))
     #expect(model.imagePreviewStates.first?.link.width == 720)
-    #expect(try fixture.library.body(for: note).contains("![Screenshot|720](../../attachments/2026-06-26/image.png)"))
+    #expect(try fixture.library.body(for: note).contains("![Screenshot|720](../attachments/2026-06-26/image.png)"))
   }
 
   @Test("autosave records note created and edited activity")
@@ -1196,7 +1270,12 @@ private struct Fixture {
     var calendar = Calendar(identifier: .gregorian)
     calendar.timeZone = TimeZone(secondsFromGMT: 0) ?? .current
     self.calendar = calendar
-    library = NoteLibrary(defaults: defaults, fileManager: fileManager)
+    let migrationBackupRoot = appSupportURL.appendingPathComponent("Migration Backups", isDirectory: true)
+    library = NoteLibrary(
+      defaults: defaults,
+      fileManager: fileManager,
+      migrationBackupRootURLProvider: { migrationBackupRoot }
+    )
     folderAccessStore = FolderAccessStore(defaults: defaults)
     activityStore = ActivityStore(fileManager: fileManager, calendar: calendar)
   }
@@ -1212,6 +1291,22 @@ private struct Fixture {
     components.minute = 15
     components.second = 0
     return components.date ?? Date(timeIntervalSince1970: 0)
+  }
+
+  func localDateString(from date: Date) -> String {
+    dateString(from: date, format: "yyyy-MM-dd")
+  }
+
+  func timestampString(from date: Date) -> String {
+    dateString(from: date, format: "yyyy-MM-dd'T'HH-mm-ss")
+  }
+
+  private func dateString(from date: Date, format: String) -> String {
+    let formatter = DateFormatter()
+    formatter.locale = Locale(identifier: "en_US_POSIX")
+    formatter.calendar = Calendar(identifier: .gregorian)
+    formatter.dateFormat = format
+    return formatter.string(from: date)
   }
 
   func cleanup() {

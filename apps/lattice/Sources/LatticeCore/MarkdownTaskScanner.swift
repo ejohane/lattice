@@ -144,24 +144,29 @@ public enum MarkdownTaskScanner {
       throw NoteLibraryError.invalidNotesFolder("The notes path exists but is not a folder: \(notesURL.path)")
     }
 
-    let dateURLs = try fileManager.contentsOfDirectory(
+    let childURLs = try fileManager.contentsOfDirectory(
       at: notesURL,
-      includingPropertiesForKeys: [.isDirectoryKey],
+      includingPropertiesForKeys: [.isDirectoryKey, .isRegularFileKey],
       options: [.skipsHiddenFiles]
     )
 
     var noteURLs: [URL] = []
-    for dateURL in dateURLs {
-      let values = try dateURL.resourceValues(forKeys: [.isDirectoryKey])
+    for childURL in childURLs {
+      let values = try childURL.resourceValues(forKeys: [.isDirectoryKey, .isRegularFileKey])
+      if values.isRegularFile == true, childURL.pathExtension.lowercased() == "md" {
+        noteURLs.append(childURL)
+        continue
+      }
+
       guard values.isDirectory == true else {
         continue
       }
-      let childURLs = try fileManager.contentsOfDirectory(
-        at: dateURL,
+      let legacyNoteURLs = try fileManager.contentsOfDirectory(
+        at: childURL,
         includingPropertiesForKeys: [.isRegularFileKey],
         options: [.skipsHiddenFiles]
       )
-      noteURLs.append(contentsOf: childURLs.filter { url in
+      noteURLs.append(contentsOf: legacyNoteURLs.filter { url in
         url.pathExtension.lowercased() == "md"
           && ((try? url.resourceValues(forKeys: [.isRegularFileKey]).isRegularFile) == true)
       })

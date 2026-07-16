@@ -46,6 +46,26 @@ struct NoteIndexTests {
     #expect(note.createdAt != nil)
   }
 
+  @Test("indexes flat notes using durable creation metadata")
+  func rebuildIndexesFlatNotes() throws {
+    let fixture = try Fixture()
+    defer { fixture.cleanup() }
+    let createdAt = try #require(ISO8601DateFormatter().date(from: "2026-06-17T14:32:10Z"))
+    try fixture.writeNote(
+      relativePath: "notes/Project Brief.md",
+      body: "---\nlattice:\n  id: project123\n  created_at: 2026-06-17T14:32:10Z\n---\n\n# Project Brief\n"
+    )
+
+    try fixture.index.rebuild(notesFolderURL: fixture.root)
+
+    let note = try #require(try fixture.index.indexedNotes(notesFolderURL: fixture.root).first)
+    #expect(note.relativePath == "notes/Project Brief.md")
+    #expect(note.noteID == "project123")
+    #expect(note.createdAt == createdAt)
+    #expect(note.savedNote.createdAt == createdAt)
+    #expect(try fixture.index.recentNotes(notesFolderURL: fixture.root).first?.createdAt == createdAt)
+  }
+
   @Test("indexes unique tag note counts and filters notes")
   func indexesTags() throws {
     let fixture = try Fixture()

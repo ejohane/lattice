@@ -158,6 +158,7 @@ public struct WikiBacklink: Equatable, Sendable {
 
 public enum MarkdownDocumentMetadata {
   public static let latticeIDKey = "id"
+  public static let latticeCreatedAtKey = "created_at"
 
   public static func noteID(in rawBody: String) -> String? {
     guard let frontMatter = frontMatter(in: rawBody) else {
@@ -174,20 +175,92 @@ public enum MarkdownDocumentMetadata {
     return (frontMatter as NSString).substring(with: match.range(at: 1)).nilIfEmpty
   }
 
+  public static func createdAt(in rawBody: String) -> Date? {
+    guard let frontMatter = frontMatter(in: rawBody) else {
+      return nil
+    }
+    let pattern = #"(?m)^\s*created_at:\s*([^\s]+)\s*$"#
+    guard
+      let regex = try? NSRegularExpression(pattern: pattern),
+      let match = regex.firstMatch(
+        in: frontMatter,
+        range: NSRange(location: 0, length: (frontMatter as NSString).length)
+      )
+    else {
+      return nil
+    }
+    let value = (frontMatter as NSString).substring(with: match.range(at: 1))
+    return ISO8601DateFormatter().date(from: value)
+  }
+
   public static func ensureNoteID(in rawBody: String, id: String = UUID().uuidString) -> String {
-    if noteID(in: rawBody) != nil {
+    ensureNoteMetadata(in: rawBody, id: id, createdAt: nil)
+  }
+
+  public static func ensureNoteMetadata(
+    in rawBody: String,
+    id: String = UUID().uuidString,
+    createdAt: Date?
+  ) -> String {
+    let existingID = noteID(in: rawBody)
+    let existingCreatedAt = self.createdAt(in: rawBody)
+    guard existingID == nil || (createdAt != nil && existingCreatedAt == nil) else {
       return rawBody
     }
 
-    let body = strippingFrontMatter(from: rawBody)
-    let prefix = """
-      ---
-      lattice:
-        id: \(id)
-      ---
+    guard let frontMatterRange = frontMatterRange(in: rawBody) else {
+      var metadataLines = ["  id: \(existingID ?? id)"]
+      if let createdAt {
+        metadataLines.append("  created_at: \(ISO8601DateFormatter().string(from: createdAt))")
+      }
+      let prefix = """
+        ---
+        lattice:
+        \(metadataLines.joined(separator: "\n"))
+        ---
 
-      """
-    return prefix + body.trimmingLeadingNewlines()
+        """
+      return prefix + rawBody.trimmingLeadingNewlines()
+    }
+
+    let nsString = rawBody as NSString
+    let frontMatter = nsString.substring(with: frontMatterRange)
+    let frontMatterNSString = frontMatter as NSString
+    let latticePattern = #"(?m)^\s*lattice:\s*$"#
+    let latticeMatch = (try? NSRegularExpression(pattern: latticePattern))?.firstMatch(
+      in: frontMatter,
+      range: NSRange(location: 0, length: frontMatterNSString.length)
+    )
+
+    var additions: [String] = []
+    if existingID == nil {
+      additions.append("  id: \(id)")
+    }
+    if let createdAt, existingCreatedAt == nil {
+      additions.append("  created_at: \(ISO8601DateFormatter().string(from: createdAt))")
+    }
+    guard !additions.isEmpty else {
+      return rawBody
+    }
+
+    let insertionLocation: Int
+    let insertionText: String
+    if let latticeMatch {
+      let latticeLineRange = frontMatterNSString.lineRange(for: latticeMatch.range)
+      insertionLocation = latticeLineRange.location + latticeLineRange.length
+      insertionText = additions.joined(separator: "\n") + "\n"
+    } else {
+      let closingLineStart = frontMatterNSString.lineRange(
+        for: NSRange(location: max(0, frontMatterNSString.length - 1), length: 0)
+      ).location
+      insertionLocation = closingLineStart
+      insertionText = "lattice:\n" + additions.joined(separator: "\n") + "\n"
+    }
+
+    return nsString.replacingCharacters(
+      in: NSRange(location: insertionLocation, length: 0),
+      with: insertionText
+    )
   }
 
   public static func strippingFrontMatter(from rawBody: String) -> String {

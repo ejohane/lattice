@@ -31,12 +31,29 @@ Lattice stores notes as:
 ```text
 ~/Documents/Lattice/
   notes/
-    2026-06-17/
-      2026-06-17T14-32-10.md
+    Project kickoff.md
+    Project kickoff--a1b2c3d4.md
+    2026-06-17.md
 ```
 
-Notes are ordinary `.md` files with no JSON wrapper, database, front matter, or
-app-specific sidecar index.
+New notes use a filesystem-safe version of their first rendered line as the
+filename. If two notes have the same title, Lattice keeps both and adds a short,
+stable identity suffix to the later filename. Daily notes use the canonical
+`YYYY-MM-DD.md` filename; type `/today` in the editor to create or reuse today's
+daily note and insert a durable link to it without leaving the current note.
+
+Notes remain ordinary `.md` files with no JSON wrapper or app-specific sidecar
+index. Lattice stores a durable note ID and original creation date in a small
+`lattice` section of YAML front matter so links, date grouping, and collision
+handling remain stable when files are renamed.
+
+When Lattice first opens a folder that still contains the older
+`notes/YYYY-MM-DD/timestamp.md` layout, it offers an explicit migration. Nothing
+moves until the user confirms. The migration first copies the complete `notes`
+directory to an app-support recovery folder, then flattens and renames notes,
+rewrites resolvable note and attachment links, verifies every destination, and
+only then removes the old copies. Ambiguous title-only links are left unchanged
+and reported instead of being guessed.
 
 ## Install
 

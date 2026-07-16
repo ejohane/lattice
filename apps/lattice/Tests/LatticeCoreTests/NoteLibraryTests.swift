@@ -96,18 +96,50 @@ struct NoteLibraryTests {
     ) == "Existing cloud\n")
   }
 
-  @Test("creates timestamped markdown notes under date folders")
-  func createsTimestampedMarkdownNote() throws {
+  @Test("creates flat title-named markdown notes with durable creation metadata")
+  func createsFlatTitleNamedMarkdownNote() throws {
     let fixture = try Fixture()
     defer { fixture.cleanup() }
 
     try fixture.library.selectNotesFolder(fixture.root)
     let note = try fixture.library.createNote(body: "Hello\n\nWorld", now: fixture.date)
 
-    #expect(note.url.path.hasSuffix("/notes/2026-06-17/2026-06-17T14-32-10.md"))
+    #expect(note.url.path.hasSuffix("/notes/Hello.md"))
     #expect(try fixture.library.body(for: note) == "Hello\n\nWorld\n")
-    #expect(MarkdownDocumentMetadata.noteID(in: try String(contentsOf: note.url, encoding: .utf8)) != nil)
+    let rawBody = try String(contentsOf: note.url, encoding: .utf8)
+    #expect(MarkdownDocumentMetadata.noteID(in: rawBody) != nil)
+    #expect(MarkdownDocumentMetadata.createdAt(in: rawBody) == fixture.date)
     #expect(fixture.library.activeNoteURL()?.path == note.url.path)
+
+    _ = try fixture.library.updateNote(note, body: "Hello\n\nUpdated")
+    let updatedRawBody = try String(contentsOf: note.url, encoding: .utf8)
+    #expect(MarkdownDocumentMetadata.createdAt(in: updatedRawBody) == fixture.date)
+
+    let noteID = try #require(MarkdownDocumentMetadata.noteID(in: updatedRawBody))
+    _ = try fixture.library.updateNote(note, body: "")
+    let clearedRawBody = try String(contentsOf: note.url, encoding: .utf8)
+    #expect(MarkdownDocumentMetadata.noteID(in: clearedRawBody) == noteID)
+    #expect(MarkdownDocumentMetadata.createdAt(in: clearedRawBody) == fixture.date)
+    #expect(try fixture.library.body(for: note).isEmpty)
+  }
+
+  @Test("uses stable identity suffixes for duplicate note titles")
+  func duplicateTitlesUseStableIdentitySuffixes() throws {
+    let fixture = try Fixture()
+    defer { fixture.cleanup() }
+
+    try fixture.library.selectNotesFolder(fixture.root)
+    let first = try fixture.library.createNote(body: "# Project Plan", now: fixture.date)
+    let second = try fixture.library.createNote(
+      body: "# Project Plan\n\nDifferent project",
+      now: fixture.date.addingTimeInterval(1)
+    )
+
+    #expect(first.filenameTitle == "Project Plan")
+    #expect(second.filenameTitle.hasPrefix("Project Plan--"))
+    #expect(fixture.library.displayTitle(for: first) == "Project Plan")
+    #expect(fixture.library.displayTitle(for: second) == "Project Plan")
+    #expect(first.url.deletingLastPathComponent() == second.url.deletingLastPathComponent())
   }
 
   @Test("renames and deletes inline tags across notes while preserving metadata")
@@ -266,8 +298,144 @@ struct NoteLibraryTests {
       now: fixture.date
     )
 
-    #expect(note.url.path.hasSuffix("/notes/2026-06-17/2026-06-17T14-32-10.md"))
+    #expect(note.url.path.hasSuffix("/notes/Project Brief draft.md"))
     #expect(fixture.library.displayTitle(for: note) == "Project Brief draft")
+  }
+
+  @Test("migrates legacy notes flat while preserving identities and relative references")
+  func migratesLegacyNotesFlat() throws {
+    let fixture = try Fixture()
+    defer { fixture.cleanup() }
+    let backupRoot = fixture.root.appendingPathComponent("migration-backups", isDirectory: true)
+    let library = NoteLibrary(
+      defaults: fixture.defaults,
+      fileManager: fixture.fileManager,
+      migrationBackupRootURLProvider: { backupRoot }
+    )
+    try library.selectNotesFolder(fixture.root)
+
+    let notesURL = fixture.root.appendingPathComponent("notes", isDirectory: true)
+    let firstDateURL = notesURL.appendingPathComponent("2026-06-16", isDirectory: true)
+    let secondDateURL = notesURL.appendingPathComponent("2026-06-17", isDirectory: true)
+    let sourceDateURL = notesURL.appendingPathComponent("2026-06-18", isDirectory: true)
+    let attachmentURL = fixture.root
+      .appendingPathComponent("attachments/2026-06-18/image.png")
+    try fixture.fileManager.createDirectory(at: firstDateURL, withIntermediateDirectories: true)
+    try fixture.fileManager.createDirectory(at: secondDateURL, withIntermediateDirectories: true)
+    try fixture.fileManager.createDirectory(at: sourceDateURL, withIntermediateDirectories: true)
+    try fixture.fileManager.createDirectory(
+      at: attachmentURL.deletingLastPathComponent(),
+      withIntermediateDirectories: true
+    )
+    try Data("image".utf8).write(to: attachmentURL)
+
+    let firstURL = firstDateURL.appendingPathComponent("2026-06-16T10-00-00.md")
+    let secondURL = secondDateURL.appendingPathComponent("2026-06-17T10-00-00.md")
+    let sourceURL = sourceDateURL.appendingPathComponent("2026-06-18T10-00-00.md")
+    try "---\nlattice:\n  id: aaaa1111\n---\n\n# Project Plan\n".write(
+      to: firstURL,
+      atomically: true,
+      encoding: .utf8
+    )
+    try "---\nlattice:\n  id: bbbb2222\n---\n\n# Project Plan\n\nSecond\n".write(
+      to: secondURL,
+      atomically: true,
+      encoding: .utf8
+    )
+    try """
+      ---
+      lattice:
+        id: source333
+      ---
+
+      # Source
+
+      [[Project Plan]]
+      [[Project Plan]]<!-- lattice:target=bbbb2222 -->
+      [First](../2026-06-16/2026-06-16T10-00-00.md)
+      ![Image](../../attachments/2026-06-18/image.png)
+      """.write(to: sourceURL, atomically: true, encoding: .utf8)
+    _ = try library.openNote(SavedNote(url: secondURL, dateString: "2026-06-17"))
+
+    let preview = try #require(try library.flatNoteMigrationPreview())
+    #expect(preview.noteCount == 3)
+
+    let result = try library.migrateNotesToFlatLayout(now: fixture.date)
+    let firstDestination = notesURL.appendingPathComponent("Project Plan.md")
+    let secondDestination = notesURL.appendingPathComponent("Project Plan--bbbb2222.md")
+    let sourceDestination = notesURL.appendingPathComponent("Source.md")
+
+    #expect(result.migratedNoteCount == 3)
+    #expect(result.collisionCount == 1)
+    #expect(result.ambiguousLinkCount == 1)
+    #expect(fixture.fileManager.fileExists(atPath: firstDestination.path))
+    #expect(fixture.fileManager.fileExists(atPath: secondDestination.path))
+    #expect(fixture.fileManager.fileExists(atPath: sourceDestination.path))
+    #expect(library.activeNoteURL() == secondDestination)
+    #expect(try library.flatNoteMigrationPreview() == nil)
+    #expect(fixture.fileManager.fileExists(atPath: result.backupURL.path))
+
+    let migratedSource = try String(contentsOf: sourceDestination, encoding: .utf8)
+    #expect(migratedSource.contains("[[Project Plan]]\n"))
+    #expect(migratedSource.contains(
+      "[[Project Plan--bbbb2222|Project Plan]]<!-- lattice:target=bbbb2222 -->"
+    ))
+    #expect(migratedSource.contains("[First](Project Plan.md)"))
+    #expect(migratedSource.contains("![Image](../attachments/2026-06-18/image.png)"))
+    #expect(!fixture.fileManager.fileExists(atPath: firstDateURL.path))
+    #expect(!fixture.fileManager.fileExists(atPath: secondDateURL.path))
+    #expect(!fixture.fileManager.fileExists(atPath: sourceDateURL.path))
+  }
+
+  @Test("refuses migration when different notes share a durable identity")
+  func refusesMigrationForConflictingNoteIDs() throws {
+    let fixture = try Fixture()
+    defer { fixture.cleanup() }
+    let backupRoot = fixture.root.appendingPathComponent("migration-backups", isDirectory: true)
+    let library = NoteLibrary(
+      defaults: fixture.defaults,
+      fileManager: fixture.fileManager,
+      migrationBackupRootURLProvider: { backupRoot }
+    )
+    try library.selectNotesFolder(fixture.root)
+
+    let firstDirectory = fixture.root.appendingPathComponent("notes/2026-06-16", isDirectory: true)
+    let secondDirectory = fixture.root.appendingPathComponent("notes/2026-06-17", isDirectory: true)
+    try fixture.fileManager.createDirectory(at: firstDirectory, withIntermediateDirectories: true)
+    try fixture.fileManager.createDirectory(at: secondDirectory, withIntermediateDirectories: true)
+    let firstURL = firstDirectory.appendingPathComponent("first.md")
+    let secondURL = secondDirectory.appendingPathComponent("second.md")
+    try "---\nlattice:\n  id: duplicate123\n---\n\nFirst\n".write(
+      to: firstURL,
+      atomically: true,
+      encoding: .utf8
+    )
+    try "---\nlattice:\n  id: duplicate123\n---\n\nSecond\n".write(
+      to: secondURL,
+      atomically: true,
+      encoding: .utf8
+    )
+
+    #expect(throws: NoteLibraryError.self) {
+      _ = try library.migrateNotesToFlatLayout(now: fixture.date)
+    }
+    #expect(fixture.fileManager.fileExists(atPath: firstURL.path))
+    #expect(fixture.fileManager.fileExists(atPath: secondURL.path))
+  }
+
+  @Test("creates and reuses one canonical daily note")
+  func createsAndReusesDailyNote() throws {
+    let fixture = try Fixture()
+    defer { fixture.cleanup() }
+
+    try fixture.library.selectNotesFolder(fixture.root)
+    let first = try fixture.library.ensureDailyNote(now: fixture.date)
+    try fixture.library.updateNote(first, body: "# Wednesday, June 17, 2026\n\nJournal entry")
+    let second = try fixture.library.ensureDailyNote(now: fixture.date.addingTimeInterval(60))
+
+    #expect(first.url == second.url)
+    #expect(first.filenameTitle == "2026-06-17")
+    #expect(try fixture.library.body(for: second).contains("Journal entry"))
   }
 
   @Test("strips block markdown from rendered display titles")
