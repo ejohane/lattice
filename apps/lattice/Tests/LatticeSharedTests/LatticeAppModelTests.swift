@@ -326,13 +326,14 @@ struct LatticeAppModelTests {
     ])
 
     let note = try #require(model.selectedNote)
-    let attachmentName = "Screen Shot-2026-06-27T18-15-00.png"
-    let expectedMarkdown = "![Screen Shot](../attachments/2026-06-27/\(attachmentName))\n"
+    let attachmentDate = fixture.localDateString(from: now)
+    let attachmentName = "Screen Shot-\(fixture.timestampString(from: now)).png"
+    let expectedMarkdown = "![Screen Shot](../attachments/\(attachmentDate)/\(attachmentName))\n"
     #expect(note.url.path.hasSuffix("/notes/Screen Shot.md"))
     #expect(model.text == expectedMarkdown)
     #expect(model.selectedRange.location == (model.text as NSString).range(of: ")").location + 1)
     #expect(try fixture.library.body(for: note) == model.text)
-    #expect(try Data(contentsOf: fixture.root.appendingPathComponent("attachments/2026-06-27/\(attachmentName)")) == Data("png-bytes".utf8))
+    #expect(try Data(contentsOf: fixture.root.appendingPathComponent("attachments/\(attachmentDate)/\(attachmentName)")) == Data("png-bytes".utf8))
     #expect(model.imagePreviewStates.count == 1)
   }
 
@@ -363,7 +364,9 @@ struct LatticeAppModelTests {
       )
     ])
 
-    #expect(model.text == "Before \n\n![diagram](../attachments/2026-06-26/diagram-2026-06-26T05-15-00.jpg)\n\n after")
+    let attachmentDate = fixture.localDateString(from: now)
+    let attachmentName = "diagram-\(fixture.timestampString(from: now)).jpg"
+    #expect(model.text == "Before \n\n![diagram](../attachments/\(attachmentDate)/\(attachmentName))\n\n after")
     #expect(try fixture.library.body(for: note) == "\(model.text)\n")
     #expect(MarkdownDocumentMetadata.noteID(in: try fixture.library.rawBody(for: note)) == existingID)
     #expect(model.imagePreviewStates.count == 1)
@@ -1288,6 +1291,22 @@ private struct Fixture {
     components.minute = 15
     components.second = 0
     return components.date ?? Date(timeIntervalSince1970: 0)
+  }
+
+  func localDateString(from date: Date) -> String {
+    dateString(from: date, format: "yyyy-MM-dd")
+  }
+
+  func timestampString(from date: Date) -> String {
+    dateString(from: date, format: "yyyy-MM-dd'T'HH-mm-ss")
+  }
+
+  private func dateString(from date: Date, format: String) -> String {
+    let formatter = DateFormatter()
+    formatter.locale = Locale(identifier: "en_US_POSIX")
+    formatter.calendar = Calendar(identifier: .gregorian)
+    formatter.dateFormat = format
+    return formatter.string(from: date)
   }
 
   func cleanup() {
