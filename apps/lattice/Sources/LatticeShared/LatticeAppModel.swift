@@ -455,6 +455,27 @@ public final class LatticeAppModel {
     reloadNotes()
   }
 
+  public func openTodayNote() {
+    guard hasFolder, !isNoteMigrationRequired else {
+      return
+    }
+
+    flushAutosave()
+    do {
+      let dailyNote = try noteLibrary.ensureDailyNote(now: dateProvider())
+      refreshNoteIndex(for: dailyNote)
+      open(
+        dailyNote,
+        heading: nil,
+        selection: nil,
+        recordHistory: true,
+        flushBeforeOpen: false
+      )
+    } catch {
+      errorMessage = error.localizedDescription
+    }
+  }
+
   public func open(_ note: SavedNote) {
     open(note, heading: nil, selection: nil, recordHistory: true)
   }
@@ -2294,6 +2315,15 @@ public final class LatticeAppModel {
         keyboardShortcut: keyboardShortcut(for: .navigateForward)?.displayText
       ) { [weak self] in
         self?.navigateForward()
+      },
+      CommandPaletteCommand(
+        id: "lattice.todayNote",
+        title: "Today’s Note",
+        subtitle: "Create or open today’s daily note",
+        systemImage: "calendar",
+        isEnabled: !isNoteMigrationRequired
+      ) { [weak self] in
+        self?.openTodayNote()
       },
       CommandPaletteCommand(
         id: "lattice.newNote",
