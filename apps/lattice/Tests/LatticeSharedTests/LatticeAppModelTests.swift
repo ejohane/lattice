@@ -234,6 +234,46 @@ struct LatticeAppModelTests {
     #expect(MarkdownDocumentMetadata.strippingFrontMatter(from: dailyRawBody).hasPrefix("# Friday, June 26, 2026"))
   }
 
+  @Test("today palette command creates, opens, and reuses the canonical daily note")
+  func opensTodayNoteFromCommandPalette() throws {
+    let fixture = try Fixture()
+    defer { fixture.cleanup() }
+    let now = fixture.date()
+    let model = LatticeAppModel(
+      noteLibrary: fixture.library,
+      folderAccessStore: fixture.folderAccessStore,
+      noteIndex: NoteIndex(appSupportURL: fixture.appSupportURL),
+      dateProvider: { now }
+    )
+
+    try fixture.fileManager.createDirectory(at: fixture.root, withIntermediateDirectories: true)
+    model.chooseFolder(fixture.root)
+    model.text = "# Source Note\n\nUnsaved context"
+
+    let command = try #require(model.commandPaletteCommands().first { $0.title == "Today’s Note" })
+    #expect(command.subtitle == "Create or open today’s daily note")
+    #expect(command.keyboardShortcut == nil)
+    command.perform()
+
+    let dailyNote = try #require(model.selectedNote)
+    #expect(dailyNote.filenameTitle == "2026-06-26")
+    #expect(model.text == "# Friday, June 26, 2026")
+    #expect(model.selectedRange.location == (model.text as NSString).length)
+    #expect(try fixture.library.listNotes().flatMap(\.notes).count == 2)
+
+    model.text += "\n\nJournal entry"
+    model.flushAutosave()
+    let sourceNote = try #require(
+      try fixture.library.listNotes().flatMap(\.notes).first { $0.filenameTitle == "Source Note" }
+    )
+    model.open(sourceNote)
+    command.perform()
+
+    #expect(model.selectedNote?.url == dailyNote.url)
+    #expect(model.text.contains("Journal entry"))
+    #expect(try fixture.library.listNotes().flatMap(\.notes).count == 2)
+  }
+
   @Test("legacy folders prompt once and migrate through the app model")
   func promptsForAndRunsFlatNoteMigration() throws {
     let fixture = try Fixture()
@@ -256,6 +296,7 @@ struct LatticeAppModelTests {
     model.chooseFolder(fixture.root)
     #expect(model.isNoteMigrationRequired)
     #expect(model.isShowingNoteMigrationPrompt)
+    #expect(!model.commandPaletteCommands().contains { $0.title == "Today’s Note" })
 
     model.deferNoteMigration()
     #expect(!model.isShowingNoteMigrationPrompt)
@@ -266,6 +307,7 @@ struct LatticeAppModelTests {
 
     #expect(!model.isNoteMigrationRequired)
     #expect(model.noteMigrationSummary != nil)
+    #expect(model.commandPaletteCommands().contains { $0.title == "Today’s Note" })
     #expect(fixture.fileManager.fileExists(
       atPath: fixture.root.appendingPathComponent("notes/Legacy Note.md").path
     ))
@@ -983,6 +1025,7 @@ struct LatticeAppModelTests {
     model.commandPaletteQuery = ""
     let commandTitles = model.commandPaletteCommands().map(\.title)
     #expect(commandTitles.contains("Enter Zen Mode"))
+    #expect(commandTitles.contains("Today’s Note"))
     #expect(commandTitles.contains("New Note"))
     #expect(!commandTitles.contains("Heading"))
     #expect(!commandTitles.contains("Bold"))
