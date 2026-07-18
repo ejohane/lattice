@@ -1295,7 +1295,15 @@ public final class LatticeAppModel {
   }
 
   public func insertImageAttachmentFiles(_ urls: [URL]) {
-    let imports = urls.compactMap(Self.imageAttachmentImport(fromFileURL:))
+    let imports = urls.compactMap { url in
+      let didAccess = url.startAccessingSecurityScopedResource()
+      defer {
+        if didAccess {
+          url.stopAccessingSecurityScopedResource()
+        }
+      }
+      return Self.imageAttachmentImport(fromFileURL: url)
+    }
     guard !imports.isEmpty else {
       errorMessage = "Choose a PNG, JPEG, GIF, HEIC, TIFF, or WebP image."
       return

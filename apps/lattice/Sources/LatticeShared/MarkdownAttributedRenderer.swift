@@ -989,6 +989,8 @@ enum MarkdownAttributedRenderer {
 import UIKit
 
 enum MarkdownAttributedRenderer {
+  static let imagePreviewHeight: CGFloat = 420
+
   static func render(
     _ text: String,
     fontFamily: EditorFontFamily = .system,
@@ -998,9 +1000,15 @@ enum MarkdownAttributedRenderer {
     theme: LatticeTheme = LatticeTheme(id: .system),
     imagePreviewStates: [MarkdownImageRenderState] = []
   ) -> NSAttributedString {
-    _ = imagePreviewStates
     let attributed = NSMutableAttributedString(string: text, attributes: baseTypingAttributes(fontFamily: fontFamily, theme: theme))
-    applyStyles(to: attributed, fontFamily: fontFamily, activeRanges: activeRanges, wikiLinkStates: wikiLinkStates, theme: theme)
+    applyStyles(
+      to: attributed,
+      fontFamily: fontFamily,
+      activeRanges: activeRanges,
+      wikiLinkStates: wikiLinkStates,
+      theme: theme,
+      imagePreviewStates: imagePreviewStates
+    )
     if dimsInactiveText {
       applyInactiveTextDimming(to: attributed, activeRanges: activeRanges, theme: theme)
     }
@@ -1039,7 +1047,8 @@ enum MarkdownAttributedRenderer {
     fontFamily: EditorFontFamily,
     activeRanges: [NSRange],
     wikiLinkStates: [WikiLinkRenderState],
-    theme: LatticeTheme
+    theme: LatticeTheme,
+    imagePreviewStates: [MarkdownImageRenderState]
   ) {
     let fullRange = NSRange(location: 0, length: attributed.length)
     let codeBlocks = codeBlockRanges(in: attributed.string as NSString)
@@ -1061,6 +1070,93 @@ enum MarkdownAttributedRenderer {
     applyPersonMentionStyles(to: attributed, fontFamily: fontFamily, theme: theme)
     hideLatticeMetadataComments(in: attributed, fontFamily: fontFamily, activeRanges: activeRanges, theme: theme)
     applyMarkdownTableStyles(to: attributed, fontFamily: fontFamily, tables: tables, activeRanges: activeRanges, theme: theme)
+    applyImagePreviewStyles(
+      to: attributed,
+      fontFamily: fontFamily,
+      states: imagePreviewStates,
+      activeRanges: activeRanges
+    )
+  }
+
+  private static func applyImagePreviewStyles(
+    to attributed: NSMutableAttributedString,
+    fontFamily: EditorFontFamily,
+    states: [MarkdownImageRenderState],
+    activeRanges: [NSRange]
+  ) {
+    let nsString = attributed.string as NSString
+    for state in states {
+      let lineRange = state.link.lineRange
+      guard
+        NSMaxRange(lineRange) <= attributed.length,
+        !lineRangeContainsActiveRange(lineRange, activeRanges: activeRanges, in: nsString)
+      else {
+        continue
+      }
+
+      let contentRange = contentRangeWithoutLineEnding(lineRange, in: nsString)
+      guard contentRange.length > 0 else {
+        continue
+      }
+      attributed.addAttributes(
+        imagePreviewAttributes(
+          fontFamily: fontFamily,
+          url: state.url,
+          altText: state.link.altText,
+          width: state.link.width
+        ),
+        range: contentRange
+      )
+      if let width = state.link.width {
+        attributed.addAttribute(.latticeImagePreviewWidth, value: width, range: contentRange)
+      }
+    }
+  }
+
+  private static func imagePreviewAttributes(
+    fontFamily: EditorFontFamily,
+    url: URL,
+    altText: String,
+    width: Double?
+  ) -> [NSAttributedString.Key: Any] {
+    let bodySize = bodyFont(fontFamily: fontFamily).pointSize
+    let paragraphStyle = NSMutableParagraphStyle()
+    let previewHeight = imagePreviewLineHeight(url: url, width: width, bodySize: bodySize)
+    paragraphStyle.minimumLineHeight = previewHeight
+    paragraphStyle.maximumLineHeight = previewHeight
+    paragraphStyle.paragraphSpacing = 12
+    paragraphStyle.lineSpacing = 0
+    return [
+      .foregroundColor: UIColor.clear,
+      .font: bodyFont(size: max(0.1, bodySize * 0.01), fontFamily: fontFamily),
+      .paragraphStyle: paragraphStyle,
+      .latticeImagePreviewURL: url,
+      .latticeImagePreviewAltText: altText
+    ]
+  }
+
+  private static func imagePreviewLineHeight(
+    url: URL,
+    width: Double?,
+    bodySize: CGFloat
+  ) -> CGFloat {
+    let defaultBodySize = UIFont.preferredFont(forTextStyle: .title3).pointSize
+    let scale = bodySize / max(defaultBodySize, 1)
+    let defaultHeight = imagePreviewHeight * scale
+    guard
+      let width,
+      width.isFinite,
+      width > 0,
+      let image = UIImage(contentsOfFile: url.path),
+      image.size.width > 0,
+      image.size.height > 0
+    else {
+      return defaultHeight
+    }
+
+    let verticalPadding = 18 * scale
+    let scaledHeight = image.size.height * CGFloat(width) / image.size.width
+    return max(96 * scale, scaledHeight + verticalPadding)
   }
 
   private static func applyInlineTokenStyles(
@@ -1580,6 +1676,39 @@ enum MarkdownAttributedRenderer {
 
       return activeRange.location > range.location && activeRange.location < NSMaxRange(range)
     }
+  }
+
+  private static func lineRangeContainsActiveRange(
+    _ lineRange: NSRange,
+    activeRanges: [NSRange],
+    in nsString: NSString
+  ) -> Bool {
+    let contentRange = contentRangeWithoutLineEnding(lineRange, in: nsString)
+    return activeRanges.contains { activeRange in
+      if activeRange.length > 0 {
+        return NSIntersectionRange(lineRange, activeRange).length > 0
+      }
+
+      return activeRange.location >= contentRange.location
+        && activeRange.location <= NSMaxRange(contentRange)
+    }
+  }
+
+  private static func contentRangeWithoutLineEnding(
+    _ lineRange: NSRange,
+    in nsString: NSString
+  ) -> NSRange {
+    var end = NSMaxRange(lineRange)
+    while end > lineRange.location {
+      let character = nsString.character(at: end - 1)
+      if character == 10 || character == 13 {
+        end -= 1
+      } else {
+        break
+      }
+    }
+
+    return NSRange(location: lineRange.location, length: end - lineRange.location)
   }
 
   private static func range(_ range: NSRange, intersectsAny ranges: [NSRange]) -> Bool {

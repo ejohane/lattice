@@ -1,3 +1,4 @@
+import AppIntents
 import LatticeShared
 import SwiftUI
 
@@ -5,6 +6,10 @@ import SwiftUI
 struct LatticeIOSApp: App {
   @Environment(\.scenePhase) private var scenePhase
   @State private var model = LatticeAppModel()
+
+  init() {
+    LatticeAppShortcuts.updateAppShortcutParameters()
+  }
 
   var body: some Scene {
     WindowGroup {

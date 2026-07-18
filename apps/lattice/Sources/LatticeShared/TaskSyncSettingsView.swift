@@ -54,6 +54,7 @@ public struct TaskSyncSettingsView: View {
     #else
     NavigationStack {
       Form {
+        generalSection
         changelogSection
         themeSection
         editorSection
@@ -399,30 +400,6 @@ public struct TaskSyncSettingsView: View {
     }
   }
 
-  private var generalSection: some View {
-    Section("Lattice") {
-      LabeledContent("Notes Folder", value: model.folderURL?.lastPathComponent ?? "Not selected")
-      LabeledContent("Status", value: model.status)
-      LabeledContent("Theme", value: model.theme.displayName)
-      LabeledContent("Task Sync", value: model.taskSyncStatus)
-      if model.isNoteMigrationRequired {
-        Button {
-          presentMigrationPromptFromSettings()
-        } label: {
-          Label("Migrate Notes to Flat Storage", systemImage: "folder")
-        }
-      }
-    }
-  }
-
-  private func presentMigrationPromptFromSettings() {
-    dismiss()
-    Task { @MainActor in
-      await Task.yield()
-      model.showNoteMigrationPrompt()
-    }
-  }
-
   private var selectedMacSettingsPane: MacSettingsPane {
     selectedMacPane ?? .general
   }
@@ -469,6 +446,30 @@ public struct TaskSyncSettingsView: View {
     }
   }
   #endif
+
+  private var generalSection: some View {
+    Section("Lattice") {
+      LabeledContent("Notes Folder", value: model.folderURL?.lastPathComponent ?? "Not selected")
+      LabeledContent("Status", value: model.status)
+      LabeledContent("Theme", value: model.theme.displayName)
+      LabeledContent("Task Sync", value: model.taskSyncStatus)
+      if model.isNoteMigrationRequired {
+        Button {
+          presentMigrationPromptFromSettings()
+        } label: {
+          Label("Migrate Notes to Flat Storage", systemImage: "folder")
+        }
+      }
+    }
+  }
+
+  private func presentMigrationPromptFromSettings() {
+    dismiss()
+    Task { @MainActor in
+      await Task.yield()
+      model.showNoteMigrationPrompt()
+    }
+  }
 
   private var changelogSection: some View {
     Section("Changelog") {

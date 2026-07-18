@@ -157,6 +157,73 @@ struct LatticeMacApp: App {
         }
       }
       CommandMenu("Editor") {
+        Button("Heading") {
+          showMainWindow()
+          model.apply(.heading)
+        }
+        .disabled(!model.hasFolder)
+
+        Button("Bold") {
+          showMainWindow()
+          model.apply(.bold)
+        }
+        .keyboardShortcut("b", modifiers: [.command])
+        .disabled(!model.hasFolder)
+
+        Button("Italic") {
+          showMainWindow()
+          model.apply(.italic)
+        }
+        .keyboardShortcut("i", modifiers: [.command])
+        .disabled(!model.hasFolder)
+
+        Button("Bullet List") {
+          showMainWindow()
+          model.apply(.bulletList)
+        }
+        .disabled(!model.hasFolder)
+
+        Button("Checklist") {
+          showMainWindow()
+          model.apply(.taskList)
+        }
+        .disabled(!model.hasFolder)
+
+        Button("Inline Code") {
+          showMainWindow()
+          model.apply(.code)
+        }
+        .disabled(!model.hasFolder)
+
+        Button("Link") {
+          showMainWindow()
+          model.apply(.link)
+        }
+        .keyboardShortcut("k", modifiers: [.command])
+        .disabled(!model.hasFolder)
+
+        Button("Divider") {
+          showMainWindow()
+          model.apply(.horizontalRule)
+        }
+        .disabled(!model.hasFolder)
+
+        Divider()
+
+        Button("Indent List Item") {
+          showMainWindow()
+          model.indentSelectedListItems()
+        }
+        .disabled(!model.hasFolder)
+
+        Button("Outdent List Item") {
+          showMainWindow()
+          model.outdentSelectedListItems()
+        }
+        .disabled(!model.hasFolder)
+
+        Divider()
+
         Button("Add Attachment...") {
           showMainWindow()
           chooseImageAttachments()

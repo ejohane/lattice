@@ -42,7 +42,7 @@ struct NoteIndexTests {
     #expect(note.relativePath == "notes/2026-06-17/2026-06-17T14-32-10.md")
     #expect(!note.noteID.isEmpty)
     #expect(note.title == "Project Brief")
-    #expect(note.excerpt == "**Project Brief**")
+    #expect(note.excerpt == "Useful body text")
     #expect(note.createdAt != nil)
   }
 
@@ -141,7 +141,7 @@ struct NoteIndexTests {
 
     let note = try #require(try fixture.index.indexedNotes(notesFolderURL: fixture.root).first)
     #expect(note.title == "Plain first line")
-    #expect(note.excerpt == "Plain first line")
+    #expect(note.excerpt == "Second line")
   }
 
   @Test("refresh updates an existing row without duplicates")
