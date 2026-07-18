@@ -598,6 +598,7 @@ private struct NoteEditorPane: View {
   @State private var isShowingPhotoPicker = false
   @State private var isShowingImageFileImporter = false
   @State private var selectedPhotoItems: [PhotosPickerItem] = []
+  @State private var sharedNote: IOSSharedNote?
   #endif
 
   @ViewBuilder
@@ -611,9 +612,6 @@ private struct NoteEditorPane: View {
     #if os(iOS)
     content
       .toolbar(.hidden, for: .navigationBar)
-      .safeAreaInset(edge: .top, spacing: 0) {
-        editorNavigationBar
-      }
       .background(ThemedWindowBackground(color: theme.uiColor(.editorBackground)))
       .overlay(alignment: .leading) {
         LeftEdgeBackSwipeView {
@@ -643,6 +641,9 @@ private struct NoteEditorPane: View {
         case .failure(let error):
           model.errorMessage = error.localizedDescription
         }
+      }
+      .sheet(item: $sharedNote) { note in
+        IOSActivityView(activityItems: [note.url])
       }
     #else
     content
@@ -717,70 +718,6 @@ private struct NoteEditorPane: View {
   }
 
   #if os(iOS)
-  private var editorNavigationBar: some View {
-    HStack(spacing: 4) {
-      Button {
-        model.navigateBack()
-      } label: {
-        Label("Back", systemImage: "chevron.left")
-          .labelStyle(.iconOnly)
-      }
-      .disabled(!model.canNavigateBack)
-
-      Button {
-        model.navigateForward()
-      } label: {
-        Label("Forward", systemImage: "chevron.right")
-          .labelStyle(.iconOnly)
-      }
-      .disabled(!model.canNavigateForward)
-
-      Spacer(minLength: 12)
-
-      Menu {
-        Button {
-          isShowingPhotoPicker = true
-        } label: {
-          Label("Add Photos", systemImage: "photo.on.rectangle.angled")
-        }
-
-        Button {
-          isShowingImageFileImporter = true
-        } label: {
-          Label("Import Images from Files", systemImage: "folder")
-        }
-      } label: {
-        Label("Add Attachment", systemImage: "plus.circle")
-          .labelStyle(.iconOnly)
-      }
-      .disabled(!model.hasFolder)
-
-      if let noteURL = model.selectedNote?.url {
-        ShareLink(item: noteURL) {
-          Label("Share Note", systemImage: "square.and.arrow.up")
-            .labelStyle(.iconOnly)
-        }
-      }
-
-      Button {
-        model.showCommandPalette()
-      } label: {
-        Label("Search", systemImage: "magnifyingglass")
-      }
-      .disabled(!model.hasFolder)
-    }
-    .buttonStyle(.borderless)
-    .controlSize(.regular)
-    .padding(.horizontal, 14)
-    .padding(.vertical, 7)
-    .background(.ultraThinMaterial)
-    .overlay(alignment: .bottom) {
-      Rectangle()
-        .fill(theme.color(.separator).opacity(0.7))
-        .frame(height: 0.5)
-    }
-  }
-
   private var keyboardAccessoryActions: [MarkdownKeyboardAccessoryAction] {
     [
       MarkdownKeyboardAccessoryAction(
@@ -795,6 +732,49 @@ private struct NoteEditorPane: View {
         title: "Commands",
         systemImage: "command",
         menuChildren: [
+          MarkdownKeyboardAccessoryAction(
+            id: "library",
+            title: "Library",
+            systemImage: "sidebar.left",
+            isEnabled: model.hasFolder
+          ) {
+            model.preferredCompactColumn = .sidebar
+          },
+          MarkdownKeyboardAccessoryAction(
+            id: "history.back",
+            title: "Back",
+            systemImage: "chevron.left",
+            isEnabled: model.canNavigateBack
+          ) {
+            model.navigateBack()
+          },
+          MarkdownKeyboardAccessoryAction(
+            id: "history.forward",
+            title: "Forward",
+            systemImage: "chevron.right",
+            isEnabled: model.canNavigateForward
+          ) {
+            model.navigateForward()
+          },
+          MarkdownKeyboardAccessoryAction(
+            id: "new-note",
+            title: "New Note",
+            systemImage: "square.and.pencil",
+            isEnabled: model.hasFolder
+          ) {
+            model.createNewNote()
+          },
+          MarkdownKeyboardAccessoryAction(
+            id: "share-note",
+            title: "Share Note",
+            systemImage: "square.and.arrow.up",
+            isEnabled: model.selectedNote != nil
+          ) {
+            guard let noteURL = model.selectedNote?.url else {
+              return
+            }
+            sharedNote = IOSSharedNote(url: noteURL)
+          },
           zenKeyboardAction(),
           markdownKeyboardAction(.heading, title: "Heading", systemImage: nil, displayTitle: "Aa"),
           markdownKeyboardAction(.bold, title: "Bold", systemImage: "bold"),
@@ -842,6 +822,13 @@ private struct NoteEditorPane: View {
             systemImage: "gearshape"
           ) {
             model.showSettings()
+          },
+          MarkdownKeyboardAccessoryAction(
+            id: "choose-folder",
+            title: "Choose Notes Folder",
+            systemImage: "folder"
+          ) {
+            model.showFolderImporter()
           }
         ],
         symbolPointSize: 17
@@ -924,6 +911,26 @@ private struct NoteEditorPane: View {
   }
 
 }
+
+#if os(iOS)
+private struct IOSSharedNote: Identifiable {
+  let url: URL
+
+  var id: URL {
+    url
+  }
+}
+
+private struct IOSActivityView: UIViewControllerRepresentable {
+  let activityItems: [Any]
+
+  func makeUIViewController(context: Context) -> UIActivityViewController {
+    UIActivityViewController(activityItems: activityItems, applicationActivities: nil)
+  }
+
+  func updateUIViewController(_ uiViewController: UIActivityViewController, context: Context) {}
+}
+#endif
 
 private struct EditorAutocompleteOverlay: View {
   let anchor: CGRect?
