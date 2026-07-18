@@ -1972,6 +1972,7 @@ public struct MarkdownTextEditor: UIViewRepresentable {
     textView.delegate = context.coordinator
     textView.markdownCoordinator = context.coordinator
     textView.theme = theme
+    textView.imagePreviewStates = imagePreviewStates
     textView.backgroundColor = theme.uiColor(.editorBackground)
     textView.isOpaque = true
     textView.textColor = theme.uiColor(.primaryText)
@@ -1994,6 +1995,14 @@ public struct MarkdownTextEditor: UIViewRepresentable {
     tapRecognizer.cancelsTouchesInView = true
     textView.addGestureRecognizer(tapRecognizer)
 
+    let imageResizeRecognizer = UIPanGestureRecognizer(
+      target: context.coordinator,
+      action: #selector(Coordinator.handleImageResize(_:))
+    )
+    imageResizeRecognizer.delegate = context.coordinator
+    imageResizeRecognizer.cancelsTouchesInView = true
+    textView.addGestureRecognizer(imageResizeRecognizer)
+
     context.coordinator.updateKeyboardAccessory(for: textView)
     context.coordinator.startKeyboardObserving()
     context.coordinator.configureCaretAnchorLayout(in: textView)
@@ -2005,6 +2014,7 @@ public struct MarkdownTextEditor: UIViewRepresentable {
   public func updateUIView(_ textView: UITextView, context: Context) {
     context.coordinator.parent = self
     (textView as? MarkdownUIKitTextView)?.markdownCoordinator = context.coordinator
+    (textView as? MarkdownUIKitTextView)?.imagePreviewStates = imagePreviewStates
     textView.autocorrectionType = .yes
     textView.spellCheckingType = .yes
     context.coordinator.updateKeyboardAccessory(for: textView)
@@ -2030,10 +2040,12 @@ public struct MarkdownTextEditor: UIViewRepresentable {
       }
     } else if textView.selectedRange != clampedSelectedRange {
       let wikiLinkRange = WikiLinkParser.link(at: clampedSelectedRange.location, in: text)?.range
+      let imageLineRange = context.coordinator.imageLineRange(containing: clampedSelectedRange, in: text)
       if context.coordinator.needsSelectionRender(
         selection: clampedSelectedRange,
         text: text,
-        wikiLinkRange: wikiLinkRange
+        wikiLinkRange: wikiLinkRange,
+        imageLineRange: imageLineRange
       ) {
         context.coordinator.render(text, in: textView, preserving: clampedSelectedRange)
       } else {
@@ -2069,6 +2081,7 @@ public struct MarkdownTextEditor: UIViewRepresentable {
     private var lastRenderedActiveRanges: [NSRange] = []
     private var isRendering = false
     private var activeWikiLinkRange: NSRange?
+    private var activeImageLineRange: NSRange?
     private var keyboardAccessoryView: MarkdownKeyboardAccessoryView?
     private weak var accessoryTextView: UITextView?
     private weak var textView: UITextView?
@@ -2078,6 +2091,7 @@ public struct MarkdownTextEditor: UIViewRepresentable {
     private var pendingViewportFreezeTask: Task<Void, Never>?
     private var pendingKeyboardRevealTask: Task<Void, Never>?
     private var keyboardFrameInScreen: CGRect?
+    private var activeImageResize: IOSImageResizeDrag?
     private var frozenTypingContentOffsetY: CGFloat?
     private var isApplyingProgrammaticContentOffset = false
     private var isObservingKeyboard = false
@@ -2241,7 +2255,13 @@ public struct MarkdownTextEditor: UIViewRepresentable {
       let clampedSelection = clamped(textView.selectedRange, length: (textView.text as NSString).length)
       updateAutocompleteAnchor(in: textView, selection: clampedSelection)
       let nextActiveWikiLinkRange = WikiLinkParser.link(at: clampedSelection.location, in: textView.text)?.range
-      if needsSelectionRender(selection: clampedSelection, text: textView.text, wikiLinkRange: nextActiveWikiLinkRange) {
+      let nextImageLineRange = imageLineRange(containing: clampedSelection, in: textView.text)
+      if needsSelectionRender(
+        selection: clampedSelection,
+        text: textView.text,
+        wikiLinkRange: nextActiveWikiLinkRange,
+        imageLineRange: nextImageLineRange
+      ) {
         render(textView.text, in: textView, preserving: clampedSelection)
       } else if !parent.dimsInactiveParagraphs {
         scheduleCaretVisibility(selection: clampedSelection, animated: false)
@@ -2326,9 +2346,19 @@ public struct MarkdownTextEditor: UIViewRepresentable {
 
     public func gestureRecognizer(_ gestureRecognizer: UIGestureRecognizer, shouldReceive touch: UITouch) -> Bool {
       guard
-        let textView = gestureRecognizer.view as? UITextView,
-        let location = textView.characterIndex(at: touch.location(in: textView))
+        let textView = gestureRecognizer.view as? MarkdownUIKitTextView
       else {
+        return false
+      }
+
+      let touchLocation = touch.location(in: textView)
+      if gestureRecognizer is UIPanGestureRecognizer {
+        return textView.imagePreviewLayout(at: touchLocation)?.handleRect
+          .insetBy(dx: -12, dy: -12)
+          .contains(touchLocation) == true
+      }
+
+      guard let location = textView.characterIndex(at: touchLocation) else {
         return false
       }
 
@@ -2337,6 +2367,39 @@ public struct MarkdownTextEditor: UIViewRepresentable {
         || PersonMentionParser.mention(at: location, in: textView.text) != nil
         || MarkdownLocalLinkParser.link(at: location, in: textView.text) != nil
         || NoteTagParser.tag(at: location, in: textView.text) != nil
+    }
+
+    @objc func handleImageResize(_ gesture: UIPanGestureRecognizer) {
+      guard let textView = gesture.view as? MarkdownUIKitTextView else {
+        return
+      }
+
+      let location = gesture.location(in: textView)
+      switch gesture.state {
+      case .began:
+        guard let layout = textView.imagePreviewLayout(at: location) else {
+          return
+        }
+        activeImageResize = IOSImageResizeDrag(
+          lineLocation: layout.lineLocation,
+          imageMinX: layout.imageRect.minX,
+          minWidth: 96,
+          maxWidth: layout.maxWidth
+        )
+      case .changed:
+        guard let activeImageResize else {
+          return
+        }
+        let width = min(
+          activeImageResize.maxWidth,
+          max(activeImageResize.minWidth, location.x - activeImageResize.imageMinX)
+        )
+        parent.onImageAttachmentResized(activeImageResize.lineLocation, Double(width))
+      case .ended, .cancelled, .failed:
+        activeImageResize = nil
+      default:
+        break
+      }
     }
 
     @objc func handleTap(_ gesture: UITapGestureRecognizer) {
@@ -2388,6 +2451,7 @@ public struct MarkdownTextEditor: UIViewRepresentable {
       isRendering = true
       let clampedSelection = clamped(selection, length: (text as NSString).length)
       activeWikiLinkRange = WikiLinkParser.link(at: clampedSelection.location, in: text)?.range
+      activeImageLineRange = imageLineRange(containing: clampedSelection, in: text)
       let activeRanges = activeRanges(for: clampedSelection, in: text)
       textView.textColor = parent.theme.uiColor(.primaryText)
       let renderedText = MarkdownAttributedRenderer.render(
@@ -2641,8 +2705,16 @@ public struct MarkdownTextEditor: UIViewRepresentable {
       lastRenderedImagePreviewStates = parent.imagePreviewStates
     }
 
-    func needsSelectionRender(selection: NSRange, text: String, wikiLinkRange: NSRange?) -> Bool {
+    func needsSelectionRender(
+      selection: NSRange,
+      text: String,
+      wikiLinkRange: NSRange?,
+      imageLineRange: NSRange?
+    ) -> Bool {
       if wikiLinkRange != activeWikiLinkRange {
+        return true
+      }
+      if imageLineRange != activeImageLineRange {
         return true
       }
 
@@ -2651,6 +2723,13 @@ public struct MarkdownTextEditor: UIViewRepresentable {
       }
 
       return Self.lineRange(containing: selection, in: text).location != lastRenderedActiveRanges.first?.location
+    }
+
+    func imageLineRange(containing selection: NSRange, in text: String) -> NSRange? {
+      MarkdownImageParser.links(in: text).first { link in
+        selection.location >= link.lineRange.location
+          && selection.location <= NSMaxRange(link.lineRange)
+      }?.lineRange
     }
 
     func configureCaretAnchorLayout(in textView: UITextView) {
@@ -3373,6 +3452,7 @@ private extension UITextView {
 private final class MarkdownUIKitTextView: UITextView {
   weak var markdownCoordinator: MarkdownTextEditor.Coordinator?
   var theme = LatticeTheme(id: .system)
+  var imagePreviewStates: [MarkdownImageRenderState] = []
 
   override var bounds: CGRect {
     didSet {
@@ -3477,6 +3557,7 @@ private final class MarkdownUIKitTextView: UITextView {
     drawTaskCheckboxes()
     drawUnorderedListMarkers()
     drawThematicBreaks()
+    drawImagePreviews()
   }
 
   private func drawTaskCheckboxes() {
@@ -3746,6 +3827,96 @@ private final class MarkdownUIKitTextView: UITextView {
     }
   }
 
+  private func drawImagePreviews() {
+    guard let context = UIGraphicsGetCurrentContext() else {
+      return
+    }
+
+    let fullRange = NSRange(location: 0, length: textStorage.length)
+    for layout in imagePreviewLayouts(in: fullRange) {
+      let backgroundRect = layout.imageRect.insetBy(dx: -6, dy: -6)
+      context.setFillColor(theme.uiColor(.surfaceBackground).withAlphaComponent(0.82).cgColor)
+      UIBezierPath(roundedRect: backgroundRect, cornerRadius: 8).fill()
+      layout.image.draw(in: layout.imageRect)
+      drawImageResizeHandle(in: layout.handleRect, context: context)
+    }
+  }
+
+  fileprivate func imagePreviewLayout(at location: CGPoint) -> IOSImagePreviewLayout? {
+    let fullRange = NSRange(location: 0, length: textStorage.length)
+    return imagePreviewLayouts(in: fullRange).first {
+      $0.handleRect.insetBy(dx: -12, dy: -12).contains(location)
+    }
+  }
+
+  private func imagePreviewLayouts(in characterRange: NSRange) -> [IOSImagePreviewLayout] {
+    var layouts: [IOSImagePreviewLayout] = []
+    for state in imagePreviewStates {
+      let range = state.link.range
+      guard
+        NSMaxRange(range) <= textStorage.length,
+        NSIntersectionRange(range, characterRange).length > 0,
+        textStorage.attribute(.latticeImagePreviewURL, at: range.location, effectiveRange: nil) != nil,
+        let image = UIImage(contentsOfFile: state.url.path)
+      else {
+        continue
+      }
+
+      let glyphRange = layoutManager.glyphRange(forCharacterRange: range, actualCharacterRange: nil)
+      guard glyphRange.length > 0 else {
+        continue
+      }
+
+      let lineRect = layoutManager.lineFragmentUsedRect(forGlyphAt: glyphRange.location, effectiveRange: nil)
+      let maxWidth = max(
+        0,
+        bounds.width
+          - textContainerInset.left
+          - textContainerInset.right
+          - textContainer.lineFragmentPadding * 2
+      )
+      let maxHeight = max(0, lineRect.height - 18)
+      guard image.size.width > 0, image.size.height > 0, maxWidth > 0, maxHeight > 0 else {
+        continue
+      }
+
+      let storedWidth = textStorage.attribute(
+        .latticeImagePreviewWidth,
+        at: range.location,
+        effectiveRange: nil
+      ) as? Double
+      let widthLimit = storedWidth.map { min(maxWidth, max(96, CGFloat($0))) } ?? maxWidth
+      let scale = min(widthLimit / image.size.width, maxHeight / image.size.height)
+      let size = CGSize(width: image.size.width * scale, height: image.size.height * scale)
+      let imageRect = CGRect(
+        x: textContainerDrawingOrigin.x + textContainer.lineFragmentPadding,
+        y: textContainerDrawingOrigin.y + lineRect.minY + max(0, (lineRect.height - size.height) / 2),
+        width: size.width,
+        height: size.height
+      )
+      let handleRect = CGRect(
+        x: imageRect.maxX - 18,
+        y: imageRect.minY,
+        width: 36,
+        height: imageRect.height
+      )
+      layouts.append(IOSImagePreviewLayout(
+        lineLocation: range.location,
+        image: image,
+        imageRect: imageRect,
+        handleRect: handleRect,
+        maxWidth: maxWidth
+      ))
+    }
+    return layouts
+  }
+
+  private func drawImageResizeHandle(in rect: CGRect, context: CGContext) {
+    let handle = CGRect(x: rect.midX - 2.5, y: rect.midY - 30, width: 5, height: 60)
+    context.setFillColor(theme.uiColor(.separator).withAlphaComponent(0.92).cgColor)
+    UIBezierPath(roundedRect: handle, cornerRadius: 2.5).fill()
+  }
+
   private var visibleTextContainerRect: CGRect {
     CGRect(
       x: contentOffset.x - textContainerInset.left,
@@ -3761,6 +3932,21 @@ private final class MarkdownUIKitTextView: UITextView {
       y: textContainerInset.top
     )
   }
+}
+
+private struct IOSImagePreviewLayout {
+  let lineLocation: Int
+  let image: UIImage
+  let imageRect: CGRect
+  let handleRect: CGRect
+  let maxWidth: CGFloat
+}
+
+private struct IOSImageResizeDrag {
+  let lineLocation: Int
+  let imageMinX: CGFloat
+  let minWidth: CGFloat
+  let maxWidth: CGFloat
 }
 #endif
 

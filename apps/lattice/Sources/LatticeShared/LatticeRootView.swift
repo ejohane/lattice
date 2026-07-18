@@ -12,6 +12,9 @@ import UIKit
 public struct LatticeRootView: View {
   @Bindable private var model: LatticeAppModel
   @State private var macColumnVisibility = NavigationSplitViewVisibility.all
+  #if os(iOS)
+  @Environment(\.horizontalSizeClass) private var horizontalSizeClass
+  #endif
   private let commandPalettePlatformCommands: @MainActor () -> [CommandPaletteCommand]
 
   public init(
@@ -180,10 +183,20 @@ public struct LatticeRootView: View {
       expandedMacSplit
     }
     #else
-    NavigationSplitView(preferredCompactColumn: preferredColumnBinding) {
-      CompactNoteSidebar(model: model)
-    } detail: {
-      editorPane
+    if horizontalSizeClass == .regular {
+      NavigationSplitView {
+        IOSNoteSourceSidebar(model: model)
+      } content: {
+        IOSNoteList(model: model)
+      } detail: {
+        editorPane
+      }
+    } else {
+      NavigationSplitView(preferredCompactColumn: preferredColumnBinding) {
+        CompactNoteSidebar(model: model)
+      } detail: {
+        editorPane
+      }
     }
     #endif
   }
@@ -427,7 +440,14 @@ private struct CompactNoteSidebar: View {
     .background(theme.color(.sidebarBackground))
     .navigationTitle("Lattice")
     .toolbar {
-      ToolbarItem(placement: .primaryAction) {
+      ToolbarItemGroup(placement: .primaryAction) {
+        Button {
+          model.showCommandPalette()
+        } label: {
+          Label("Search", systemImage: "magnifyingglass")
+        }
+        .disabled(!model.hasFolder)
+
         Button {
           model.createNewNote()
         } label: {
@@ -576,7 +596,8 @@ private struct NoteEditorPane: View {
   private let editorHorizontalPadding: CGFloat = 12
   #if os(iOS)
   @State private var isShowingPhotoPicker = false
-  @State private var selectedPhotoItem: PhotosPickerItem?
+  @State private var isShowingImageFileImporter = false
+  @State private var selectedPhotoItems: [PhotosPickerItem] = []
   #endif
 
   @ViewBuilder
@@ -590,6 +611,9 @@ private struct NoteEditorPane: View {
     #if os(iOS)
     content
       .toolbar(.hidden, for: .navigationBar)
+      .safeAreaInset(edge: .top, spacing: 0) {
+        editorNavigationBar
+      }
       .background(ThemedWindowBackground(color: theme.uiColor(.editorBackground)))
       .overlay(alignment: .leading) {
         LeftEdgeBackSwipeView {
@@ -600,11 +624,25 @@ private struct NoteEditorPane: View {
       }
       .photosPicker(
         isPresented: $isShowingPhotoPicker,
-        selection: $selectedPhotoItem,
+        selection: $selectedPhotoItems,
+        maxSelectionCount: 10,
+        selectionBehavior: .ordered,
         matching: .images
       )
-      .onChange(of: selectedPhotoItem) { _, item in
-        importSelectedPhoto(item)
+      .onChange(of: selectedPhotoItems) { _, items in
+        importSelectedPhotos(items)
+      }
+      .fileImporter(
+        isPresented: $isShowingImageFileImporter,
+        allowedContentTypes: [.image],
+        allowsMultipleSelection: true
+      ) { result in
+        switch result {
+        case .success(let urls):
+          model.insertImageAttachmentFiles(urls)
+        case .failure(let error):
+          model.errorMessage = error.localizedDescription
+        }
       }
     #else
     content
@@ -679,6 +717,70 @@ private struct NoteEditorPane: View {
   }
 
   #if os(iOS)
+  private var editorNavigationBar: some View {
+    HStack(spacing: 4) {
+      Button {
+        model.navigateBack()
+      } label: {
+        Label("Back", systemImage: "chevron.left")
+          .labelStyle(.iconOnly)
+      }
+      .disabled(!model.canNavigateBack)
+
+      Button {
+        model.navigateForward()
+      } label: {
+        Label("Forward", systemImage: "chevron.right")
+          .labelStyle(.iconOnly)
+      }
+      .disabled(!model.canNavigateForward)
+
+      Spacer(minLength: 12)
+
+      Menu {
+        Button {
+          isShowingPhotoPicker = true
+        } label: {
+          Label("Add Photos", systemImage: "photo.on.rectangle.angled")
+        }
+
+        Button {
+          isShowingImageFileImporter = true
+        } label: {
+          Label("Import Images from Files", systemImage: "folder")
+        }
+      } label: {
+        Label("Add Attachment", systemImage: "plus.circle")
+          .labelStyle(.iconOnly)
+      }
+      .disabled(!model.hasFolder)
+
+      if let noteURL = model.selectedNote?.url {
+        ShareLink(item: noteURL) {
+          Label("Share Note", systemImage: "square.and.arrow.up")
+            .labelStyle(.iconOnly)
+        }
+      }
+
+      Button {
+        model.showCommandPalette()
+      } label: {
+        Label("Search", systemImage: "magnifyingglass")
+      }
+      .disabled(!model.hasFolder)
+    }
+    .buttonStyle(.borderless)
+    .controlSize(.regular)
+    .padding(.horizontal, 14)
+    .padding(.vertical, 7)
+    .background(.ultraThinMaterial)
+    .overlay(alignment: .bottom) {
+      Rectangle()
+        .fill(theme.color(.separator).opacity(0.7))
+        .frame(height: 0.5)
+    }
+  }
+
   private var keyboardAccessoryActions: [MarkdownKeyboardAccessoryAction] {
     [
       MarkdownKeyboardAccessoryAction(
@@ -719,12 +821,20 @@ private struct NoteEditorPane: View {
           markdownKeyboardAction(.link, title: "Link", systemImage: "link"),
           markdownKeyboardAction(.horizontalRule, title: "Divider", systemImage: "minus"),
           MarkdownKeyboardAccessoryAction(
-            id: "attach-photo",
-            title: "Add Attachment",
-            systemImage: "plus",
+            id: "attach-photos",
+            title: "Add Photos",
+            systemImage: "photo.on.rectangle.angled",
             isEnabled: model.hasFolder
           ) {
             isShowingPhotoPicker = true
+          },
+          MarkdownKeyboardAccessoryAction(
+            id: "attach-files",
+            title: "Import Images from Files",
+            systemImage: "folder",
+            isEnabled: model.hasFolder
+          ) {
+            isShowingImageFileImporter = true
           },
           MarkdownKeyboardAccessoryAction(
             id: "settings",
@@ -769,28 +879,30 @@ private struct NoteEditorPane: View {
     }
   }
 
-  private func importSelectedPhoto(_ item: PhotosPickerItem?) {
-    guard let item else {
+  private func importSelectedPhotos(_ items: [PhotosPickerItem]) {
+    guard !items.isEmpty else {
       return
     }
 
     Task { @MainActor in
       defer {
-        selectedPhotoItem = nil
+        selectedPhotoItems = []
       }
 
       do {
-        guard let data = try await item.loadTransferable(type: Data.self) else {
-          return
-        }
-        let fileExtension = Self.imageFileExtension(for: item)
-        model.insertImageAttachments([
-          ImageAttachmentImport(
+        var imports: [ImageAttachmentImport] = []
+        for (index, item) in items.enumerated() {
+          guard let data = try await item.loadTransferable(type: Data.self) else {
+            continue
+          }
+          let fileExtension = Self.imageFileExtension(for: item)
+          imports.append(ImageAttachmentImport(
             data: data,
-            suggestedFilename: "attachment.\(fileExtension)",
+            suggestedFilename: "attachment-\(index + 1).\(fileExtension)",
             preferredExtension: fileExtension
-          )
-        ])
+          ))
+        }
+        model.insertImageAttachments(imports)
       } catch {
         model.errorMessage = error.localizedDescription
       }

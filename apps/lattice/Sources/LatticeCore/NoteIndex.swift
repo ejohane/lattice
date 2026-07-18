@@ -677,7 +677,7 @@ public final class NoteIndex: NoteIndexing {
       size: size,
       fingerprint: Self.fingerprint(modifiedAt: modifiedAt, size: size),
       title: title,
-      excerpt: Self.excerpt(from: body),
+      excerpt: Self.excerpt(from: body, excludingTitle: title),
       indexedAt: Date()
     )
 
@@ -1133,7 +1133,7 @@ public final class NoteIndex: NoteIndexing {
     return formatter.string(from: date)
   }
 
-  private static func excerpt(from body: String) -> String {
+  private static func excerpt(from body: String, excludingTitle title: String) -> String {
     for line in body.components(separatedBy: .newlines) {
       let trimmed = line.trimmingCharacters(in: .whitespacesAndNewlines)
       guard !trimmed.isEmpty, !trimmed.hasPrefix("#") else {
@@ -1142,6 +1142,10 @@ public final class NoteIndex: NoteIndexing {
       let visible = MarkdownPlainTextRenderer.strippingHTMLComments(from: trimmed)
         .trimmingCharacters(in: .whitespacesAndNewlines)
       guard !visible.isEmpty else {
+        continue
+      }
+      let renderedLine = NoteLibrary.firstRenderedLine(in: visible) ?? visible
+      if renderedLine.compare(title, options: [.caseInsensitive, .diacriticInsensitive]) == .orderedSame {
         continue
       }
       return String(visible.prefix(240))
