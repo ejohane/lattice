@@ -45,8 +45,13 @@ public final class LatticeAppModel {
   public var errorMessage: String?
   public var isShowingFolderImporter = false
   public var isShowingCommandPalette = false
+  public var isShowingContextPack = false
   public var isShowingSettings = false
   public var commandPaletteQuery = ""
+  public var contextPackTask = ""
+  public var contextPackSearchQuery = ""
+  public var contextPackSources: [ContextPackSource] = []
+  public var contextPackGeneratedAt: Date?
   public var preferredCompactColumn = NavigationColumn.sidebar
   public var navigationVisibility = LatticeNavigationVisibility.all
   public var editorFocusToken = 0
@@ -225,6 +230,130 @@ public final class LatticeAppModel {
   public func showCommandPalette() {
     commandPaletteQuery = ""
     isShowingCommandPalette = true
+  }
+
+  public func showContextPack() {
+    guard hasFolder, !isNoteMigrationRequired else {
+      return
+    }
+
+    flushAutosave()
+    contextPackTask = ""
+    contextPackSearchQuery = ""
+    contextPackSources = []
+    contextPackGeneratedAt = dateProvider()
+
+    if let selectedNote {
+      let selection = clampedRange(selectedRange, in: text)
+      let isExcerpt = selection.length > 0
+      let body = isExcerpt
+        ? (text as NSString).substring(with: selection)
+        : text
+      contextPackSources = [ContextPackSource(
+        noteID: selectedNote.id,
+        title: displayTitle(for: selectedNote),
+        body: body,
+        isExcerpt: isExcerpt
+      )]
+    }
+
+    isShowingContextPack = true
+  }
+
+  public func dismissContextPack() {
+    isShowingContextPack = false
+    discardContextPackDraft()
+  }
+
+  public func discardContextPackDraft() {
+    contextPackTask = ""
+    contextPackSearchQuery = ""
+    contextPackSources = []
+    contextPackGeneratedAt = nil
+  }
+
+  public func contextPackSearchNotes(limit: Int = 50) -> [SavedNote] {
+    guard let folderURL else {
+      return []
+    }
+
+    let query = contextPackSearchQuery.trimmingCharacters(in: .whitespacesAndNewlines)
+    do {
+      if query.isEmpty {
+        return try noteIndex.recentNotes(notesFolderURL: folderURL, limit: limit)
+      }
+      return try noteIndex.searchNotes(query: query, notesFolderURL: folderURL, limit: limit)
+    } catch {
+      let notes = sections.flatMap(\.notes)
+      let filtered = query.isEmpty
+        ? notes
+        : notes.filter { note in
+          Self.matchesPaletteQuery(
+            "\(displayTitle(for: note)) \(note.dateString) \(note.filenameTitle)",
+            query: query
+          )
+        }
+      return Array(filtered.prefix(limit))
+    }
+  }
+
+  public func contextPackContains(_ note: SavedNote) -> Bool {
+    contextPackSources.contains { $0.noteID == note.id }
+  }
+
+  public func addNoteToContextPack(_ note: SavedNote) {
+    guard !contextPackContains(note) else {
+      return
+    }
+
+    do {
+      contextPackSources.append(ContextPackSource(
+        noteID: note.id,
+        title: displayTitle(for: note),
+        body: try noteLibrary.body(for: note)
+      ))
+    } catch {
+      errorMessage = error.localizedDescription
+    }
+  }
+
+  public func removeContextPackSource(id: String) {
+    contextPackSources.removeAll { $0.id == id }
+  }
+
+  public func moveContextPackSource(id: String, by offset: Int) {
+    guard
+      offset != 0,
+      let currentIndex = contextPackSources.firstIndex(where: { $0.id == id })
+    else {
+      return
+    }
+    let destinationIndex = min(max(currentIndex + offset, 0), contextPackSources.count - 1)
+    guard destinationIndex != currentIndex else {
+      return
+    }
+    let source = contextPackSources.remove(at: currentIndex)
+    contextPackSources.insert(source, at: destinationIndex)
+  }
+
+  public var contextPackMarkdown: String {
+    ContextPackCompiler.markdown(for: ContextPack(
+      task: contextPackTask,
+      sources: contextPackSources,
+      generatedAt: contextPackGeneratedAt ?? dateProvider()
+    ))
+  }
+
+  public var contextPackCharacterCount: Int {
+    contextPackMarkdown.count
+  }
+
+  public var contextPackApproximateTokenCount: Int {
+    ContextPackCompiler.approximateTokenCount(for: contextPackMarkdown)
+  }
+
+  public var isContextPackReady: Bool {
+    !contextPackSources.isEmpty
   }
 
   public func showSettings() {
