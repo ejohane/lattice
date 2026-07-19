@@ -38,6 +38,12 @@ struct LatticeMacApp: App {
           }
         }
         .frame(minWidth: Self.minimumWindowWidth, minHeight: Self.minimumWindowHeight)
+        .sheet(
+          isPresented: $model.isShowingContextPack,
+          onDismiss: { model.discardContextPackDraft() }
+        ) {
+          ContextPackComposerView(model: model)
+        }
         .background(WindowConfiguration(
           width: Self.minimumWindowWidth,
           height: Self.minimumWindowHeight,
@@ -112,6 +118,12 @@ struct LatticeMacApp: App {
           model.showCommandPalette()
         }
         .latticeKeyboardShortcut(model.keyboardShortcut(for: .commandPalette))
+
+        Button("Build Context Pack…") {
+          showMainWindow()
+          model.showContextPack()
+        }
+        .disabled(!model.hasFolder || model.isNoteMigrationRequired)
 
         Divider()
 
@@ -365,6 +377,15 @@ struct LatticeMacApp: App {
         keyboardShortcut: "⌘⌥S"
       ) {
         model.toggleNavigationVisibility()
+      },
+      CommandPaletteCommand(
+        id: "mac.contextPack",
+        title: "Build Context Pack…",
+        subtitle: "Assemble portable Markdown for an AI chat",
+        systemImage: "doc.on.doc",
+        isEnabled: model.hasFolder && !model.isNoteMigrationRequired
+      ) {
+        model.showContextPack()
       },
       CommandPaletteCommand(
         id: "mac.toggleSources",

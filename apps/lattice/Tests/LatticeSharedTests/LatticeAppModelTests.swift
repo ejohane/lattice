@@ -993,6 +993,79 @@ struct LatticeAppModelTests {
     #expect(!titles.contains("New Note"))
   }
 
+  @Test("context pack starts from the current selection and flushes autosave")
+  func contextPackStartsFromCurrentSelection() throws {
+    let fixture = try Fixture()
+    defer { fixture.cleanup() }
+    let model = LatticeAppModel(
+      noteLibrary: fixture.library,
+      folderAccessStore: fixture.folderAccessStore,
+      noteIndex: NoteIndex(appSupportURL: fixture.appSupportURL),
+      dateProvider: { fixture.date() }
+    )
+
+    try fixture.fileManager.createDirectory(at: fixture.root, withIntermediateDirectories: true)
+    model.chooseFolder(fixture.root)
+    model.text = "Project plan\n\nKeep this paragraph.\n\nLeave this out."
+    let selectedText = "Keep this paragraph."
+    model.selectedRange = (model.text as NSString).range(of: selectedText)
+
+    model.showContextPack()
+
+    let source = try #require(model.contextPackSources.first)
+    #expect(model.selectedNote != nil)
+    #expect(model.isShowingContextPack)
+    #expect(source.body == selectedText)
+    #expect(source.isExcerpt)
+    #expect(source.displayTitle == "Project plan (selection)")
+    #expect(model.contextPackMarkdown.contains("## Project plan (selection)\n\nKeep this paragraph."))
+    #expect(!model.contextPackMarkdown.contains("Leave this out."))
+  }
+
+  @Test("context pack adds unique notes reorders them and discards its draft")
+  func contextPackAddsReordersAndDiscardsSources() throws {
+    let fixture = try Fixture()
+    defer { fixture.cleanup() }
+    let model = LatticeAppModel(
+      noteLibrary: fixture.library,
+      folderAccessStore: fixture.folderAccessStore,
+      noteIndex: NoteIndex(appSupportURL: fixture.appSupportURL),
+      dateProvider: { fixture.date() }
+    )
+
+    try fixture.fileManager.createDirectory(at: fixture.root, withIntermediateDirectories: true)
+    model.chooseFolder(fixture.root)
+    model.text = "First source\n\nAlpha details"
+    model.flushAutosave()
+    model.createNewNote()
+    model.text = "Second source\n\nBeta details"
+    model.flushAutosave()
+
+    model.showContextPack()
+    model.contextPackSearchQuery = "first"
+    let firstNote = try #require(model.contextPackSearchNotes().first)
+    model.addNoteToContextPack(firstNote)
+    model.addNoteToContextPack(firstNote)
+
+    #expect(model.contextPackSources.map { $0.title } == ["Second source", "First source"])
+    #expect(model.contextPackSources.count == 2)
+
+    model.moveContextPackSource(id: firstNote.id, by: -1)
+    #expect(model.contextPackSources.map { $0.title } == ["First source", "Second source"])
+    #expect(model.contextPackMarkdown.range(of: "## First source")!.lowerBound
+      < model.contextPackMarkdown.range(of: "## Second source")!.lowerBound)
+
+    model.contextPackTask = "Summarize both sources."
+    #expect(model.contextPackCharacterCount == model.contextPackMarkdown.count)
+    #expect(model.contextPackApproximateTokenCount > 0)
+
+    model.dismissContextPack()
+    #expect(!model.isShowingContextPack)
+    #expect(model.contextPackTask.isEmpty)
+    #expect(model.contextPackSources.isEmpty)
+    #expect(model.contextPackGeneratedAt == nil)
+  }
+
   @Test("command palette shows recent notes and filters note switcher results by title")
   func commandPaletteShowsAndFiltersNotesByTitle() throws {
     let fixture = try Fixture()
