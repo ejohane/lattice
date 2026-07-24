@@ -169,6 +169,20 @@ struct LatticeMacApp: App {
         }
       }
       CommandMenu("Editor") {
+        Button("Raw Mode") {
+          showMainWindow()
+          model.setEditorMode(.raw)
+        }
+        .disabled(model.editorMode == .raw)
+
+        Button("Rendered Mode") {
+          showMainWindow()
+          model.setEditorMode(.rendered)
+        }
+        .disabled(model.editorMode == .rendered)
+
+        Divider()
+
         Button("Heading") {
           showMainWindow()
           model.apply(.heading)

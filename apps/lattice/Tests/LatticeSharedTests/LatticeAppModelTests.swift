@@ -13,7 +13,8 @@ struct LatticeAppModelTests {
     defer { fixture.cleanup() }
     let model = LatticeAppModel(
       noteLibrary: fixture.library,
-      folderAccessStore: fixture.folderAccessStore
+      folderAccessStore: fixture.folderAccessStore,
+      editorPreferencesStore: EditorPreferencesStore(defaults: fixture.defaults)
     )
 
     try fixture.fileManager.createDirectory(at: fixture.root, withIntermediateDirectories: true)
@@ -367,6 +368,7 @@ struct LatticeAppModelTests {
       noteLibrary: fixture.library,
       folderAccessStore: fixture.folderAccessStore
     )
+    model.setEditorMode(.rendered)
 
     model.text = """
     | Project | Status |
@@ -387,6 +389,25 @@ struct LatticeAppModelTests {
     After
     """)
     #expect((model.text as NSString).substring(from: model.selectedRange.location).hasPrefix("After"))
+  }
+
+  @Test("raw mode does not format markdown tables when selection changes")
+  func rawModeLeavesMarkdownTableTextLiteral() {
+    let model = LatticeAppModel()
+    model.setEditorMode(.raw)
+    model.text = """
+    | Project | Status |
+    | --- | --- |
+    | Lattice | Ship |
+
+    After
+    """
+    let original = model.text
+    model.selectedRange = NSRange(location: (model.text as NSString).range(of: "After").location, length: 0)
+
+    model.noteSelectionDidChange()
+
+    #expect(model.text == original)
   }
 
   @Test("inserts image attachments into a new note and autosaves matching paths")
@@ -736,13 +757,13 @@ struct LatticeAppModelTests {
     #expect(!model.isVimModeEnabled)
     #expect(!model.showsRelativeLineNumbers)
     #expect(model.selectedThemeID == .system)
-    #expect(model.editorFontFamily == .system)
+    #expect(model.editorMode == .raw)
     #expect(model.vimState.mode == .insert)
 
+    model.setEditorMode(.rendered)
     model.setVimModeEnabled(true)
     model.setRelativeLineNumbersEnabled(true)
     model.setTheme(.solarizedDark)
-    model.setEditorFontFamily(.monospaced)
     model.setKeyboardShortcut(
       LatticeKeyboardShortcut(key: "b", modifiers: [.command, .shift]),
       for: .zenMode
@@ -757,9 +778,67 @@ struct LatticeAppModelTests {
     #expect(restored.isVimModeEnabled)
     #expect(restored.showsRelativeLineNumbers)
     #expect(restored.selectedThemeID == .solarizedDark)
-    #expect(restored.editorFontFamily == .monospaced)
-    #expect(restored.vimState.mode == .normal)
+    #expect(restored.editorMode == .rendered)
+    #expect(restored.vimState.mode == .insert)
+    #expect(!restored.effectiveIsVimModeEnabled)
+    #expect(!restored.effectiveShowsRelativeLineNumbers)
     #expect(restored.keyboardShortcut(for: .zenMode) == LatticeKeyboardShortcut(key: "b", modifiers: [.command, .shift]))
+  }
+
+  @Test("editor mode defaults to raw and switches without mutating the draft")
+  func editorModeDefaultsAndSwitchesWithoutMutatingDraft() throws {
+    let suiteName = "editor-mode-default-\(UUID().uuidString)"
+    let defaults = try #require(UserDefaults(suiteName: suiteName))
+    defer { defaults.removePersistentDomain(forName: suiteName) }
+    let model = LatticeAppModel(
+      noteLibrary: NoteLibrary(defaults: defaults),
+      folderAccessStore: FolderAccessStore(defaults: defaults),
+      editorPreferencesStore: EditorPreferencesStore(defaults: defaults)
+    )
+    model.text = "# Heading\n\n- [ ] Task\n[[Note]]<!-- lattice:target=abc -->"
+    model.selectedRange = NSRange(location: 4, length: 3)
+    let originalText = model.text
+    let originalSelection = model.selectedRange
+    let originalFocusToken = model.editorFocusToken
+
+    #expect(model.editorMode == .raw)
+    model.setEditorMode(.rendered)
+
+    #expect(model.editorMode == .rendered)
+    #expect(model.text == originalText)
+    #expect(model.selectedRange == originalSelection)
+    #expect(model.editorFocusToken == originalFocusToken + 1)
+
+    model.setEditorMode(.raw)
+    #expect(model.text == originalText)
+    #expect(model.selectedRange == originalSelection)
+  }
+
+  @Test("vim and relative line numbers are effective only in raw mode")
+  func editorModeGatesRawCapabilities() throws {
+    let suiteName = "editor-mode-capabilities-\(UUID().uuidString)"
+    let defaults = try #require(UserDefaults(suiteName: suiteName))
+    defer { defaults.removePersistentDomain(forName: suiteName) }
+    let model = LatticeAppModel(
+      noteLibrary: NoteLibrary(defaults: defaults),
+      folderAccessStore: FolderAccessStore(defaults: defaults),
+      editorPreferencesStore: EditorPreferencesStore(defaults: defaults)
+    )
+    model.setVimModeEnabled(true)
+    model.setRelativeLineNumbersEnabled(true)
+
+    #expect(model.effectiveIsVimModeEnabled)
+    #expect(model.effectiveShowsRelativeLineNumbers)
+
+    model.setEditorMode(.rendered)
+    #expect(!model.effectiveIsVimModeEnabled)
+    #expect(!model.effectiveShowsRelativeLineNumbers)
+    #expect(model.vimState.mode == .insert)
+
+    model.setEditorMode(.raw)
+    #expect(model.effectiveIsVimModeEnabled)
+    #expect(model.effectiveShowsRelativeLineNumbers)
+    #expect(model.vimState.mode == .normal)
   }
 
   @Test("keyboard shortcuts can override conflicts and reset to defaults")
@@ -934,7 +1013,8 @@ struct LatticeAppModelTests {
     defer { fixture.cleanup() }
     let model = LatticeAppModel(
       noteLibrary: fixture.library,
-      folderAccessStore: fixture.folderAccessStore
+      folderAccessStore: fixture.folderAccessStore,
+      editorPreferencesStore: EditorPreferencesStore(defaults: fixture.defaults)
     )
 
     try fixture.fileManager.createDirectory(at: fixture.root, withIntermediateDirectories: true)
