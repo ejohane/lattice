@@ -654,15 +654,48 @@ private struct NoteEditorPane: View {
   private var editorContent: some View {
     VStack(spacing: 0) {
       ZStack(alignment: .topLeading) {
-        MarkdownTextEditor(
+        editorSurface
+
+        if model.editorMode == .rendered {
+          editorAutocompleteOverlay
+        }
+      }
+      .frame(maxWidth: .infinity, maxHeight: .infinity)
+    }
+    .frame(maxWidth: .infinity, maxHeight: .infinity)
+  }
+
+  @ViewBuilder
+  private var editorSurface: some View {
+    Group {
+      if model.editorMode == .raw {
+        RawMarkdownEditor(
           text: $model.text,
           selectedRange: $model.selectedRange,
           vimState: $model.vimState,
           fontSize: CGFloat(model.editorFontSize),
-          fontFamily: model.editorFontFamily,
           focusToken: model.editorFocusToken,
           isVimModeEnabled: model.effectiveIsVimModeEnabled,
-          showsRelativeLineNumbers: model.showsRelativeLineNumbers,
+          showsRelativeLineNumbers: model.effectiveShowsRelativeLineNumbers,
+          theme: theme,
+          keyboardAccessoryActions: keyboardAccessoryActions,
+          onTextChange: {
+            model.noteTextDidChange()
+          },
+          onSelectionChange: {
+            model.noteSelectionDidChange()
+          },
+          onVimWrite: {
+            model.vimWrite()
+          }
+        )
+      } else {
+        RenderedMarkdownEditor(
+          text: $model.text,
+          selectedRange: $model.selectedRange,
+          fontSize: CGFloat(model.editorFontSize),
+          fontFamily: .system,
+          focusToken: model.editorFocusToken,
           autocompleteAnchor: $editorAutocompleteAnchor,
           keyboardAccessoryActions: keyboardAccessoryActions,
           hasAutocompleteSuggestions: model.hasEditorAutocompleteSuggestions,
@@ -696,9 +729,6 @@ private struct NoteEditorPane: View {
           onCommitAutocomplete: {
             model.commitSelectedEditorAutocompleteSuggestion()
           },
-          onVimWrite: {
-            model.vimWrite()
-          },
           onImageAttachmentsImported: { imports in
             model.insertImageAttachments(imports)
           },
@@ -706,15 +736,11 @@ private struct NoteEditorPane: View {
             model.resizeImageAttachment(lineLocation: lineLocation, width: width)
           }
         )
-        .ignoresSafeArea(.keyboard, edges: .bottom)
-        .frame(maxWidth: .infinity, maxHeight: .infinity)
-        .background(theme.color(.editorBackground))
-
-        editorAutocompleteOverlay
       }
-      .frame(maxWidth: .infinity, maxHeight: .infinity)
     }
+    .ignoresSafeArea(.keyboard, edges: .bottom)
     .frame(maxWidth: .infinity, maxHeight: .infinity)
+    .background(theme.color(.editorBackground))
   }
 
   #if os(iOS)
@@ -732,6 +758,7 @@ private struct NoteEditorPane: View {
         title: "Commands",
         systemImage: "command",
         menuChildren: [
+          editorModeKeyboardAction(),
           MarkdownKeyboardAccessoryAction(
             id: "library",
             title: "Library",
@@ -846,6 +873,19 @@ private struct NoteEditorPane: View {
       isEnabled: model.hasFolder
     ) {
       model.toggleZenMode()
+    }
+  }
+
+  private func editorModeKeyboardAction() -> MarkdownKeyboardAccessoryAction {
+    MarkdownKeyboardAccessoryAction(
+      id: "editor-mode",
+      title: "Switch to \(model.editorMode.alternate.displayName) Mode",
+      systemImage: model.editorMode == .raw
+        ? "textformat"
+        : "chevron.left.forwardslash.chevron.right",
+      isEnabled: model.hasFolder
+    ) {
+      model.toggleEditorMode()
     }
   }
 
@@ -1302,65 +1342,86 @@ private struct ZenNoteEditorPane: View {
 
   private var editorContent: some View {
     ZStack(alignment: .topLeading) {
-      MarkdownTextEditor(
-        text: $model.text,
-        selectedRange: $model.selectedRange,
-        vimState: $model.vimState,
-        fontSize: CGFloat(model.editorFontSize),
-        fontFamily: model.editorFontFamily,
-        focusToken: model.editorFocusToken,
-        isVimModeEnabled: model.effectiveIsVimModeEnabled,
-        showsRelativeLineNumbers: false,
-        dimsInactiveParagraphs: true,
-        caretAnchorFraction: 1.0 / 3.0,
-        autocompleteAnchor: $editorAutocompleteAnchor,
-        keyboardAccessoryActions: zenKeyboardAccessoryActions,
-        hasAutocompleteSuggestions: model.hasEditorAutocompleteSuggestions,
-        wikiLinkStates: model.wikiLinkStates,
-        theme: theme,
-        imagePreviewStates: model.imagePreviewStates,
-        onTextChange: {
-          model.noteTextDidChange()
-        },
-        onSelectionChange: {
-          model.noteSelectionDidChange()
-        },
-        onWikiLinkActivated: { characterIndex in
-          model.activateWikiLink(at: characterIndex)
-        },
-        onPersonMentionActivated: { characterIndex in
-          model.activatePersonMention(at: characterIndex)
-        },
-        onMarkdownLinkActivated: { characterIndex in
-          model.activateMarkdownLink(at: characterIndex)
-        },
-        onTagActivated: { characterIndex in
-          model.activateTag(at: characterIndex)
-        },
-        onDismissAutocomplete: {
-          model.dismissWikiAutocomplete()
-        },
-        onMoveAutocompleteSelection: { delta in
-          model.moveEditorAutocompleteSelection(by: delta)
-        },
-        onCommitAutocomplete: {
-          model.commitSelectedEditorAutocompleteSuggestion()
-        },
-        onVimWrite: {
-          model.vimWrite()
-        },
-        onImageAttachmentsImported: { imports in
-          model.insertImageAttachments(imports)
-        },
-        onImageAttachmentResized: { lineLocation, width in
-          model.resizeImageAttachment(lineLocation: lineLocation, width: width)
+      Group {
+        if model.editorMode == .raw {
+          RawMarkdownEditor(
+            text: $model.text,
+            selectedRange: $model.selectedRange,
+            vimState: $model.vimState,
+            fontSize: CGFloat(model.editorFontSize),
+            focusToken: model.editorFocusToken,
+            isVimModeEnabled: model.effectiveIsVimModeEnabled,
+            showsRelativeLineNumbers: false,
+            theme: theme,
+            keyboardAccessoryActions: zenKeyboardAccessoryActions,
+            onTextChange: {
+              model.noteTextDidChange()
+            },
+            onSelectionChange: {
+              model.noteSelectionDidChange()
+            },
+            onVimWrite: {
+              model.vimWrite()
+            }
+          )
+        } else {
+          RenderedMarkdownEditor(
+            text: $model.text,
+            selectedRange: $model.selectedRange,
+            fontSize: CGFloat(model.editorFontSize),
+            fontFamily: .system,
+            focusToken: model.editorFocusToken,
+            dimsInactiveParagraphs: true,
+            caretAnchorFraction: 1.0 / 3.0,
+            autocompleteAnchor: $editorAutocompleteAnchor,
+            keyboardAccessoryActions: zenKeyboardAccessoryActions,
+            hasAutocompleteSuggestions: model.hasEditorAutocompleteSuggestions,
+            wikiLinkStates: model.wikiLinkStates,
+            theme: theme,
+            imagePreviewStates: model.imagePreviewStates,
+            onTextChange: {
+              model.noteTextDidChange()
+            },
+            onSelectionChange: {
+              model.noteSelectionDidChange()
+            },
+            onWikiLinkActivated: { characterIndex in
+              model.activateWikiLink(at: characterIndex)
+            },
+            onPersonMentionActivated: { characterIndex in
+              model.activatePersonMention(at: characterIndex)
+            },
+            onMarkdownLinkActivated: { characterIndex in
+              model.activateMarkdownLink(at: characterIndex)
+            },
+            onTagActivated: { characterIndex in
+              model.activateTag(at: characterIndex)
+            },
+            onDismissAutocomplete: {
+              model.dismissWikiAutocomplete()
+            },
+            onMoveAutocompleteSelection: { delta in
+              model.moveEditorAutocompleteSelection(by: delta)
+            },
+            onCommitAutocomplete: {
+              model.commitSelectedEditorAutocompleteSuggestion()
+            },
+            onImageAttachmentsImported: { imports in
+              model.insertImageAttachments(imports)
+            },
+            onImageAttachmentResized: { lineLocation, width in
+              model.resizeImageAttachment(lineLocation: lineLocation, width: width)
+            }
+          )
         }
-      )
+      }
       .ignoresSafeArea(.keyboard, edges: .bottom)
       .frame(maxWidth: .infinity, maxHeight: .infinity)
       .background(theme.color(.editorBackground))
 
-      EditorAutocompleteOverlay(anchor: editorAutocompleteAnchor, model: model, theme: theme)
+      if model.editorMode == .rendered {
+        EditorAutocompleteOverlay(anchor: editorAutocompleteAnchor, model: model, theme: theme)
+      }
     }
   }
 
@@ -1379,6 +1440,16 @@ private struct ZenNoteEditorPane: View {
         title: "Commands",
         systemImage: "command",
         menuChildren: [
+          MarkdownKeyboardAccessoryAction(
+            id: "editor-mode",
+            title: "Switch to \(model.editorMode.alternate.displayName) Mode",
+            systemImage: model.editorMode == .raw
+              ? "textformat"
+              : "chevron.left.forwardslash.chevron.right",
+            isEnabled: model.hasFolder
+          ) {
+            model.toggleEditorMode()
+          },
           MarkdownKeyboardAccessoryAction(
             id: "zenMode",
             title: "Exit Zen Mode",

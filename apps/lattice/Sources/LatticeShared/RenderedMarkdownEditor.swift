@@ -64,15 +64,12 @@ private enum MarkdownKeyboardAccessoryHaptics {
 import AppKit
 import QuartzCore
 
-public struct MarkdownTextEditor: NSViewRepresentable {
+public struct RenderedMarkdownEditor: NSViewRepresentable {
   @Binding var text: String
   @Binding var selectedRange: NSRange
-  @Binding var vimState: VimEditorState
   let fontSize: CGFloat
   let fontFamily: EditorFontFamily
   let focusToken: Int
-  let isVimModeEnabled: Bool
-  let showsRelativeLineNumbers: Bool
   let dimsInactiveParagraphs: Bool
   let caretAnchorFraction: CGFloat?
   @Binding var autocompleteAnchor: CGRect?
@@ -90,19 +87,15 @@ public struct MarkdownTextEditor: NSViewRepresentable {
   let onDismissAutocomplete: () -> Void
   let onMoveAutocompleteSelection: (Int) -> Void
   let onCommitAutocomplete: () -> Void
-  let onVimWrite: () -> Void
   let onImageAttachmentsImported: ([ImageAttachmentImport]) -> Void
   let onImageAttachmentResized: (Int, Double) -> Void
 
   public init(
     text: Binding<String>,
     selectedRange: Binding<NSRange>,
-    vimState: Binding<VimEditorState>,
     fontSize: CGFloat,
     fontFamily: EditorFontFamily,
     focusToken: Int,
-    isVimModeEnabled: Bool,
-    showsRelativeLineNumbers: Bool,
     dimsInactiveParagraphs: Bool = false,
     caretAnchorFraction: CGFloat? = nil,
     autocompleteAnchor: Binding<CGRect?> = .constant(nil),
@@ -120,18 +113,14 @@ public struct MarkdownTextEditor: NSViewRepresentable {
     onDismissAutocomplete: @escaping () -> Void,
     onMoveAutocompleteSelection: @escaping (Int) -> Void = { _ in },
     onCommitAutocomplete: @escaping () -> Void = {},
-    onVimWrite: @escaping () -> Void,
     onImageAttachmentsImported: @escaping ([ImageAttachmentImport]) -> Void,
     onImageAttachmentResized: @escaping (Int, Double) -> Void
   ) {
     self._text = text
     self._selectedRange = selectedRange
-    self._vimState = vimState
     self.fontSize = fontSize
     self.fontFamily = fontFamily
     self.focusToken = focusToken
-    self.isVimModeEnabled = isVimModeEnabled
-    self.showsRelativeLineNumbers = showsRelativeLineNumbers
     self.dimsInactiveParagraphs = dimsInactiveParagraphs
     self.caretAnchorFraction = caretAnchorFraction
     self._autocompleteAnchor = autocompleteAnchor
@@ -149,7 +138,6 @@ public struct MarkdownTextEditor: NSViewRepresentable {
     self.onDismissAutocomplete = onDismissAutocomplete
     self.onMoveAutocompleteSelection = onMoveAutocompleteSelection
     self.onCommitAutocomplete = onCommitAutocomplete
-    self.onVimWrite = onVimWrite
     self.onImageAttachmentsImported = onImageAttachmentsImported
     self.onImageAttachmentResized = onImageAttachmentResized
   }
@@ -200,7 +188,6 @@ public struct MarkdownTextEditor: NSViewRepresentable {
 
     scrollView.documentView = textView
     context.coordinator.attachScrollView(scrollView)
-    textView.configureRuler(showsRelativeLineNumbers: showsRelativeLineNumbers)
     context.coordinator.textView = textView
     return scrollView
   }
@@ -231,7 +218,6 @@ public struct MarkdownTextEditor: NSViewRepresentable {
     scrollView.contentView.backgroundColor = theme.nsColor(.editorBackground)
     textView.backgroundColor = theme.nsColor(.editorBackground)
     textView.insertionPointColor = theme.nsColor(.accent)
-    textView.configureRuler(showsRelativeLineNumbers: showsRelativeLineNumbers)
     textView.needsDisplay = true
     if context.coordinator.lastFocusToken != focusToken {
       context.coordinator.lastFocusToken = focusToken
@@ -246,7 +232,7 @@ public struct MarkdownTextEditor: NSViewRepresentable {
 
   @MainActor
   public final class Coordinator: NSObject, NSTextViewDelegate {
-    var parent: MarkdownTextEditor
+    var parent: RenderedMarkdownEditor
     fileprivate weak var textView: MarkdownTextView?
     private weak var scrollView: NSScrollView?
     var lastFocusToken = 0
@@ -265,7 +251,7 @@ public struct MarkdownTextEditor: NSViewRepresentable {
     private var pendingRenderTask: Task<Void, Never>?
     private var pendingAnchorTask: Task<Void, Never>?
 
-    init(parent: MarkdownTextEditor) {
+    init(parent: RenderedMarkdownEditor) {
       self.parent = parent
     }
 
@@ -299,7 +285,6 @@ public struct MarkdownTextEditor: NSViewRepresentable {
       parent.selectedRange = textView.selectedRange()
       parent.onTextChange()
       applyBaseTypingAttributes(to: textView)
-      (textView as? MarkdownTextView)?.invalidateLineNumberRuler()
       textView.needsDisplay = true
       updateAutocompleteAnchor(in: textView, selection: textView.selectedRange())
       scheduleDeferredRender(in: textView, preserving: textView.selectedRange())
@@ -387,7 +372,6 @@ public struct MarkdownTextEditor: NSViewRepresentable {
         fontFamily: parent.fontFamily,
         theme: parent.theme
       )
-      (textView as? MarkdownTextView)?.invalidateLineNumberRuler()
       lastRenderedFontSize = parent.fontSize
       lastRenderedFontFamily = parent.fontFamily
       lastRenderedWikiLinkStates = parent.wikiLinkStates
@@ -740,7 +724,7 @@ private final class MarkdownClipView: NSClipView {
 }
 
 private final class MarkdownTextView: NSTextView {
-  weak var coordinator: MarkdownTextEditor.Coordinator?
+  weak var coordinator: RenderedMarkdownEditor.Coordinator?
   var theme = LatticeTheme(id: .system)
   private var activeImageResize: ImageResizeDrag?
 
@@ -766,28 +750,7 @@ private final class MarkdownTextView: NSTextView {
       }
     }
 
-    guard coordinator.parent.isVimModeEnabled else {
-      super.keyDown(with: event)
-      return
-    }
-
-    if coordinator.parent.vimState.mode == .insert, !Self.isEscape(event) {
-      super.keyDown(with: event)
-      return
-    }
-
-    guard let input = vimInput(from: event) else {
-      super.keyDown(with: event)
-      return
-    }
-
-    let result = VimTextEditing.handle(
-      input,
-      body: string,
-      selection: selectedRange(),
-      state: coordinator.parent.vimState
-    )
-    applyVimResult(result)
+    super.keyDown(with: event)
   }
 
   override func complete(_ sender: Any?) {
@@ -855,32 +818,6 @@ private final class MarkdownTextView: NSTextView {
     }
 
     super.scrollRangeToVisible(range)
-  }
-
-  override func drawInsertionPoint(in rect: NSRect, color: NSColor, turnedOn flag: Bool) {
-    guard showsVimNormalModeIndicator else {
-      super.drawInsertionPoint(in: rect, color: color, turnedOn: flag)
-      return
-    }
-
-    guard flag else {
-      return
-    }
-
-    theme.nsColor(.accent).setFill()
-    vimBlockCursorRect(fallbackRect: rect).fill()
-  }
-
-  override func setNeedsDisplay(_ rect: NSRect, avoidAdditionalLayout flag: Bool) {
-    guard showsVimNormalModeIndicator else {
-      super.setNeedsDisplay(rect, avoidAdditionalLayout: flag)
-      return
-    }
-
-    super.setNeedsDisplay(
-      rect.insetBy(dx: -vimFallbackCursorWidth, dy: -1),
-      avoidAdditionalLayout: flag
-    )
   }
 
   override func performKeyEquivalent(with event: NSEvent) -> Bool {
@@ -1056,59 +993,6 @@ private final class MarkdownTextView: NSTextView {
     return true
   }
 
-  private func vimInput(from event: NSEvent) -> VimKeyInput? {
-    let flags = event.modifierFlags.intersection(.deviceIndependentFlagsMask).subtracting(.shift)
-    guard flags.isEmpty else {
-      return nil
-    }
-
-    if Self.isEscape(event) {
-      return .escape
-    }
-    if event.keyCode == 36 {
-      return .returnKey
-    }
-    if event.keyCode == 51 {
-      return .deleteBackward
-    }
-    guard let characters = event.characters, characters.count == 1 else {
-      return nil
-    }
-    return .character(characters)
-  }
-
-  private func applyVimResult(_ result: VimEditResult) {
-    guard let coordinator else {
-      return
-    }
-
-    coordinator.parent.vimState = result.state
-
-    if let replacementRange = result.replacementRange,
-       let replacement = result.replacement {
-      guard shouldChangeText(in: replacementRange, replacementString: replacement) else {
-        return
-      }
-      textStorage?.replaceCharacters(in: replacementRange, with: replacement)
-      setSelectedRange(result.selection)
-      didChangeText()
-    } else {
-      setSelectedRange(clamped(result.selection, length: (string as NSString).length))
-      coordinator.parent.selectedRange = selectedRange()
-      coordinator.parent.onSelectionChange()
-      invalidateLineNumberRuler()
-      needsDisplay = true
-    }
-
-    if result.action == .write {
-      coordinator.parent.onVimWrite()
-    }
-  }
-
-  private static func isEscape(_ event: NSEvent) -> Bool {
-    event.keyCode == 53
-  }
-
   private enum AutocompleteKeyAction {
     case dismiss
     case move(Int)
@@ -1135,125 +1019,6 @@ private final class MarkdownTextView: NSTextView {
     default:
       return nil
     }
-  }
-
-  func configureRuler(showsRelativeLineNumbers: Bool) {
-    guard let scrollView = enclosingScrollView else {
-      return
-    }
-
-    if showsRelativeLineNumbers {
-      if !(scrollView.verticalRulerView is RelativeLineNumberRulerView) {
-        scrollView.verticalRulerView = RelativeLineNumberRulerView(textView: self)
-      }
-      scrollView.hasHorizontalRuler = false
-      scrollView.horizontalRulerView = nil
-      scrollView.hasVerticalRuler = true
-      scrollView.rulersVisible = true
-      invalidateLineNumberRuler()
-    } else {
-      scrollView.rulersVisible = false
-      scrollView.hasVerticalRuler = false
-      scrollView.hasHorizontalRuler = false
-      scrollView.verticalRulerView = nil
-      scrollView.horizontalRulerView = nil
-    }
-  }
-
-  func invalidateLineNumberRuler() {
-    enclosingScrollView?.verticalRulerView?.needsDisplay = true
-  }
-
-  var showsVimNormalModeIndicator: Bool {
-    guard let coordinator else {
-      return false
-    }
-
-    return coordinator.parent.isVimModeEnabled
-      && coordinator.parent.vimState.mode == .normal
-  }
-
-  private func vimBlockCursorRect(fallbackRect: NSRect) -> NSRect {
-    let location = min(selectedRange().location, (string as NSString).length)
-    let cursorFont = vimCursorFont(at: location)
-    let fallbackWidth = vimFallbackCursorWidth(for: cursorFont)
-    let fallbackHeight = max(2, ceil(cursorFont.ascender - cursorFont.descender))
-    var cursorRect = fallbackRect
-    cursorRect.size.width = max(fallbackWidth, fallbackRect.width)
-    cursorRect.size.height = min(fallbackRect.height, fallbackHeight)
-    cursorRect.origin.y = fallbackRect.midY - (cursorRect.height / 2)
-
-    guard
-      let layoutManager,
-      let textContainer
-    else {
-      return cursorRect.integral
-    }
-
-    layoutManager.ensureLayout(for: textContainer)
-
-    let nsString = string as NSString
-    guard location < nsString.length else {
-      return cursorRect.integral
-    }
-
-    guard let scalar = Unicode.Scalar(nsString.character(at: location)),
-          !CharacterSet.newlines.contains(scalar) else {
-      return cursorRect.integral
-    }
-
-    let characterRange = NSRange(location: location, length: 1)
-    let glyphRange = layoutManager.glyphRange(
-      forCharacterRange: characterRange,
-      actualCharacterRange: nil
-    )
-    guard glyphRange.length > 0 else {
-      return cursorRect.integral
-    }
-
-    let glyphLocation = layoutManager.location(forGlyphAt: glyphRange.location)
-    let glyphBounds = layoutManager.boundingRect(forGlyphRange: glyphRange, in: textContainer)
-    cursorRect.origin.x = textContainerOrigin.x + glyphLocation.x
-    cursorRect.size.width = glyphBounds.width > 1
-      ? max(2, ceil(glyphBounds.width) + 2)
-      : fallbackWidth
-
-    let nextGlyphIndex = NSMaxRange(glyphRange)
-    if glyphBounds.width <= 1, nextGlyphIndex < layoutManager.numberOfGlyphs {
-      let lineRect = layoutManager.lineFragmentUsedRect(forGlyphAt: glyphRange.location, effectiveRange: nil)
-      let nextLineRect = layoutManager.lineFragmentUsedRect(forGlyphAt: nextGlyphIndex, effectiveRange: nil)
-      if abs(nextLineRect.minY - lineRect.minY) < 0.5 {
-        let nextGlyphLocation = layoutManager.location(forGlyphAt: nextGlyphIndex)
-        cursorRect.size.width = max(cursorRect.size.width, nextGlyphLocation.x - glyphLocation.x)
-      }
-    }
-
-    return cursorRect.integral
-  }
-
-  private var vimFallbackCursorWidth: CGFloat {
-    let location = min(selectedRange().location, (string as NSString).length)
-    return vimFallbackCursorWidth(for: vimCursorFont(at: location))
-  }
-
-  private func vimFallbackCursorWidth(for cursorFont: NSFont) -> CGFloat {
-    let measuredWidth = ("m" as NSString).size(withAttributes: [.font: cursorFont]).width
-    return max(2, ceil(measuredWidth))
-  }
-
-  private func vimCursorFont(at location: Int) -> NSFont {
-    if let textStorage, textStorage.length > 0 {
-      let clampedLocation = min(location, textStorage.length - 1)
-      if let attributedFont = textStorage.attribute(
-        .font,
-        at: clampedLocation,
-        effectiveRange: nil
-      ) as? NSFont {
-        return attributedFont
-      }
-    }
-
-    return font ?? NSFont.systemFont(ofSize: NSFont.systemFontSize)
   }
 
   private func toggleTaskCheckbox(at event: NSEvent) -> Bool {
@@ -1675,213 +1440,15 @@ private extension NSImage {
   }
 }
 
-private final class RelativeLineNumberRulerView: NSRulerView {
-  private weak var textView: MarkdownTextView?
-  private let rulerWidth: CGFloat = 44
-
-  init(textView: MarkdownTextView) {
-    self.textView = textView
-    super.init(scrollView: textView.enclosingScrollView, orientation: .verticalRuler)
-    clientView = textView
-    ruleThickness = rulerWidth
-  }
-
-  @available(*, unavailable)
-  required init(coder: NSCoder) {
-    fatalError("init(coder:) has not been implemented")
-  }
-
-  override var requiredThickness: CGFloat {
-    rulerWidth
-  }
-
-  override func draw(_ dirtyRect: NSRect) {
-    drawHashMarksAndLabels(in: dirtyRect)
-  }
-
-  override func drawHashMarksAndLabels(in rect: NSRect) {
-    guard
-      let textView,
-      let layoutManager = textView.layoutManager,
-      let textContainer = textView.textContainer
-    else {
-      return
-    }
-
-    NSColor.clear.setFill()
-    rect.fill()
-
-    let nsString = textView.string as NSString
-    let selectedLine = lineNumber(at: textView.selectedRange().location, in: nsString)
-    let visibleRect = textView.visibleRect
-    let origin = textView.textContainerOrigin
-    layoutManager.ensureLayout(for: textContainer)
-    let attributes: [NSAttributedString.Key: Any] = [
-      .font: NSFont.monospacedDigitSystemFont(ofSize: 11, weight: .regular),
-      .foregroundColor: textView.theme.nsColor(.secondaryText)
-    ]
-    let activeAttributes: [NSAttributedString.Key: Any] = [
-      .font: NSFont.monospacedDigitSystemFont(ofSize: 11, weight: .medium),
-      .foregroundColor: textView.theme.nsColor(.primaryText)
-    ]
-    let normalModeActiveAttributes: [NSAttributedString.Key: Any] = [
-      .font: NSFont.monospacedDigitSystemFont(ofSize: 11, weight: .semibold),
-      .foregroundColor: textView.theme.nsColor(.accent)
-    ]
-    let showsNormalModeIndicator = textView.showsVimNormalModeIndicator
-
-    if nsString.length == 0 {
-      let lineRect = layoutManager.extraLineFragmentRect
-      drawLineNumberIfVisible(
-        1,
-        selectedLine: selectedLine,
-        y: lineRect.minY + origin.y,
-        visibleRect: visibleRect,
-        attributes: attributes,
-        activeAttributes: activeAttributes,
-        normalModeActiveAttributes: normalModeActiveAttributes,
-        showsNormalModeIndicator: showsNormalModeIndicator
-      )
-      return
-    }
-
-    var lineNumber = 1
-    var location = 0
-    while location < nsString.length {
-      let lineRange = nsString.lineRange(for: NSRange(location: location, length: 0))
-      let lineRect = lineRect(
-        forCharacterRange: lineRange,
-        layoutManager: layoutManager,
-        textContainer: textContainer
-      )
-      drawLineNumberIfVisible(
-        lineNumber,
-        selectedLine: selectedLine,
-        y: lineRect.minY + origin.y,
-        visibleRect: visibleRect,
-        attributes: attributes,
-        activeAttributes: activeAttributes,
-        normalModeActiveAttributes: normalModeActiveAttributes,
-        showsNormalModeIndicator: showsNormalModeIndicator
-      )
-
-      let nextLocation = NSMaxRange(lineRange)
-      if nextLocation <= location {
-        break
-      }
-      location = nextLocation
-      lineNumber += 1
-    }
-
-    if location == nsString.length,
-       let scalar = Unicode.Scalar(nsString.character(at: nsString.length - 1)),
-       CharacterSet.newlines.contains(scalar) {
-      let lineRect = layoutManager.extraLineFragmentRect
-      drawLineNumberIfVisible(
-        lineNumber,
-        selectedLine: selectedLine,
-        y: lineRect.minY + origin.y,
-        visibleRect: visibleRect,
-        attributes: attributes,
-        activeAttributes: activeAttributes,
-        normalModeActiveAttributes: normalModeActiveAttributes,
-        showsNormalModeIndicator: showsNormalModeIndicator
-      )
-    }
-  }
-
-  private func lineRect(
-    forCharacterRange characterRange: NSRange,
-    layoutManager: NSLayoutManager,
-    textContainer: NSTextContainer
-  ) -> NSRect {
-    let glyphRange = layoutManager.glyphRange(
-      forCharacterRange: characterRange,
-      actualCharacterRange: nil
-    )
-    guard glyphRange.length > 0 else {
-      return layoutManager.extraLineFragmentRect
-    }
-    return layoutManager.lineFragmentRect(forGlyphAt: glyphRange.location, effectiveRange: nil)
-  }
-
-  private func drawLineNumberIfVisible(
-    _ lineNumber: Int,
-    selectedLine: Int,
-    y: CGFloat,
-    visibleRect: NSRect,
-    attributes: [NSAttributedString.Key: Any],
-    activeAttributes: [NSAttributedString.Key: Any],
-    normalModeActiveAttributes: [NSAttributedString.Key: Any],
-    showsNormalModeIndicator: Bool
-  ) {
-    guard y.isFinite, y >= visibleRect.minY - 24, y <= visibleRect.maxY + 24 else {
-      return
-    }
-
-    let isActiveLine = lineNumber == selectedLine
-    let value = VimTextEditing.relativeLineNumber(
-      lineNumber: lineNumber,
-      activeLineNumber: selectedLine
-    )
-    let lineAttributes: [NSAttributedString.Key: Any]
-    if isActiveLine, showsNormalModeIndicator {
-      lineAttributes = normalModeActiveAttributes
-    } else if isActiveLine {
-      lineAttributes = activeAttributes
-    } else {
-      lineAttributes = attributes
-    }
-    draw("\(value)", y: y, attributes: lineAttributes)
-  }
-
-  private func draw(
-    _ label: String,
-    y: CGFloat,
-    attributes: [NSAttributedString.Key: Any]
-  ) {
-    let attributed = NSAttributedString(string: label, attributes: attributes)
-    let size = attributed.size()
-    let point = NSPoint(
-      x: max(4, bounds.width - size.width - 8),
-      y: y
-    )
-    attributed.draw(at: point)
-  }
-
-  private func lineNumber(at location: Int, in nsString: NSString) -> Int {
-    var line = 1
-    let clampedLocation = max(0, min(location, nsString.length))
-
-    guard clampedLocation > 0 else {
-      return line
-    }
-
-    for index in 0..<clampedLocation {
-      guard
-        let scalar = Unicode.Scalar(nsString.character(at: index)),
-        CharacterSet.newlines.contains(scalar)
-      else {
-        continue
-      }
-      line += 1
-    }
-    return line
-  }
-}
-
 #elseif os(iOS)
 import UIKit
 
-public struct MarkdownTextEditor: UIViewRepresentable {
+public struct RenderedMarkdownEditor: UIViewRepresentable {
   @Binding var text: String
   @Binding var selectedRange: NSRange
-  @Binding var vimState: VimEditorState
   let fontSize: CGFloat
   let fontFamily: EditorFontFamily
   let focusToken: Int
-  let isVimModeEnabled: Bool
-  let showsRelativeLineNumbers: Bool
   let dimsInactiveParagraphs: Bool
   let caretAnchorFraction: CGFloat?
   @Binding var autocompleteAnchor: CGRect?
@@ -1899,19 +1466,15 @@ public struct MarkdownTextEditor: UIViewRepresentable {
   let onDismissAutocomplete: () -> Void
   let onMoveAutocompleteSelection: (Int) -> Void
   let onCommitAutocomplete: () -> Void
-  let onVimWrite: () -> Void
   let onImageAttachmentsImported: ([ImageAttachmentImport]) -> Void
   let onImageAttachmentResized: (Int, Double) -> Void
 
   public init(
     text: Binding<String>,
     selectedRange: Binding<NSRange>,
-    vimState: Binding<VimEditorState>,
     fontSize: CGFloat,
     fontFamily: EditorFontFamily,
     focusToken: Int,
-    isVimModeEnabled: Bool,
-    showsRelativeLineNumbers: Bool,
     dimsInactiveParagraphs: Bool = false,
     caretAnchorFraction: CGFloat? = nil,
     autocompleteAnchor: Binding<CGRect?> = .constant(nil),
@@ -1929,18 +1492,14 @@ public struct MarkdownTextEditor: UIViewRepresentable {
     onDismissAutocomplete: @escaping () -> Void,
     onMoveAutocompleteSelection: @escaping (Int) -> Void = { _ in },
     onCommitAutocomplete: @escaping () -> Void = {},
-    onVimWrite: @escaping () -> Void,
     onImageAttachmentsImported: @escaping ([ImageAttachmentImport]) -> Void,
     onImageAttachmentResized: @escaping (Int, Double) -> Void
   ) {
     self._text = text
     self._selectedRange = selectedRange
-    self._vimState = vimState
     self.fontSize = fontSize
     self.fontFamily = fontFamily
     self.focusToken = focusToken
-    self.isVimModeEnabled = isVimModeEnabled
-    self.showsRelativeLineNumbers = showsRelativeLineNumbers
     self.dimsInactiveParagraphs = dimsInactiveParagraphs
     self.caretAnchorFraction = caretAnchorFraction
     self._autocompleteAnchor = autocompleteAnchor
@@ -1958,7 +1517,6 @@ public struct MarkdownTextEditor: UIViewRepresentable {
     self.onDismissAutocomplete = onDismissAutocomplete
     self.onMoveAutocompleteSelection = onMoveAutocompleteSelection
     self.onCommitAutocomplete = onCommitAutocomplete
-    self.onVimWrite = onVimWrite
     self.onImageAttachmentsImported = onImageAttachmentsImported
     self.onImageAttachmentResized = onImageAttachmentResized
   }
@@ -2071,7 +1629,7 @@ public struct MarkdownTextEditor: UIViewRepresentable {
 
   @MainActor
   public final class Coordinator: NSObject, UITextViewDelegate, UIGestureRecognizerDelegate, UIDropInteractionDelegate {
-    var parent: MarkdownTextEditor
+    var parent: RenderedMarkdownEditor
     var lastFocusToken = 0
     var lastRenderedFontFamily: EditorFontFamily?
     var lastRenderedWikiLinkStates: [WikiLinkRenderState] = []
@@ -2106,7 +1664,7 @@ public struct MarkdownTextEditor: UIViewRepresentable {
       "org.webmproject.webp"
     ]
 
-    init(parent: MarkdownTextEditor) {
+    init(parent: RenderedMarkdownEditor) {
       self.parent = parent
     }
 
@@ -3400,7 +2958,7 @@ private final class MarkdownKeyboardAccessoryButton: UIButton {
         ) { _ in
           Task { @MainActor in
             MarkdownKeyboardAccessoryHaptics.perform()
-            if let coordinator = target as? MarkdownTextEditor.Coordinator {
+            if let coordinator = target as? RenderedMarkdownEditor.Coordinator {
               coordinator.performKeyboardAccessoryAction(child)
             } else {
               child.perform()
@@ -3450,7 +3008,7 @@ private extension UITextView {
 }
 
 private final class MarkdownUIKitTextView: UITextView {
-  weak var markdownCoordinator: MarkdownTextEditor.Coordinator?
+  weak var markdownCoordinator: RenderedMarkdownEditor.Coordinator?
   var theme = LatticeTheme(id: .system)
   var imagePreviewStates: [MarkdownImageRenderState] = []
 

@@ -56,7 +56,7 @@ public final class LatticeAppModel {
   public var navigationVisibility = LatticeNavigationVisibility.all
   public var editorFocusToken = 0
   public var editorFontSize = 14.0
-  public var editorFontFamily = EditorFontFamily.system
+  public var editorMode = EditorMode.raw
   public var isVimModeEnabled = false
   public var showsRelativeLineNumbers = false
   public var isZenModeEnabled = false
@@ -131,13 +131,15 @@ public final class LatticeAppModel {
     self.dateProvider = dateProvider
     self.session = NoteEditingSession(library: noteLibrary)
     let editorPreferences = editorPreferencesStore.load()
+    self.editorMode = editorPreferences.mode
     self.isVimModeEnabled = editorPreferences.isVimModeEnabled
     self.showsRelativeLineNumbers = editorPreferences.showsRelativeLineNumbers
     self.selectedThemeID = editorPreferences.themeID
-    self.editorFontFamily = editorPreferences.fontFamily
     self.keyboardShortcutOverrides = editorPreferences.keyboardShortcutOverrides
     self.disabledKeyboardShortcuts = editorPreferences.disabledKeyboardShortcuts
-    self.vimState = VimEditorState(mode: editorPreferences.isVimModeEnabled ? .normal : .insert)
+    self.vimState = VimEditorState(
+      mode: editorPreferences.mode == .raw && editorPreferences.isVimModeEnabled ? .normal : .insert
+    )
   }
 
   public var hasFolder: Bool {
@@ -198,7 +200,11 @@ public final class LatticeAppModel {
   }
 
   public var effectiveIsVimModeEnabled: Bool {
-    isVimModeEnabled && !isZenModeEnabled
+    editorMode == .raw && isVimModeEnabled && !isZenModeEnabled
+  }
+
+  public var effectiveShowsRelativeLineNumbers: Bool {
+    editorMode == .raw && showsRelativeLineNumbers
   }
 
   public func start() {
@@ -1389,6 +1395,10 @@ public final class LatticeAppModel {
 
   public func noteTextDidChange() {
     scheduleAutosave()
+    guard editorMode == .rendered else {
+      dismissWikiAutocomplete()
+      return
+    }
     updateWikiAutocompleteIfNeeded()
     scheduleEditorDecorationRefresh()
   }
@@ -1455,6 +1465,9 @@ public final class LatticeAppModel {
   }
 
   public func noteSelectionDidChange() {
+    guard editorMode == .rendered else {
+      return
+    }
     formatInactiveMarkdownTables()
     updateWikiAutocompleteIfNeeded()
   }
@@ -1466,6 +1479,25 @@ public final class LatticeAppModel {
     editorFocusToken += 1
   }
 
+  public func setEditorMode(_ mode: EditorMode) {
+    guard editorMode != mode else {
+      return
+    }
+    editorMode = mode
+    vimState = VimEditorState(mode: effectiveIsVimModeEnabled ? .normal : .insert)
+    dismissWikiAutocomplete()
+    if mode == .rendered {
+      refreshEditorDecorations()
+      updateWikiAutocompleteIfNeeded()
+    }
+    saveEditorPreferences()
+    editorFocusToken += 1
+  }
+
+  public func toggleEditorMode() {
+    setEditorMode(editorMode.alternate)
+  }
+
   public func setRelativeLineNumbersEnabled(_ isEnabled: Bool) {
     showsRelativeLineNumbers = isEnabled
     saveEditorPreferences()
@@ -1473,11 +1505,6 @@ public final class LatticeAppModel {
 
   public func setTheme(_ themeID: LatticeThemeID) {
     selectedThemeID = themeID
-    saveEditorPreferences()
-  }
-
-  public func setEditorFontFamily(_ fontFamily: EditorFontFamily) {
-    editorFontFamily = fontFamily
     saveEditorPreferences()
   }
 
@@ -1672,7 +1699,9 @@ public final class LatticeAppModel {
     autosaveWorkItem?.cancel()
     autosaveWorkItem = nil
     do {
-      formatInactiveMarkdownTables()
+      if editorMode == .rendered {
+        formatInactiveMarkdownTables()
+      }
       let saveDate = now ?? dateProvider()
       let previousBody = session.savedBody
       let wasExistingNote = session.currentNote != nil
@@ -1876,6 +1905,12 @@ public final class LatticeAppModel {
   private func refreshEditorDecorations() {
     editorDecorationWorkItem?.cancel()
     editorDecorationWorkItem = nil
+    guard editorMode == .rendered else {
+      wikiLinkStates = []
+      imagePreviewStates = []
+      dismissWikiAutocomplete()
+      return
+    }
     refreshWikiLinkStates()
     refreshImagePreviewStates()
     updateWikiAutocompleteIfNeeded()
@@ -2407,10 +2442,10 @@ public final class LatticeAppModel {
 
   private func saveEditorPreferences() {
     editorPreferencesStore.save(EditorPreferences(
+      mode: editorMode,
       isVimModeEnabled: isVimModeEnabled,
       showsRelativeLineNumbers: showsRelativeLineNumbers,
       themeID: selectedThemeID,
-      fontFamily: editorFontFamily,
       keyboardShortcutOverrides: keyboardShortcutOverrides,
       disabledKeyboardShortcuts: disabledKeyboardShortcuts
     ))
@@ -2422,6 +2457,16 @@ public final class LatticeAppModel {
     }
 
     return [
+      CommandPaletteCommand(
+        id: "lattice.toggleEditorMode",
+        title: "Switch to \(editorMode.alternate.displayName) Mode",
+        subtitle: editorMode == .raw
+          ? "Edit with rendered Markdown"
+          : "Edit literal Markdown source",
+        systemImage: editorMode == .raw ? "textformat" : "chevron.left.forwardslash.chevron.right"
+      ) { [weak self] in
+        self?.toggleEditorMode()
+      },
       CommandPaletteCommand(
         id: "lattice.toggleZenMode",
         title: isZenModeEnabled ? "Exit Zen Mode" : "Enter Zen Mode",

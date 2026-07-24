@@ -303,19 +303,11 @@ public struct TaskSyncSettingsView: View {
 
   private var macEditorSections: some View {
     MacSettingsSection(title: "Editor") {
-      MacSettingsControlRow(title: "Font") {
-        Picker("Font", selection: fontFamilyBinding) {
-          ForEach(EditorFontFamily.allCases) { fontFamily in
-            Text(fontFamily.displayName).tag(fontFamily)
-          }
-        }
-        .labelsHidden()
-        .pickerStyle(.menu)
-      }
-      MacSettingsDivider()
       MacSettingsToggleRow(title: "Vim Mode", isOn: vimModeBinding)
+        .disabled(model.editorMode != .raw)
       MacSettingsDivider()
       MacSettingsToggleRow(title: "Relative Line Numbers", isOn: relativeLineNumbersBinding)
+        .disabled(model.editorMode != .raw)
     }
   }
 
@@ -525,15 +517,11 @@ public struct TaskSyncSettingsView: View {
   @ViewBuilder
   private var editorSection: some View {
     Section("Editor") {
-      Picker("Font", selection: fontFamilyBinding) {
-        ForEach(EditorFontFamily.allCases) { fontFamily in
-          Text(fontFamily.displayName).tag(fontFamily)
-        }
-      }
-
       #if os(macOS)
       Toggle("Vim Mode", isOn: vimModeBinding)
+        .disabled(model.editorMode != .raw)
       Toggle("Relative Line Numbers", isOn: relativeLineNumbersBinding)
+        .disabled(model.editorMode != .raw)
       #endif
     }
   }
@@ -660,14 +648,6 @@ public struct TaskSyncSettingsView: View {
       model.selectedThemeID
     } set: { value in
       model.setTheme(value)
-    }
-  }
-
-  private var fontFamilyBinding: Binding<EditorFontFamily> {
-    Binding {
-      model.editorFontFamily
-    } set: { value in
-      model.setEditorFontFamily(value)
     }
   }
 

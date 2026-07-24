@@ -1,5 +1,32 @@
 import Foundation
 
+public enum EditorMode: String, CaseIterable, Identifiable, Sendable {
+  case raw
+  case rendered
+
+  public var id: String {
+    rawValue
+  }
+
+  public var displayName: String {
+    switch self {
+    case .raw:
+      return "Raw"
+    case .rendered:
+      return "Rendered"
+    }
+  }
+
+  public var alternate: EditorMode {
+    switch self {
+    case .raw:
+      return .rendered
+    case .rendered:
+      return .raw
+    }
+  }
+}
+
 public enum EditorFontFamily: String, CaseIterable, Identifiable, Sendable {
   case system
   case monospaced
@@ -125,25 +152,25 @@ public enum LatticeKeyboardShortcutID: String, CaseIterable, Identifiable, Senda
 }
 
 public struct EditorPreferences: Equatable, Sendable {
+  public var mode: EditorMode
   public var isVimModeEnabled: Bool
   public var showsRelativeLineNumbers: Bool
   public var themeID: LatticeThemeID
-  public var fontFamily: EditorFontFamily
   public var keyboardShortcutOverrides: [LatticeKeyboardShortcutID: LatticeKeyboardShortcut]
   public var disabledKeyboardShortcuts: Set<LatticeKeyboardShortcutID>
 
   public init(
+    mode: EditorMode = .raw,
     isVimModeEnabled: Bool = false,
     showsRelativeLineNumbers: Bool = false,
     themeID: LatticeThemeID = .system,
-    fontFamily: EditorFontFamily = .system,
     keyboardShortcutOverrides: [LatticeKeyboardShortcutID: LatticeKeyboardShortcut] = [:],
     disabledKeyboardShortcuts: Set<LatticeKeyboardShortcutID> = []
   ) {
+    self.mode = mode
     self.isVimModeEnabled = isVimModeEnabled
     self.showsRelativeLineNumbers = showsRelativeLineNumbers
     self.themeID = themeID
-    self.fontFamily = fontFamily
     self.keyboardShortcutOverrides = keyboardShortcutOverrides
     self.disabledKeyboardShortcuts = disabledKeyboardShortcuts
   }
@@ -163,20 +190,20 @@ public final class EditorPreferencesStore {
 
   public func load() -> EditorPreferences {
     EditorPreferences(
+      mode: EditorMode(rawValue: defaults.string(forKey: key("mode")) ?? "") ?? .raw,
       isVimModeEnabled: defaults.bool(forKey: key("isVimModeEnabled")),
       showsRelativeLineNumbers: defaults.bool(forKey: key("showsRelativeLineNumbers")),
       themeID: LatticeThemeID(rawValue: defaults.string(forKey: key("themeID")) ?? "") ?? .system,
-      fontFamily: EditorFontFamily(rawValue: defaults.string(forKey: key("fontFamily")) ?? "") ?? .system,
       keyboardShortcutOverrides: keyboardShortcutOverrides(),
       disabledKeyboardShortcuts: disabledKeyboardShortcuts()
     )
   }
 
   public func save(_ preferences: EditorPreferences) {
+    defaults.set(preferences.mode.rawValue, forKey: key("mode"))
     defaults.set(preferences.isVimModeEnabled, forKey: key("isVimModeEnabled"))
     defaults.set(preferences.showsRelativeLineNumbers, forKey: key("showsRelativeLineNumbers"))
     defaults.set(preferences.themeID.rawValue, forKey: key("themeID"))
-    defaults.set(preferences.fontFamily.rawValue, forKey: key("fontFamily"))
     defaults.set(
       Dictionary(uniqueKeysWithValues: preferences.keyboardShortcutOverrides.map {
         ($0.key.rawValue, $0.value.storageValue)
