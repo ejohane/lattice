@@ -1,44 +1,34 @@
 # Mac Markdown Editor
 
-Lattice stores ordinary Markdown files on disk. The mac editor should make those
-files pleasant to write without changing the storage format into rich text or a
-private document model.
+The macOS Lattice app is intentionally a small raw Markdown editor.
 
-## Rendering Contract
+## Initial Contract
 
-- Markdown source remains the saved document content.
-- The editor live-renders Markdown while editing plain text.
-- Inactive Markdown tokens are visually minimized or hidden.
-- Tokens become visible and editable when the insertion point moves into the
-  Markdown construct.
-- Unordered list markers render as bullet glyphs when inactive.
-- Active list markers remain visible as source text.
-- List item spacing matches list line spacing, not the normal paragraph spacing.
-- The formatting toolbar can insert Markdown task-list items.
-- Clicking or tapping a task-list checkbox prefix toggles `[ ]` and `[x]`.
-- Inline bold, italic, code, and links style their content while hiding inactive
-  syntax tokens.
-- Pipe tables render as bordered tables when inactive, and show the Markdown
-  source when the insertion point moves into the table.
-- Complete pipe tables are normalized to evenly padded Markdown source columns
-  after the insertion point leaves the table.
-- Fenced code blocks do not receive inline Markdown styling.
-- Return continues unordered, ordered, and task lists.
-- Return on an empty list item exits the list.
+- A chosen folder is the only library boundary.
+- Visible `.md` files are discovered recursively.
+- The sidebar shows each file's relative path.
+- Selecting a file loads its UTF-8 Markdown body verbatim.
+- A leading YAML block with a root `lattice:` section is hidden and preserved
+  unchanged when saving; other YAML frontmatter remains visible.
+- The editor is plain, monospaced text with no Markdown rendering or mutation.
+- The writing column stays centered, grows to at most 760 points, and uses
+  responsive horizontal and top padding as the window changes size.
+- Sidebar rows use a relaxed native source-list inset while keeping the sidebar
+  directly resizable between compact and roomy widths.
+- Edits autosave directly to the selected file.
+- Hidden files and non-Markdown files are ignored.
 
 ## Test Coverage
 
-Changes to `MarkdownAttributedRenderer`, `MarkdownTextEditor`, or
-`MarkdownListContinuation` should preserve:
+Changes to the macOS file-and-editor loop should preserve:
 
-- Renderer attribute tests in `apps/lattice/Tests/LatticeSharedTests`.
-- Parser and editing tests in `apps/lattice/Tests/LatticeCoreTests`.
+- Recursive visible Markdown discovery.
+- Verbatim UTF-8 reads and writes.
 - The full repository verification command:
 
 ```bash
 bun run verify
 ```
 
-Prefer adding pure `LatticeEditor` tests for editing behavior before adding UI
-tests. AppKit-specific tests should cover attributed-string rendering attributes
-or native text view integration that cannot be represented as pure string edits.
+Do not add Markdown presentation or feature behavior to this layer. New features
+should establish their own boundary and tests before they affect the editor.
