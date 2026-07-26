@@ -14,6 +14,12 @@ The macOS Lattice app is intentionally a small, source-preserving live Markdown 
   remain the canonical document.
 - H1-H6 headings, bold, italic, inline code, unordered lists, and task lists
   receive live presentation.
+- Markdown links render as linked labels, while pasted `http` and `https` URLs
+  receive link styling without changing their source. Clicking either form
+  opens an absolute web destination in the default browser; Option-click keeps
+  the interaction in the editor.
+- Command-K wraps a single-line selection as `[label](https://)` and selects the
+  destination placeholder for immediate replacement.
 - Markdown delimiters are visible only while the selection touches their
   construct and collapse as soon as the caret moves beyond it.
 - The first insertion in an empty note seeds a real `# ` H1 prefix as part of

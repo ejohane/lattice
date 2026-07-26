@@ -27,6 +27,15 @@ struct LiveMarkdownEditor: NSViewRepresentable {
     textView.onTaskToggle = { [weak coordinator = context.coordinator] location in
       coordinator?.toggleTask(at: location)
     }
+    textView.onInsertLink = { [weak coordinator = context.coordinator] in
+      coordinator?.insertLink()
+    }
+    textView.onOpenLink = { url in
+      guard NSWorkspace.shared.open(url) else {
+        NSSound.beep()
+        return
+      }
+    }
     textView.onFocusChange = { [weak coordinator = context.coordinator, weak textView] isFocused in
       guard let coordinator, let textView else { return }
       coordinator.presentationFocusDidChange(in: textView, isFocused: isFocused)
@@ -211,6 +220,22 @@ struct LiveMarkdownEditor: NSViewRepresentable {
       textView.insertText(result.replacement, replacementRange: result.replacementRange)
       textView.setSelectedRange(selection)
       presentation.selectionDidChange(in: textView, selection: selection)
+    }
+
+    func insertLink() {
+      guard let textView,
+            let result = LiveMarkdownEditing.linkInsertion(
+              currentText: textView.string,
+              selection: textView.selectedRange()
+            )
+      else {
+        NSSound.beep()
+        return
+      }
+
+      textView.insertText(result.replacement, replacementRange: result.replacementRange)
+      textView.setSelectedRange(result.selection)
+      presentation.selectionDidChange(in: textView, selection: result.selection)
     }
   }
 }

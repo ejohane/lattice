@@ -6,7 +6,15 @@ final class LiveMarkdownTextView: NSTextView {
   var presentationDecorations: [LiveMarkdownDecoration] = [] {
     didSet { needsDisplay = true }
   }
+  var presentationLinks: [LiveMarkdownLinkTarget] = [] {
+    didSet {
+      guard let window else { return }
+      window.invalidateCursorRects(for: self)
+    }
+  }
   var onTaskToggle: ((Int) -> Void)?
+  var onInsertLink: (() -> Void)?
+  var onOpenLink: ((URL) -> Void)?
   var onFocusChange: ((Bool) -> Void)?
 
   private var taskHitTargets: [(range: NSRange, rect: NSRect)] = []
@@ -36,6 +44,19 @@ final class LiveMarkdownTextView: NSTextView {
       onFocusChange?(true)
     }
     return becameFirstResponder
+  }
+
+  override func performKeyEquivalent(with event: NSEvent) -> Bool {
+    let modifiers = event.modifierFlags.intersection(.deviceIndependentFlagsMask)
+    if modifiers.contains(.command),
+       !modifiers.contains(.option),
+       !modifiers.contains(.control),
+       event.charactersIgnoringModifiers?.lowercased() == "k",
+       let onInsertLink {
+      onInsertLink()
+      return true
+    }
+    return super.performKeyEquivalent(with: event)
   }
 
   override func resignFirstResponder() -> Bool {
@@ -70,6 +91,13 @@ final class LiveMarkdownTextView: NSTextView {
       onTaskToggle?(target.range.location)
       return
     }
+    let modifiers = event.modifierFlags.intersection(.deviceIndependentFlagsMask)
+    if event.clickCount == 1,
+       !modifiers.contains(.option),
+       let target = linkTarget(at: characterIndexForInsertion(at: location)) {
+      onOpenLink?(target.url)
+      return
+    }
     super.mouseDown(with: event)
   }
 
@@ -77,6 +105,10 @@ final class LiveMarkdownTextView: NSTextView {
     super.resetCursorRects()
     for target in taskHitTargets {
       addCursorRect(target.rect, cursor: .pointingHand)
+    }
+    for target in presentationLinks {
+      guard let rect = localRect(for: target.range) else { continue }
+      addCursorRect(rect, cursor: .pointingHand)
     }
   }
 
@@ -91,6 +123,10 @@ final class LiveMarkdownTextView: NSTextView {
     guard !screenRect.isEmpty, actualRange.location != NSNotFound else { return nil }
     let windowRect = window.convertFromScreen(screenRect)
     return convert(windowRect, from: nil)
+  }
+
+  private func linkTarget(at characterIndex: Int) -> LiveMarkdownLinkTarget? {
+    presentationLinks.first { NSLocationInRange(characterIndex, $0.range) }
   }
 
   private func drawBullet(in markerRect: NSRect) {

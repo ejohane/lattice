@@ -382,6 +382,67 @@ struct LiveMarkdownPresentationTests {
     #expect(hiddenAfterSpace.pointSize < 1)
   }
 
+  @Test("renders Markdown link labels and highlights bare web URLs")
+  func rendersLinks() throws {
+    let text = "[Lattice](https://example.com) and https://openai.com"
+    let textView = LiveMarkdownTextView(usingTextLayoutManager: true)
+    textView.string = text
+    let presentation = LiveMarkdownPresentationController()
+    presentation.reset(
+      textView: textView,
+      text: text,
+      selection: NSRange(location: (text as NSString).length, length: 0)
+    )
+
+    let markdownLink = try #require(presentation.tokens.first {
+      if case .markdownLink = $0.kind { return true }
+      return false
+    })
+    let bareLink = try #require(presentation.tokens.first {
+      if case .bareLink = $0.kind { return true }
+      return false
+    })
+    let hiddenSyntaxFont = try #require(textView.textStorage?.attribute(
+      .font,
+      at: markdownLink.syntaxRanges[0].location,
+      effectiveRange: nil
+    ) as? NSFont)
+    let markdownLabelColor = try #require(textView.textStorage?.attribute(
+      .foregroundColor,
+      at: markdownLink.contentRange.location,
+      effectiveRange: nil
+    ) as? NSColor)
+    let bareLinkColor = try #require(textView.textStorage?.attribute(
+      .foregroundColor,
+      at: bareLink.contentRange.location,
+      effectiveRange: nil
+    ) as? NSColor)
+
+    #expect(hiddenSyntaxFont.pointSize < 1)
+    #expect(markdownLabelColor.isEqual(NSColor.linkColor))
+    #expect(bareLinkColor.isEqual(NSColor.linkColor))
+    #expect(textView.presentationLinks.map(\.url.absoluteString) == [
+      "https://example.com",
+      "https://openai.com"
+    ])
+    #expect(textView.presentationLinks.map(\.range) == [
+      markdownLink.contentRange,
+      bareLink.contentRange
+    ])
+
+    presentation.focusDidChange(in: textView, isFocused: true)
+    presentation.selectionDidChange(
+      in: textView,
+      selection: NSRange(location: markdownLink.contentRange.location, length: 0)
+    )
+    let revealedSyntaxFont = try #require(textView.textStorage?.attribute(
+      .font,
+      at: markdownLink.syntaxRanges[0].location,
+      effectiveRange: nil
+    ) as? NSFont)
+    #expect(revealedSyntaxFont.pointSize > 10)
+  }
+
   @Test("keeps later token ranges stable after an incremental edit")
   func shiftsTokensAfterIncrementalEdit() throws {
     let text = "# Title\n\n**bold**"

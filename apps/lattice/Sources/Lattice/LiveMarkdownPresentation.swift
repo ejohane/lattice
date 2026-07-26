@@ -11,6 +11,11 @@ struct LiveMarkdownDecoration: Equatable {
   let range: NSRange
 }
 
+struct LiveMarkdownLinkTarget: Equatable {
+  let url: URL
+  let range: NSRange
+}
+
 @MainActor
 final class LiveMarkdownPresentationController {
   struct PendingEdit {
@@ -187,6 +192,13 @@ final class LiveMarkdownPresentationController {
       ], range: token.contentRange)
       applySyntax(token, to: storage, selection: selection, collapsesWhenInactive: true)
 
+    case .markdownLink:
+      applyLinkStyle(to: token.contentRange, storage: storage)
+      applySyntax(token, to: storage, selection: selection, collapsesWhenInactive: true)
+
+    case .bareLink:
+      applyLinkStyle(to: token.contentRange, storage: storage)
+
     case .bullet:
       applyListSyntax(token, to: storage)
 
@@ -229,6 +241,13 @@ final class LiveMarkdownPresentationController {
     }
   }
 
+  private func applyLinkStyle(to range: NSRange, storage: NSTextStorage) {
+    storage.addAttributes([
+      .foregroundColor: NSColor.linkColor,
+      .underlineStyle: NSUnderlineStyle.single.rawValue
+    ], range: range)
+  }
+
   private func addFontTrait(
     _ trait: NSFontTraitMask,
     to range: NSRange,
@@ -255,6 +274,19 @@ final class LiveMarkdownPresentationController {
       default:
         return nil
       }
+    }
+    textView.presentationLinks = tokens.compactMap { token in
+      let destination: String
+      switch token.kind {
+      case .markdownLink(let value), .bareLink(let value):
+        destination = value
+      default:
+        return nil
+      }
+      guard let url = LiveMarkdownLinkDestination.webURL(for: destination) else {
+        return nil
+      }
+      return LiveMarkdownLinkTarget(url: url, range: token.contentRange)
     }
   }
 

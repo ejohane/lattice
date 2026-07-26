@@ -5,6 +5,8 @@ public enum LiveMarkdownTokenKind: Equatable, Sendable {
   case bold
   case italic
   case inlineCode
+  case markdownLink(destination: String)
+  case bareLink(destination: String)
   case bullet
   case task(isChecked: Bool)
 }
@@ -175,11 +177,30 @@ public enum LiveMarkdownParser {
     }
     let codeRanges = codeTokens.map(\.fullRange).map { shifted($0, by: -offset) }
 
+    let markdownLinkTokens = line.contains("](")
+      ? matches(
+        pattern: "\\[([^]\\n]+)\\]\\(([^\\s)\\n]+)\\)",
+        in: line,
+        range: fullRange,
+        skippedRanges: codeRanges
+      ) { match in
+        markdownLinkToken(match: match, in: line, offset: offset)
+      }
+      : []
+    let markdownLinkRanges = markdownLinkTokens.map(\.fullRange).map { shifted($0, by: -offset) }
+    let bareLinkTokens = bareLinkTokens(
+      in: line,
+      offset: offset,
+      skippedRanges: codeRanges + markdownLinkRanges
+    )
+    let bareLinkRanges = bareLinkTokens.map(\.fullRange).map { shifted($0, by: -offset) }
+    let opaqueRanges = codeRanges + markdownLinkRanges + bareLinkRanges
+
     let boldTokens = matches(
       pattern: "(\\*\\*|__)(.+?)\\1",
       in: line,
       range: fullRange,
-      skippedRanges: codeRanges
+      skippedRanges: opaqueRanges
     ) { match in
       let markerLength = match.range(at: 1).length
       return token(
@@ -191,7 +212,7 @@ public enum LiveMarkdownParser {
       )
     }
     let boldRanges = boldTokens.map(\.fullRange).map { shifted($0, by: -offset) }
-    let skipped = codeRanges + boldRanges
+    let skipped = opaqueRanges + boldRanges
 
     let starItalic = matches(
       pattern: "(?<!\\*)\\*(?!\\*)([^*\\n]+)(?<!\\*)\\*(?!\\*)",
@@ -210,7 +231,64 @@ public enum LiveMarkdownParser {
       token(kind: .italic, match: $0, contentGroup: 1, markerLength: 1, offset: offset)
     }
 
-    return codeTokens + boldTokens + starItalic + underscoreItalic
+    return codeTokens + markdownLinkTokens + bareLinkTokens + boldTokens + starItalic + underscoreItalic
+  }
+
+  private static func markdownLinkToken(
+    match: NSTextCheckingResult,
+    in line: String,
+    offset: Int
+  ) -> LiveMarkdownToken {
+    let source = line as NSString
+    let localFullRange = match.range(at: 0)
+    let localContentRange = match.range(at: 1)
+    let localDestinationRange = match.range(at: 2)
+    let opening = NSRange(location: localFullRange.location, length: 1)
+    let suffix = NSRange(
+      location: NSMaxRange(localContentRange),
+      length: NSMaxRange(localFullRange) - NSMaxRange(localContentRange)
+    )
+    return LiveMarkdownToken(
+      kind: .markdownLink(destination: source.substring(with: localDestinationRange)),
+      fullRange: shifted(localFullRange, by: offset),
+      contentRange: shifted(localContentRange, by: offset),
+      syntaxRanges: [shifted(opening, by: offset), shifted(suffix, by: offset)]
+    )
+  }
+
+  private static func bareLinkTokens(
+    in line: String,
+    offset: Int,
+    skippedRanges: [NSRange]
+  ) -> [LiveMarkdownToken] {
+    guard line.range(of: "http://", options: .caseInsensitive) != nil
+            || line.range(of: "https://", options: .caseInsensitive) != nil
+    else { return [] }
+    guard let regex = try? NSRegularExpression(
+      pattern: "(?i)https?://[^\\s<>()\\[\\]{}]+"
+    ) else { return [] }
+    let source = line as NSString
+    let fullRange = NSRange(location: 0, length: source.length)
+
+    return regex.matches(in: line, range: fullRange).compactMap { match in
+      var range = match.range
+      while range.length > 0 {
+        let trailing = source.substring(with: NSRange(location: NSMaxRange(range) - 1, length: 1))
+        guard ".,!?;:".contains(trailing) else { break }
+        range.length -= 1
+      }
+      guard range.length > 0,
+            !skippedRanges.contains(where: { NSIntersectionRange($0, range).length > 0 })
+      else { return nil }
+
+      let destination = source.substring(with: range)
+      return LiveMarkdownToken(
+        kind: .bareLink(destination: destination),
+        fullRange: shifted(range, by: offset),
+        contentRange: shifted(range, by: offset),
+        syntaxRanges: []
+      )
+    }
   }
 
   private static func token(
@@ -283,7 +361,30 @@ public enum LiveMarkdownParser {
   }
 }
 
+public enum LiveMarkdownLinkDestination {
+  public static func webURL(for destination: String) -> URL? {
+    guard let components = URLComponents(string: destination),
+          let scheme = components.scheme?.lowercased(),
+          scheme == "http" || scheme == "https",
+          components.host?.isEmpty == false
+    else { return nil }
+    return components.url
+  }
+}
+
 public enum LiveMarkdownEditing {
+  public struct LinkInsertion: Equatable, Sendable {
+    public let replacementRange: NSRange
+    public let replacement: String
+    public let selection: NSRange
+
+    public init(replacementRange: NSRange, replacement: String, selection: NSRange) {
+      self.replacementRange = replacementRange
+      self.replacement = replacement
+      self.selection = selection
+    }
+  }
+
   public static func seededTitleInsertion(
     currentText: String,
     range: NSRange,
@@ -304,5 +405,35 @@ public enum LiveMarkdownEditing {
       return replacement
     }
     return "# " + replacement
+  }
+
+  public static func linkInsertion(
+    currentText: String,
+    selection: NSRange,
+    destinationPlaceholder: String = "https://"
+  ) -> LinkInsertion? {
+    guard selection.location != NSNotFound else { return nil }
+    let source = currentText as NSString
+    let location = max(0, min(selection.location, source.length))
+    let range = NSRange(
+      location: location,
+      length: max(0, min(selection.length, source.length - location))
+    )
+    guard range.length > 0 else { return nil }
+
+    let label = source.substring(with: range)
+    guard !label.contains("\n"), !label.contains("\r") else { return nil }
+
+    let replacement = "[\(label)](\(destinationPlaceholder))"
+    let labelLength = (label as NSString).length
+    let placeholderLength = (destinationPlaceholder as NSString).length
+    return LinkInsertion(
+      replacementRange: range,
+      replacement: replacement,
+      selection: NSRange(
+        location: range.location + 1 + labelLength + 2,
+        length: placeholderLength
+      )
+    )
   }
 }

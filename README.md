@@ -6,6 +6,9 @@ Choose a folder and Lattice recursively lists its visible `.md` files in a
 single left sidebar. Select a file to edit its Markdown body in the live editor
 on the right. Headings, emphasis, inline code, bullets, and task lists receive
 native presentation while the underlying file remains ordinary Markdown.
+Markdown links render through their labels, pasted web URLs are recognized
+automatically, clicking either style opens it in the default browser, and
+Command-K turns selected text into a Markdown link.
 Lattice-owned YAML frontmatter is hidden and preserved unchanged when the body
 autosaves directly to that file. Other YAML frontmatter remains visible.
 
@@ -20,8 +23,8 @@ their first typed line into a real Markdown H1.
 List returns continue the current bullet or task, empty items exit the list,
 and rendered task checkboxes toggle the source between `[ ]` and `[x]`.
 
-The current macOS app still excludes links, attachments, tables, autocomplete,
-task sync, modes, themes, and other note-specific features. Those capabilities
+The current macOS app still excludes attachments, tables, autocomplete, task
+sync, modes, themes, and other note-specific features. Those capabilities
 may return individually after the core editing loop is proven fast and dependable.
 
 The existing iPhone and iPad app remains in the repository while the macOS app
