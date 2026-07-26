@@ -1,3 +1,4 @@
+import AppKit
 import Foundation
 @testable import Lattice
 @testable import LatticeMacCore
@@ -162,6 +163,21 @@ struct MarkdownFilenameTests {
 @MainActor
 @Suite("Mac Markdown app model")
 struct MacMarkdownAppModelTests {
+  @Test("applies incremental native editor changes to the Markdown source")
+  func appliesIncrementalEditorChanges() async throws {
+    let root = try temporaryDirectory()
+    defer { try? FileManager.default.removeItem(at: root) }
+    let url = root.appendingPathComponent("Existing.md")
+    try "Hello world".write(to: url, atomically: true, encoding: .utf8)
+    let model = MacMarkdownAppModel(folderURL: root)
+    #expect(await eventually { !model.isLoadingFiles && !model.isLoadingFile })
+
+    model.applyEditorEdit(range: NSRange(location: 6, length: 5), replacement: "**world**")
+    #expect(model.text == "Hello **world**")
+    try await Task.sleep(for: .milliseconds(400))
+    #expect(try String(contentsOf: url, encoding: .utf8) == "Hello **world**")
+  }
+
   @Test("creates, selects, focuses, and names a new note once")
   func createsAndNamesNewNoteOnce() async throws {
     let root = try temporaryDirectory()
@@ -243,6 +259,178 @@ struct MacMarkdownAppModelTests {
     #expect(model.files.isEmpty)
     #expect(model.selectedFileID == nil)
     #expect(model.errorMessage != nil)
+  }
+}
+
+@MainActor
+@Suite("Live Markdown presentation")
+struct LiveMarkdownPresentationTests {
+  @Test("starts an empty note with title-sized typing attributes")
+  func startsEmptyNoteAsTitle() throws {
+    let textView = LiveMarkdownTextView(usingTextLayoutManager: true)
+    #expect(textView.textLayoutManager != nil)
+    let presentation = LiveMarkdownPresentationController()
+    presentation.reset(
+      textView: textView,
+      text: "",
+      selection: NSRange(location: 0, length: 0)
+    )
+
+    let font = try #require(textView.typingAttributes[.font] as? NSFont)
+    #expect(font.pointSize == 30)
+    #expect(font.fontDescriptor.symbolicTraits.contains(.bold))
+  }
+
+  @Test("reveals only syntax touched by the selection")
+  func revealsOnlySyntaxTouchedBySelection() throws {
+    let text = "# Title\n\n**bold** and _italic_"
+    let textView = LiveMarkdownTextView(usingTextLayoutManager: true)
+    textView.string = text
+    let presentation = LiveMarkdownPresentationController()
+    presentation.reset(
+      textView: textView,
+      text: text,
+      selection: NSRange(location: 2, length: 0)
+    )
+
+    let bold = try #require(presentation.tokens.first { $0.kind == .bold })
+    let italic = try #require(presentation.tokens.first { $0.kind == .italic })
+    let hiddenFont = try #require(textView.textStorage?.attribute(
+      .font,
+      at: bold.syntaxRanges[0].location,
+      effectiveRange: nil
+    ) as? NSFont)
+    #expect(hiddenFont.pointSize < 1)
+
+    presentation.focusDidChange(in: textView, isFocused: true)
+    presentation.selectionDidChange(
+      in: textView,
+      selection: NSRange(location: bold.contentRange.location, length: 0)
+    )
+    let revealedFont = try #require(textView.textStorage?.attribute(
+      .font,
+      at: bold.syntaxRanges[0].location,
+      effectiveRange: nil
+    ) as? NSFont)
+    #expect(revealedFont.pointSize > 10)
+
+    let inactiveItalicFont = try #require(textView.textStorage?.attribute(
+      .font,
+      at: italic.syntaxRanges[0].location,
+      effectiveRange: nil
+    ) as? NSFont)
+    #expect(inactiveItalicFont.pointSize < 1)
+
+    presentation.selectionDidChange(
+      in: textView,
+      selection: NSRange(location: italic.contentRange.location, length: 0)
+    )
+    let hiddenBoldFont = try #require(textView.textStorage?.attribute(
+      .font,
+      at: bold.syntaxRanges[0].location,
+      effectiveRange: nil
+    ) as? NSFont)
+    let revealedItalicFont = try #require(textView.textStorage?.attribute(
+      .font,
+      at: italic.syntaxRanges[0].location,
+      effectiveRange: nil
+    ) as? NSFont)
+    #expect(hiddenBoldFont.pointSize < 1)
+    #expect(revealedItalicFont.pointSize > 10)
+  }
+
+  @Test("collapses inline syntax as soon as typing moves beyond the token")
+  func collapsesSyntaxAfterTrailingSpace() throws {
+    let text = "_italic_"
+    let textView = LiveMarkdownTextView(usingTextLayoutManager: true)
+    textView.string = text
+    let presentation = LiveMarkdownPresentationController()
+    presentation.reset(
+      textView: textView,
+      text: text,
+      selection: NSRange(location: (text as NSString).length, length: 0)
+    )
+    presentation.focusDidChange(in: textView, isFocused: true)
+
+    let italic = try #require(presentation.tokens.first { $0.kind == .italic })
+    let visibleAtBoundary = try #require(textView.textStorage?.attribute(
+      .font,
+      at: italic.syntaxRanges[0].location,
+      effectiveRange: nil
+    ) as? NSFont)
+    #expect(visibleAtBoundary.pointSize > 10)
+
+    let insertion = NSRange(location: (text as NSString).length, length: 0)
+    let edit = presentation.pendingEdit(
+      text: text as NSString,
+      range: insertion,
+      replacement: " "
+    )
+    textView.textStorage?.replaceCharacters(in: insertion, with: " ")
+    presentation.didApplyEdit(
+      edit,
+      textView: textView,
+      selection: NSRange(location: insertion.location + 1, length: 0)
+    )
+
+    let collapsedItalic = try #require(presentation.tokens.first { $0.kind == .italic })
+    let hiddenAfterSpace = try #require(textView.textStorage?.attribute(
+      .font,
+      at: collapsedItalic.syntaxRanges[0].location,
+      effectiveRange: nil
+    ) as? NSFont)
+    #expect(hiddenAfterSpace.pointSize < 1)
+  }
+
+  @Test("keeps later token ranges stable after an incremental edit")
+  func shiftsTokensAfterIncrementalEdit() throws {
+    let text = "# Title\n\n**bold**"
+    let textView = LiveMarkdownTextView(usingTextLayoutManager: true)
+    textView.string = text
+    let presentation = LiveMarkdownPresentationController()
+    presentation.reset(
+      textView: textView,
+      text: text,
+      selection: NSRange(location: 2, length: 0)
+    )
+    let originalBold = try #require(presentation.tokens.first { $0.kind == .bold })
+    let insertion = NSRange(location: 2, length: 0)
+    let edit = presentation.pendingEdit(
+      text: text as NSString,
+      range: insertion,
+      replacement: "New "
+    )
+
+    textView.textStorage?.replaceCharacters(in: insertion, with: "New ")
+    presentation.didApplyEdit(
+      edit,
+      textView: textView,
+      selection: NSRange(location: 6, length: 0)
+    )
+
+    let shiftedBold = try #require(presentation.tokens.first { $0.kind == .bold })
+    #expect(shiftedBold.fullRange.location == originalBold.fullRange.location + 4)
+    #expect((textView.string as NSString).substring(with: shiftedBold.contentRange) == "bold")
+  }
+
+  @Test("creates presentation-only bullet and task decorations")
+  func createsListDecorations() {
+    let text = "- bullet\n- [ ] open\n- [x] done"
+    let textView = LiveMarkdownTextView(usingTextLayoutManager: true)
+    textView.string = text
+    let presentation = LiveMarkdownPresentationController()
+    presentation.reset(
+      textView: textView,
+      text: text,
+      selection: NSRange(location: (text as NSString).length, length: 0)
+    )
+
+    #expect(textView.presentationDecorations.map(\.kind) == [
+      .bullet,
+      .task(isChecked: false),
+      .task(isChecked: true)
+    ])
+    #expect(textView.string == text)
   }
 }
 

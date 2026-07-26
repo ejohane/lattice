@@ -5,7 +5,6 @@ import UniformTypeIdentifiers
 struct MacMarkdownRootView: View {
   @State private var model = MacMarkdownAppModel()
   @State private var isChoosingFolder = false
-  @FocusState private var isEditorFocused: Bool
 
   var body: some View {
     @Bindable var model = model
@@ -51,12 +50,6 @@ struct MacMarkdownRootView: View {
     }
     .task {
       model.start()
-    }
-    .onChange(of: model.editorFocusRequest) {
-      Task { @MainActor in
-        try? await Task.sleep(for: .milliseconds(50))
-        isEditorFocused = true
-      }
     }
     .onDisappear {
       model.finishSession()
@@ -116,21 +109,18 @@ struct MacMarkdownRootView: View {
           for: geometry.size.height
         )
 
-        TextEditor(text: Binding(
-          get: { model.text },
-          set: { model.updateText($0) }
-        ))
-        .font(.system(.body, design: .monospaced))
-        .textEditorStyle(.plain)
-        .scrollContentBackground(.hidden)
-        .focused($isEditorFocused)
-        .onAppear {
-          guard model.editorFocusRequest > 0 else { return }
-          Task { @MainActor in
-            try? await Task.sleep(for: .milliseconds(50))
-            isEditorFocused = true
+        LiveMarkdownEditor(
+          text: model.text,
+          contentRevision: model.editorContentRevision,
+          focusRequest: model.editorFocusRequest,
+          isEditable: !model.isLoadingFile && !model.isCreatingNote,
+          onEdit: { range, replacement in
+            model.applyEditorEdit(range: range, replacement: replacement)
+          },
+          onReplaceAll: { replacement in
+            model.updateText(replacement)
           }
-        }
+        )
         .frame(
           maxWidth: MacMarkdownSpacing.editorMaximumWidth,
           maxHeight: .infinity
@@ -139,7 +129,6 @@ struct MacMarkdownRootView: View {
         .padding(.top, topPadding)
         .padding(.bottom, MacMarkdownSpacing.editorBottomPadding)
         .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
-        .disabled(model.isLoadingFile || model.isCreatingNote)
       }
     } else if model.folderURL == nil {
       ContentUnavailableView {

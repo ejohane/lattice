@@ -49,6 +49,7 @@ let package = Package(
     .executableTarget(
       name: "Lattice",
       dependencies: [
+        "LatticeEditor",
         "LatticeMacCore",
         .product(name: "Sparkle", package: "Sparkle")
       ],

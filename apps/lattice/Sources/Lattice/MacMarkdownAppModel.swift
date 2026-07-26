@@ -28,6 +28,7 @@ final class MacMarkdownAppModel {
   private(set) var isLoadingFile = false
   private(set) var isCreatingNote = false
   private(set) var editorFocusRequest = 0
+  private(set) var editorContentRevision = 0
   var errorMessage: String?
 
   var canCreateNote: Bool {
@@ -116,6 +117,7 @@ final class MacMarkdownAppModel {
         selectedDocument = MarkdownDocument(fileContents: "")
         hasLoadedSelectedFile = true
         text = ""
+        editorContentRevision += 1
         isLoadingFile = false
         editorFocusRequest += 1
       } catch is CancellationError {
@@ -149,6 +151,7 @@ final class MacMarkdownAppModel {
     selectedDocument = nil
     hasLoadedSelectedFile = false
     text = ""
+    editorContentRevision += 1
     isLoadingFile = nextFile != nil
 
     guard let activeFolder, let nextFile else {
@@ -191,6 +194,7 @@ final class MacMarkdownAppModel {
         guard !Task.isCancelled, generation == loadGeneration else { return }
         selectedDocument = loadedDocument
         text = loadedDocument.body
+        editorContentRevision += 1
         hasLoadedSelectedFile = true
         isLoadingFile = false
       } catch is CancellationError {
@@ -236,6 +240,16 @@ final class MacMarkdownAppModel {
         present(error)
       }
     }
+  }
+
+  func applyEditorEdit(range: NSRange, replacement: String) {
+    let source = text as NSString
+    let location = max(0, min(range.location, source.length))
+    let clampedRange = NSRange(
+      location: location,
+      length: max(0, min(range.length, source.length - location))
+    )
+    updateText(source.replacingCharacters(in: clampedRange, with: replacement))
   }
 
   func flushSave() {
@@ -286,6 +300,7 @@ final class MacMarkdownAppModel {
     hasLoadedSelectedFile = false
     selectedFileID = nil
     text = ""
+    editorContentRevision += 1
     isLoadingFile = false
     isLoadingFiles = true
     isCreatingNote = false

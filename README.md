@@ -1,22 +1,28 @@
 # Lattice
 
-Lattice for macOS is a deliberately minimal editor for raw Markdown files.
+Lattice for macOS is a deliberately focused editor for portable Markdown files.
 
 Choose a folder and Lattice recursively lists its visible `.md` files in a
-single left sidebar. Select a file to edit its raw Markdown body in the
-plain-text editor on the right. Lattice-owned YAML frontmatter is hidden and
-preserved unchanged when the body autosaves directly to that file. Other YAML
-frontmatter remains visible.
+single left sidebar. Select a file to edit its Markdown body in the live editor
+on the right. Headings, emphasis, inline code, bullets, and task lists receive
+native presentation while the underlying file remains ordinary Markdown.
+Lattice-owned YAML frontmatter is hidden and preserved unchanged when the body
+autosaves directly to that file. Other YAML frontmatter remains visible.
 
 Use the New Note button in the trailing toolbar to create an empty Markdown
 file. New files start with an available `Untitled.md` name and are renamed once
 from their first meaningful line when that line ends or the note is left.
 Later edits do not keep changing the filename.
 
-The current macOS app does not render Markdown or provide formatting, tags,
-links, attachments, task sync, modes, themes, or other note-specific features.
-Those capabilities may return individually after the basic file-and-editor loop
-is proven fast and dependable.
+The live editor reveals Markdown syntax only for the active construct and
+collapses it as soon as the caret moves beyond that construct. New notes turn
+their first typed line into a real Markdown H1.
+List returns continue the current bullet or task, empty items exit the list,
+and rendered task checkboxes toggle the source between `[ ]` and `[x]`.
+
+The current macOS app still excludes links, attachments, tables, autocomplete,
+task sync, modes, themes, and other note-specific features. Those capabilities
+may return individually after the core editing loop is proven fast and dependable.
 
 The existing iPhone and iPad app remains in the repository while the macOS app
 is rebuilt from this smaller foundation.

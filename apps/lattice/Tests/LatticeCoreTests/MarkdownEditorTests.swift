@@ -741,3 +741,71 @@ struct MarkdownTableFormatterTests {
     #expect((result.body as NSString).substring(from: result.selection.location).hasPrefix("After"))
   }
 }
+
+@Suite("Live Markdown parser")
+struct LiveMarkdownParserTests {
+  @Test("finds the initial rich Markdown slice")
+  func findsInitialRichMarkdownTokens() throws {
+    let text = """
+    # Hello World
+
+    **bold** _italic_ `code`
+    - bullet
+    - [x] complete
+    """
+    let tokens = LiveMarkdownParser.tokens(in: text)
+
+    #expect(tokens.contains { $0.kind == .heading(level: 1) })
+    #expect(tokens.contains { $0.kind == .bold })
+    #expect(tokens.contains { $0.kind == .italic })
+    #expect(tokens.contains { $0.kind == .inlineCode })
+    #expect(tokens.contains { $0.kind == .bullet })
+    #expect(tokens.contains { $0.kind == .task(isChecked: true) })
+
+    let bold = try #require(tokens.first { $0.kind == .bold })
+    #expect((text as NSString).substring(with: bold.contentRange) == "bold")
+    #expect(bold.syntaxRanges.map { (text as NSString).substring(with: $0) } == ["**", "**"])
+  }
+
+  @Test("reveals syntax only while the caret touches its construct")
+  func tracksActiveSyntax() throws {
+    let text = "Before **bold** after"
+    let token = try #require(LiveMarkdownParser.tokens(in: text).first { $0.kind == .bold })
+
+    #expect(!token.isActive(selection: NSRange(location: 2, length: 0)))
+    #expect(token.isActive(selection: NSRange(location: token.contentRange.location, length: 0)))
+    #expect(token.isActive(selection: NSRange(location: NSMaxRange(token.fullRange), length: 0)))
+    #expect(!token.isActive(selection: NSRange(location: NSMaxRange(token.fullRange) + 1, length: 0)))
+  }
+
+  @Test("parses only the requested lines in a large note")
+  func parsesRequestedLinesOnly() {
+    let prefix = String(repeating: "ordinary line\n", count: 20_000)
+    let text = prefix + "**target**\n" + String(repeating: "ordinary line\n", count: 20_000)
+    let targetRange = (text as NSString).range(of: "target")
+    let tokens = LiveMarkdownParser.tokens(in: text, range: targetRange)
+
+    #expect(tokens.count == 1)
+    #expect(tokens.first?.kind == .bold)
+    #expect(tokens.first?.contentRange == targetRange)
+  }
+
+  @Test("seeds an empty note with a real Markdown title")
+  func seedsMarkdownTitle() {
+    #expect(LiveMarkdownEditing.seededTitleInsertion(
+      currentText: "",
+      range: NSRange(location: 0, length: 0),
+      replacement: "Hello"
+    ) == "# Hello")
+    #expect(LiveMarkdownEditing.seededTitleInsertion(
+      currentText: "",
+      range: NSRange(location: 0, length: 0),
+      replacement: "### Existing"
+    ) == "### Existing")
+    #expect(LiveMarkdownEditing.seededTitleInsertion(
+      currentText: "Body",
+      range: NSRange(location: 4, length: 0),
+      replacement: " text"
+    ) == " text")
+  }
+}
