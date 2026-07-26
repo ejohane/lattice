@@ -13,6 +13,9 @@ final class MacMarkdownAppModel {
   private var hasStarted = false
   private var isAccessingSecurityScopedFolder = false
   private var loadGeneration = 0
+  private var pendingNoteCreations = 0
+  private var automaticallyNamedFileIDs: Set<MarkdownFile.ID> = []
+  private var namingFileIDs: Set<MarkdownFile.ID> = []
 
   @ObservationIgnored private var fileLoadTask: Task<Void, Never>?
   @ObservationIgnored private var saveTask: Task<Void, Never>?
@@ -23,10 +26,22 @@ final class MacMarkdownAppModel {
   private(set) var text = ""
   private(set) var isLoadingFiles = false
   private(set) var isLoadingFile = false
+  private(set) var isCreatingNote = false
+  private(set) var editorFocusRequest = 0
   var errorMessage: String?
+
+  var canCreateNote: Bool {
+    folder != nil && !isLoadingFiles
+  }
 
   init(bookmarkStore: MarkdownFolderBookmarkStore = MarkdownFolderBookmarkStore()) {
     self.bookmarkStore = bookmarkStore
+  }
+
+  init(folderURL: URL, bookmarkStore: MarkdownFolderBookmarkStore = MarkdownFolderBookmarkStore()) {
+    self.bookmarkStore = bookmarkStore
+    hasStarted = true
+    activateFolder(folderURL)
   }
 
   func start() {
@@ -46,9 +61,69 @@ final class MacMarkdownAppModel {
   func chooseFolder(_ url: URL) {
     do {
       try bookmarkStore.save(folderURL: url)
-      activateFolder(url)
+      isLoadingFiles = true
+      Task {
+        await saveAndFinalizeSelectedNote()
+        activateFolder(url)
+      }
     } catch {
       present(error)
+    }
+  }
+
+  func createNote() {
+    guard canCreateNote else { return }
+    pendingNoteCreations += 1
+    startNextNoteCreationIfNeeded()
+  }
+
+  private func startNextNoteCreationIfNeeded() {
+    guard !isCreatingNote,
+          pendingNoteCreations > 0,
+          let activeFolder = folder
+    else { return }
+
+    pendingNoteCreations -= 1
+    saveTask?.cancel()
+    fileLoadTask?.cancel()
+    loadGeneration += 1
+    let generation = loadGeneration
+    isCreatingNote = true
+
+    fileLoadTask = Task {
+      defer {
+        if generation == loadGeneration {
+          isCreatingNote = false
+          startNextNoteCreationIfNeeded()
+        }
+      }
+      do {
+        try await saveSelectedNote(in: activeFolder)
+        do {
+          try await finalizeAutomaticNameIfPossible(in: activeFolder)
+        } catch {
+          present(error)
+        }
+
+        let createdFile = try await activeFolder.createNote()
+        let discoveredFiles = try await activeFolder.files()
+        guard generation == loadGeneration else { return }
+
+        automaticallyNamedFileIDs.insert(createdFile.id)
+        files = discoveredFiles
+        selectedFileID = createdFile.id
+        selectedFile = createdFile
+        selectedDocument = MarkdownDocument(fileContents: "")
+        hasLoadedSelectedFile = true
+        text = ""
+        isLoadingFile = false
+        editorFocusRequest += 1
+      } catch is CancellationError {
+        return
+      } catch {
+        guard generation == loadGeneration else { return }
+        present(error)
+      }
     }
   }
 
@@ -64,6 +139,8 @@ final class MacMarkdownAppModel {
 
     saveTask?.cancel()
     fileLoadTask?.cancel()
+    isCreatingNote = false
+    pendingNoteCreations = 0
     loadGeneration += 1
     let generation = loadGeneration
 
@@ -81,7 +158,16 @@ final class MacMarkdownAppModel {
          let previousFile,
          let previousDocument {
         Task {
-          try? await activeFolder.write(previousDocument, to: previousFile)
+          do {
+            try await activeFolder.write(previousDocument, to: previousFile)
+            try await finalizeAutomaticNameIfPossible(
+              file: previousFile,
+              document: previousDocument,
+              in: activeFolder
+            )
+          } catch {
+            present(error)
+          }
         }
       }
       return
@@ -91,6 +177,15 @@ final class MacMarkdownAppModel {
       do {
         if shouldSavePreviousFile, let previousFile, let previousDocument {
           try await activeFolder.write(previousDocument, to: previousFile)
+          do {
+            try await finalizeAutomaticNameIfPossible(
+              file: previousFile,
+              document: previousDocument,
+              in: activeFolder
+            )
+          } catch {
+            present(error)
+          }
         }
         let loadedDocument = try await activeFolder.read(nextFile)
         guard !Task.isCancelled, generation == loadGeneration else { return }
@@ -118,6 +213,8 @@ final class MacMarkdownAppModel {
     text = newText
     document.body = newText
     selectedDocument = document
+    let shouldFinalizeName = automaticallyNamedFileIDs.contains(selectedFile.id)
+      && MarkdownFilename.hasTerminatedMeaningfulLine(in: newText)
 
     saveTask?.cancel()
     saveTask = Task {
@@ -125,6 +222,14 @@ final class MacMarkdownAppModel {
         try await Task.sleep(for: .milliseconds(300))
         try Task.checkCancellation()
         try await folder.write(document, to: selectedFile)
+        try Task.checkCancellation()
+        if shouldFinalizeName {
+          try await finalizeAutomaticNameIfPossible(
+            file: selectedFile,
+            document: document,
+            in: folder
+          )
+        }
       } catch is CancellationError {
         return
       } catch {
@@ -149,6 +254,13 @@ final class MacMarkdownAppModel {
     }
   }
 
+  func finishSession() {
+    flushSave()
+    Task {
+      await saveAndFinalizeSelectedNote()
+    }
+  }
+
   func present(_ error: Error) {
     errorMessage = error.localizedDescription
   }
@@ -166,6 +278,9 @@ final class MacMarkdownAppModel {
     folderURL = url
     folder = MarkdownFolder(rootURL: url)
     files = []
+    pendingNoteCreations = 0
+    automaticallyNamedFileIDs = []
+    namingFileIDs = []
     selectedFile = nil
     selectedDocument = nil
     hasLoadedSelectedFile = false
@@ -173,6 +288,7 @@ final class MacMarkdownAppModel {
     text = ""
     isLoadingFile = false
     isLoadingFiles = true
+    isCreatingNote = false
 
     guard let folder else { return }
     let generation = loadGeneration
@@ -188,6 +304,78 @@ final class MacMarkdownAppModel {
         isLoadingFiles = false
         present(error)
       }
+    }
+  }
+
+  private func saveSelectedNote(in activeFolder: MarkdownFolder) async throws {
+    guard hasLoadedSelectedFile,
+          let selectedFile,
+          var document = selectedDocument
+    else { return }
+
+    document.body = text
+    selectedDocument = document
+    try await activeFolder.write(document, to: selectedFile)
+  }
+
+  private func saveAndFinalizeSelectedNote() async {
+    guard let activeFolder = folder else { return }
+
+    saveTask?.cancel()
+    do {
+      try await saveSelectedNote(in: activeFolder)
+      try await finalizeAutomaticNameIfPossible(in: activeFolder)
+    } catch {
+      present(error)
+    }
+  }
+
+  private func finalizeAutomaticNameIfPossible(
+    in activeFolder: MarkdownFolder
+  ) async throws {
+    guard let selectedFile,
+          var document = selectedDocument
+    else { return }
+
+    document.body = text
+    selectedDocument = document
+    try await finalizeAutomaticNameIfPossible(
+      file: selectedFile,
+      document: document,
+      in: activeFolder
+    )
+  }
+
+  private func finalizeAutomaticNameIfPossible(
+    file: MarkdownFile,
+    document: MarkdownDocument,
+    in activeFolder: MarkdownFolder
+  ) async throws {
+    guard automaticallyNamedFileIDs.contains(file.id),
+          MarkdownFilename.suggestedStem(from: document.body) != nil,
+          namingFileIDs.insert(file.id).inserted
+    else { return }
+
+    defer { namingFileIDs.remove(file.id) }
+    guard let renamedFile = try await activeFolder.renameUsingFirstMeaningfulLine(
+      file,
+      body: document.body
+    ) else { return }
+
+    automaticallyNamedFileIDs.remove(file.id)
+    replaceFile(file, with: renamedFile)
+
+    if selectedFileID == file.id {
+      selectedFileID = renamedFile.id
+      selectedFile = renamedFile
+    }
+  }
+
+  private func replaceFile(_ oldFile: MarkdownFile, with newFile: MarkdownFile) {
+    files.removeAll { $0.id == oldFile.id }
+    files.append(newFile)
+    files.sort {
+      $0.relativePath.localizedStandardCompare($1.relativePath) == .orderedAscending
     }
   }
 }

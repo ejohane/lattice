@@ -51,6 +51,59 @@ public actor MarkdownFolder {
     try document.fileContents.write(to: file.url, atomically: true, encoding: .utf8)
   }
 
+  public func createNote() throws -> MarkdownFile {
+    for number in 1...10_000 {
+      let stem = MarkdownFilename.numberedStem("Untitled", number: number)
+      let url = rootURL.appendingPathComponent("\(stem).md")
+
+      do {
+        try Data().write(to: url, options: .withoutOverwriting)
+        return MarkdownFile(url: url.standardizedFileURL, relativePath: relativePath(for: url))
+      } catch {
+        if FileManager.default.fileExists(atPath: url.path) {
+          continue
+        }
+        throw error
+      }
+    }
+
+    throw CocoaError(.fileWriteUnknown)
+  }
+
+  public func renameUsingFirstMeaningfulLine(
+    _ file: MarkdownFile,
+    body: String
+  ) throws -> MarkdownFile? {
+    guard let suggestedStem = MarkdownFilename.suggestedStem(from: body) else {
+      return nil
+    }
+
+    let directory = file.url.deletingLastPathComponent()
+    for number in 1...10_000 {
+      let stem = MarkdownFilename.numberedStem(suggestedStem, number: number)
+      let url = directory.appendingPathComponent("\(stem).md").standardizedFileURL
+
+      if url == file.url.standardizedFileURL {
+        return file
+      }
+      if FileManager.default.fileExists(atPath: url.path) {
+        continue
+      }
+
+      do {
+        try FileManager.default.moveItem(at: file.url, to: url)
+        return MarkdownFile(url: url, relativePath: relativePath(for: url))
+      } catch {
+        if FileManager.default.fileExists(atPath: url.path) {
+          continue
+        }
+        throw error
+      }
+    }
+
+    throw CocoaError(.fileWriteUnknown)
+  }
+
   private func relativePath(for url: URL) -> String {
     let rootComponents = rootURL.pathComponents
     let fileComponents = url.standardizedFileURL.pathComponents

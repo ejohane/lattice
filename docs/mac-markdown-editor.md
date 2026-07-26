@@ -17,6 +17,13 @@ The macOS Lattice app is intentionally a small raw Markdown editor.
   directly resizable between compact and roomy widths.
 - Edits autosave directly to the selected file.
 - Hidden files and non-Markdown files are ignored.
+- The trailing New Note button creates and selects an empty Markdown file in
+  the chosen folder's root without adding frontmatter.
+- New files use the first available `Untitled.md` name, then rename once from
+  their first meaningful line when that line ends or the user leaves the note.
+- Generated names remove heading markers, replace unsafe filename characters,
+  stay within portable length limits, and receive numeric collision suffixes.
+- Once automatically named, a file keeps that name when its first line changes.
 
 ## Test Coverage
 
@@ -24,6 +31,9 @@ Changes to the macOS file-and-editor loop should preserve:
 
 - Recursive visible Markdown discovery.
 - Verbatim UTF-8 reads and writes.
+- Unique no-overwrite creation and byte-preserving automatic renames.
+- Filename derivation, sanitization, length limits, and collisions.
+- Selection and one-time naming behavior in the macOS app model.
 - The full repository verification command:
 
 ```bash

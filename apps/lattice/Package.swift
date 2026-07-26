@@ -58,7 +58,10 @@ let package = Package(
     ),
     .testTarget(
       name: "LatticeMacCoreTests",
-      dependencies: ["LatticeMacCore"]
+      dependencies: [
+        "Lattice",
+        "LatticeMacCore"
+      ]
     ),
     .testTarget(
       name: "LatticeCoreTests",

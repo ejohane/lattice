@@ -5,6 +5,7 @@ import UniformTypeIdentifiers
 struct MacMarkdownRootView: View {
   @State private var model = MacMarkdownAppModel()
   @State private var isChoosingFolder = false
+  @FocusState private var isEditorFocused: Bool
 
   var body: some View {
     @Bindable var model = model
@@ -14,6 +15,17 @@ struct MacMarkdownRootView: View {
         .navigationSplitViewColumnWidth(min: 220, ideal: 280, max: 360)
     } detail: {
       editor(model: model)
+    }
+    .toolbar {
+      ToolbarItem(placement: .primaryAction) {
+        Button {
+          model.createNote()
+        } label: {
+          Label("New Note", systemImage: "square.and.pencil")
+        }
+        .disabled(!model.canCreateNote)
+        .help("New Note")
+      }
     }
     .fileImporter(
       isPresented: $isChoosingFolder,
@@ -40,8 +52,14 @@ struct MacMarkdownRootView: View {
     .task {
       model.start()
     }
+    .onChange(of: model.editorFocusRequest) {
+      Task { @MainActor in
+        try? await Task.sleep(for: .milliseconds(50))
+        isEditorFocused = true
+      }
+    }
     .onDisappear {
-      model.flushSave()
+      model.finishSession()
     }
   }
 
@@ -105,6 +123,14 @@ struct MacMarkdownRootView: View {
         .font(.system(.body, design: .monospaced))
         .textEditorStyle(.plain)
         .scrollContentBackground(.hidden)
+        .focused($isEditorFocused)
+        .onAppear {
+          guard model.editorFocusRequest > 0 else { return }
+          Task { @MainActor in
+            try? await Task.sleep(for: .milliseconds(50))
+            isEditorFocused = true
+          }
+        }
         .frame(
           maxWidth: MacMarkdownSpacing.editorMaximumWidth,
           maxHeight: .infinity
@@ -113,7 +139,7 @@ struct MacMarkdownRootView: View {
         .padding(.top, topPadding)
         .padding(.bottom, MacMarkdownSpacing.editorBottomPadding)
         .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
-        .disabled(model.isLoadingFile)
+        .disabled(model.isLoadingFile || model.isCreatingNote)
       }
     } else if model.folderURL == nil {
       ContentUnavailableView {

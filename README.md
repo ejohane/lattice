@@ -8,6 +8,11 @@ plain-text editor on the right. Lattice-owned YAML frontmatter is hidden and
 preserved unchanged when the body autosaves directly to that file. Other YAML
 frontmatter remains visible.
 
+Use the New Note button in the trailing toolbar to create an empty Markdown
+file. New files start with an available `Untitled.md` name and are renamed once
+from their first meaningful line when that line ends or the note is left.
+Later edits do not keep changing the filename.
+
 The current macOS app does not render Markdown or provide formatting, tags,
 links, attachments, task sync, modes, themes, or other note-specific features.
 Those capabilities may return individually after the basic file-and-editor loop
