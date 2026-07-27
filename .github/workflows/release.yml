@@ -41,6 +41,7 @@ jobs:
           bash -n scripts/build-mac-app.sh
           bash -n scripts/package-mac-app.sh
           bash -n scripts/package-mac-dev-update.sh
+          bash -n scripts/notarize-mac-app.sh
           sh -n scripts/install-mac-app.sh
 
   plan-release:
@@ -185,6 +186,33 @@ jobs:
           LATTICE_MAC_APP_ARTIFACT="${{ matrix.mac-app-artifact }}" \
           LATTICE_ARTIFACT_DIR=. \
           bun run package:mac-app
+
+      - name: Notarize macOS app
+        env:
+          LATTICE_NOTARY_KEY_ID: ${{ secrets.LATTICE_NOTARY_KEY_ID }}
+          LATTICE_NOTARY_ISSUER_ID: ${{ secrets.LATTICE_NOTARY_ISSUER_ID }}
+          LATTICE_NOTARY_PRIVATE_KEY: ${{ secrets.LATTICE_NOTARY_PRIVATE_KEY }}
+        run: |
+          if [[ -z "$LATTICE_NOTARY_KEY_ID" ]]; then
+            printf 'error: missing LATTICE_NOTARY_KEY_ID secret.\n' >&2
+            exit 1
+          fi
+          if [[ -z "$LATTICE_NOTARY_ISSUER_ID" ]]; then
+            printf 'error: missing LATTICE_NOTARY_ISSUER_ID secret.\n' >&2
+            exit 1
+          fi
+          if [[ -z "$LATTICE_NOTARY_PRIVATE_KEY" ]]; then
+            printf 'error: missing LATTICE_NOTARY_PRIVATE_KEY secret.\n' >&2
+            exit 1
+          fi
+
+          notary_key_file="$RUNNER_TEMP/AuthKey_${LATTICE_NOTARY_KEY_ID}.p8"
+          printf '%s' "$LATTICE_NOTARY_PRIVATE_KEY" > "$notary_key_file"
+          chmod 600 "$notary_key_file"
+
+          LATTICE_MAC_APP_ARCHIVE="${{ matrix.mac-app-artifact }}.zip" \
+          LATTICE_NOTARY_PRIVATE_KEY_FILE="$notary_key_file" \
+          bash scripts/notarize-mac-app.sh
 
       - name: Upload macOS app artifact
         uses: actions/upload-artifact@v4

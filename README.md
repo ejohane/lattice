@@ -185,3 +185,10 @@ Mac app update publishing requires Sparkle EdDSA keys in GitHub Actions:
 - `LATTICE_MACOS_CODESIGN_CERTIFICATE_BASE64`: base64-encoded `.p12` signing certificate.
 - `LATTICE_MACOS_CODESIGN_CERTIFICATE_PASSWORD`: password for the `.p12` file.
 - `LATTICE_MACOS_KEYCHAIN_PASSWORD`: temporary CI keychain password.
+- `LATTICE_NOTARY_KEY_ID`: App Store Connect API key identifier.
+- `LATTICE_NOTARY_ISSUER_ID`: App Store Connect API issuer identifier.
+- `LATTICE_NOTARY_PRIVATE_KEY`: contents of the matching `.p8` private key.
+
+Release builds are submitted to Apple's notarization service after Developer ID
+signing. The accepted ticket is stapled to `Lattice.app` before the final ZIP,
+checksum, and Sparkle appcast are generated.
