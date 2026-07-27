@@ -1,59 +1,41 @@
 # Lattice
 
-Lattice is a universal Apple app for quickly writing Markdown notes into a
-portable folder. The same SwiftUI app shell runs on macOS, iPhone, and iPad,
-with native text views under the editor for platform editing behavior.
+Lattice for macOS is a deliberately focused editor for portable Markdown files.
 
-The app keeps one active note open per device. The first autosave creates a
-Markdown file, later autosaves update that same file, and New Note starts a
-fresh file.
+Choose a folder and Lattice recursively lists its visible `.md` files in a
+single left sidebar. Select a file to edit its Markdown body in the live editor
+on the right. Headings, emphasis, inline code, bullets, and task lists receive
+native presentation while the underlying file remains ordinary Markdown.
+Markdown links render through their labels, pasted web URLs are recognized
+automatically, clicking either style opens it in the default browser, and
+Command-K turns selected text into a Markdown link.
+Lattice-owned YAML frontmatter is hidden and preserved unchanged when the body
+autosaves directly to that file. Other YAML frontmatter remains visible.
 
-## Tags
+Use the New Note button in the trailing toolbar to create an empty Markdown
+file. New files start with an available `Untitled.md` name and are renamed once
+from their first meaningful line when that line ends or the note is left.
+Later edits do not keep changing the filename.
 
-Type inline tags such as `#work` or `#project/lattice` anywhere outside code.
-Lattice styles tags in the editor, suggests existing tags while typing, and
-lists them with note counts in the sidebar. Selecting a tag filters the existing
-date-grouped note list. A tag's context menu can rename it or remove it from all
-notes without deleting those notes.
+Press Command-Shift-P to open the command palette. Its initial command is New
+Note, and Command-N creates a note directly instead of opening another window.
 
-Tag matching is case-insensitive. Names can contain letters, numbers, `-`, `_`,
-and `/`, must include a letter, and cannot contain spaces. The Markdown files
-remain the source of truth; tag counts and filters are derived locally.
+Type `/` at the beginning of a word to open the inline slash command palette.
+Press Escape to dismiss it without removing the slash or interrupting typing.
 
-## Notes Folder
+The live editor reveals Markdown syntax only for the active construct and
+collapses it as soon as the caret moves beyond that construct. New notes turn
+their first typed line into a real Markdown H1.
+List returns continue the current bullet or task, empty items exit the list,
+Tab and Shift-Tab nest or unnest list items, and rendered task checkboxes toggle
+the source between `[ ]` and `[x]`.
 
-On first run, Lattice asks you to choose a notes folder. The recommended folder
-is an iCloud Drive-style `Lattice` folder when iCloud Drive is available, but any
-user-controlled folder can be selected.
+The current macOS app still excludes attachments, tables, autocomplete, task
+sync, modes, themes, and other note-specific features. Those capabilities
+may return individually after the core editing loop is proven fast and dependable.
 
-Lattice stores notes as:
-
-```text
-~/Documents/Lattice/
-  notes/
-    Project kickoff.md
-    Project kickoff--a1b2c3d4.md
-    2026-06-17.md
-```
-
-New notes use a filesystem-safe version of their first rendered line as the
-filename. If two notes have the same title, Lattice keeps both and adds a short,
-stable identity suffix to the later filename. Daily notes use the canonical
-`YYYY-MM-DD.md` filename; type `/today` in the editor to create or reuse today's
-daily note and insert a durable link to it without leaving the current note.
-
-Notes remain ordinary `.md` files with no JSON wrapper or app-specific sidecar
-index. Lattice stores a durable note ID and original creation date in a small
-`lattice` section of YAML front matter so links, date grouping, and collision
-handling remain stable when files are renamed.
-
-When Lattice first opens a folder that still contains the older
-`notes/YYYY-MM-DD/timestamp.md` layout, it offers an explicit migration. Nothing
-moves until the user confirms. The migration first copies the complete `notes`
-directory to an app-support recovery folder, then flattens and renames notes,
-rewrites resolvable note and attachment links, verifies every destination, and
-only then removes the old copies. Ambiguous title-only links are left unchanged
-and reported instead of being guessed.
+The existing iPhone and iPad app remains in the repository while the macOS app
+is rebuilt from this smaller foundation.
 
 ## Install
 
@@ -128,9 +110,8 @@ Run the standard verification command:
 bun run verify
 ```
 
-The mac editor intentionally live-renders Markdown while keeping notes as plain
-`.md` files. See [docs/mac-markdown-editor.md](docs/mac-markdown-editor.md)
-before changing editor rendering or keyboard behavior.
+See [docs/mac-markdown-editor.md](docs/mac-markdown-editor.md) for the intentionally
+small macOS editor contract.
 
 ## Sparkle Updates
 

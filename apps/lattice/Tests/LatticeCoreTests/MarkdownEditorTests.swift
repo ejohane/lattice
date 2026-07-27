@@ -554,6 +554,56 @@ struct MarkdownListIndentationTests {
 
     #expect(result == nil)
   }
+
+  @Test("recognizes top-level list selections that cannot outdent further")
+  func recognizesTopLevelListSelection() {
+    let body = "- Parent\nplain text"
+
+    #expect(MarkdownListIndentation.applyOutdent(
+      to: body,
+      selection: NSRange(location: 5, length: 0)
+    ) == nil)
+    #expect(MarkdownListIndentation.containsListItem(
+      in: body,
+      selection: NSRange(location: 5, length: 0)
+    ))
+    #expect(!MarkdownListIndentation.containsListItem(
+      in: body,
+      selection: NSRange(location: 15, length: 0)
+    ))
+  }
+}
+
+@Suite("Markdown slash command trigger")
+struct MarkdownSlashCommandTriggerTests {
+  @Test("opens for a slash at a token boundary")
+  func opensAtTokenBoundary() {
+    #expect(MarkdownSlashCommandTrigger.context(
+      in: "/",
+      selection: NSRange(location: 1, length: 0)
+    ) == MarkdownSlashCommandContext(triggerLocation: 0))
+
+    #expect(MarkdownSlashCommandTrigger.context(
+      in: "Hello /pla",
+      selection: NSRange(location: 10, length: 0)
+    ) == MarkdownSlashCommandContext(triggerLocation: 6))
+  }
+
+  @Test("ignores URLs, repeated slashes, and selections")
+  func ignoresNonCommandSlashes() {
+    #expect(MarkdownSlashCommandTrigger.context(
+      in: "https://example.com",
+      selection: NSRange(location: 8, length: 0)
+    ) == nil)
+    #expect(MarkdownSlashCommandTrigger.context(
+      in: "//",
+      selection: NSRange(location: 2, length: 0)
+    ) == nil)
+    #expect(MarkdownSlashCommandTrigger.context(
+      in: "/command",
+      selection: NSRange(location: 0, length: 8)
+    ) == nil)
+  }
 }
 
 @Suite("MarkdownStyler")
@@ -739,5 +789,143 @@ struct MarkdownTableFormatterTests {
 
     #expect((result.body as NSString).substring(with: result.selection) == "")
     #expect((result.body as NSString).substring(from: result.selection.location).hasPrefix("After"))
+  }
+}
+
+@Suite("Live Markdown parser")
+struct LiveMarkdownParserTests {
+  @Test("finds the initial rich Markdown slice")
+  func findsInitialRichMarkdownTokens() throws {
+    let text = """
+    # Hello World
+
+    **bold** _italic_ `code`
+    - bullet
+    - [x] complete
+    """
+    let tokens = LiveMarkdownParser.tokens(in: text)
+
+    #expect(tokens.contains { $0.kind == .heading(level: 1) })
+    #expect(tokens.contains { $0.kind == .bold })
+    #expect(tokens.contains { $0.kind == .italic })
+    #expect(tokens.contains { $0.kind == .inlineCode })
+    #expect(tokens.contains { $0.kind == .bullet })
+    #expect(tokens.contains { $0.kind == .task(isChecked: true) })
+
+    let bold = try #require(tokens.first { $0.kind == .bold })
+    #expect((text as NSString).substring(with: bold.contentRange) == "bold")
+    #expect(bold.syntaxRanges.map { (text as NSString).substring(with: $0) } == ["**", "**"])
+  }
+
+  @Test("reveals syntax only while the caret touches its construct")
+  func tracksActiveSyntax() throws {
+    let text = "Before **bold** after"
+    let token = try #require(LiveMarkdownParser.tokens(in: text).first { $0.kind == .bold })
+
+    #expect(!token.isActive(selection: NSRange(location: 2, length: 0)))
+    #expect(token.isActive(selection: NSRange(location: token.contentRange.location, length: 0)))
+    #expect(token.isActive(selection: NSRange(location: NSMaxRange(token.fullRange), length: 0)))
+    #expect(!token.isActive(selection: NSRange(location: NSMaxRange(token.fullRange) + 1, length: 0)))
+  }
+
+  @Test("parses Markdown links and bare web URLs without double matching destinations")
+  func parsesLinks() throws {
+    let text = "Read [Lattice](https://example.com/docs) or visit https://openai.com."
+    let tokens = LiveMarkdownParser.tokens(in: text)
+    let markdownLink = try #require(tokens.first {
+      if case .markdownLink = $0.kind { return true }
+      return false
+    })
+    let bareLink = try #require(tokens.first {
+      if case .bareLink = $0.kind { return true }
+      return false
+    })
+
+    #expect(markdownLink.kind == .markdownLink(destination: "https://example.com/docs"))
+    #expect((text as NSString).substring(with: markdownLink.contentRange) == "Lattice")
+    #expect(markdownLink.syntaxRanges.map { (text as NSString).substring(with: $0) } == [
+      "[",
+      "](https://example.com/docs)"
+    ])
+    #expect(bareLink.kind == .bareLink(destination: "https://openai.com"))
+    #expect((text as NSString).substring(with: bareLink.contentRange) == "https://openai.com")
+    #expect(tokens.filter {
+      if case .bareLink = $0.kind { return true }
+      return false
+    }.count == 1)
+  }
+
+  @Test("ignores link-looking text inside inline code")
+  func ignoresLinksInCode() {
+    let tokens = LiveMarkdownParser.tokens(in: "`https://example.com` and https://openai.com")
+
+    #expect(tokens.filter {
+      switch $0.kind {
+      case .markdownLink, .bareLink: true
+      default: false
+      }
+    }.count == 1)
+  }
+
+  @Test("accepts only absolute HTTP and HTTPS destinations for opening")
+  func validatesOpenableLinks() {
+    #expect(LiveMarkdownLinkDestination.webURL(for: "https://example.com/path")?.absoluteString
+      == "https://example.com/path")
+    #expect(LiveMarkdownLinkDestination.webURL(for: "HTTP://localhost:3000") != nil)
+    #expect(LiveMarkdownLinkDestination.webURL(for: "javascript:alert(1)") == nil)
+    #expect(LiveMarkdownLinkDestination.webURL(for: "/relative/path") == nil)
+    #expect(LiveMarkdownLinkDestination.webURL(for: "https://") == nil)
+  }
+
+  @Test("parses only the requested lines in a large note")
+  func parsesRequestedLinesOnly() {
+    let prefix = String(repeating: "ordinary line\n", count: 20_000)
+    let text = prefix + "**target**\n" + String(repeating: "ordinary line\n", count: 20_000)
+    let targetRange = (text as NSString).range(of: "target")
+    let tokens = LiveMarkdownParser.tokens(in: text, range: targetRange)
+
+    #expect(tokens.count == 1)
+    #expect(tokens.first?.kind == .bold)
+    #expect(tokens.first?.contentRange == targetRange)
+  }
+
+  @Test("seeds an empty note with a real Markdown title")
+  func seedsMarkdownTitle() {
+    #expect(LiveMarkdownEditing.seededTitleInsertion(
+      currentText: "",
+      range: NSRange(location: 0, length: 0),
+      replacement: "Hello"
+    ) == "# Hello")
+    #expect(LiveMarkdownEditing.seededTitleInsertion(
+      currentText: "",
+      range: NSRange(location: 0, length: 0),
+      replacement: "### Existing"
+    ) == "### Existing")
+    #expect(LiveMarkdownEditing.seededTitleInsertion(
+      currentText: "Body",
+      range: NSRange(location: 4, length: 0),
+      replacement: " text"
+    ) == " text")
+  }
+
+  @Test("wraps selected text as a Markdown link and selects the destination")
+  func insertsMarkdownLink() throws {
+    let text = "Read Lattice today"
+    let selectedRange = (text as NSString).range(of: "Lattice")
+    let result = try #require(LiveMarkdownEditing.linkInsertion(
+      currentText: text,
+      selection: selectedRange
+    ))
+
+    let updated = (text as NSString).replacingCharacters(
+      in: result.replacementRange,
+      with: result.replacement
+    )
+    #expect(updated == "Read [Lattice](https://) today")
+    #expect((updated as NSString).substring(with: result.selection) == "https://")
+    #expect(LiveMarkdownEditing.linkInsertion(
+      currentText: text,
+      selection: NSRange(location: selectedRange.location, length: 0)
+    ) == nil)
   }
 }

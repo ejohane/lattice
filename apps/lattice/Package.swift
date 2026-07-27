@@ -11,7 +11,8 @@ let package = Package(
     .executable(name: "Lattice", targets: ["Lattice"]),
     .library(name: "LatticeCore", targets: ["LatticeCore"]),
     .library(name: "LatticeEditor", targets: ["LatticeEditor"]),
-    .library(name: "LatticeShared", targets: ["LatticeShared"])
+    .library(name: "LatticeShared", targets: ["LatticeShared"]),
+    .library(name: "LatticeMacCore", targets: ["LatticeMacCore"])
   ],
   dependencies: [
     .package(url: "https://github.com/sparkle-project/Sparkle", from: "2.9.3")
@@ -26,6 +27,9 @@ let package = Package(
     ),
     .target(
       name: "LatticeEditor"
+    ),
+    .target(
+      name: "LatticeMacCore"
     ),
     .target(
       name: "LatticeShared",
@@ -45,12 +49,19 @@ let package = Package(
     .executableTarget(
       name: "Lattice",
       dependencies: [
-        "LatticeShared",
+        "LatticeEditor",
+        "LatticeMacCore",
         .product(name: "Sparkle", package: "Sparkle")
       ],
       linkerSettings: [
-        .linkedFramework("AppKit"),
-        .linkedFramework("Carbon")
+        .linkedFramework("AppKit")
+      ]
+    ),
+    .testTarget(
+      name: "LatticeMacCoreTests",
+      dependencies: [
+        "Lattice",
+        "LatticeMacCore"
       ]
     ),
     .testTarget(

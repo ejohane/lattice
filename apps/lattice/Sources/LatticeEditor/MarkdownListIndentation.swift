@@ -56,6 +56,21 @@ public enum MarkdownListIndentation {
     }
   }
 
+  public static func containsListItem(
+    in body: String,
+    selection: NSRange
+  ) -> Bool {
+    let nsString = body as NSString
+    let range = MarkdownTextRange.clamped(selection, length: nsString.length)
+    return lineRanges(intersecting: range, in: nsString).contains { lineRange in
+      let contentRange = MarkdownTextRange.contentRangeWithoutLineEnding(
+        lineRange,
+        in: nsString
+      )
+      return isListItem(nsString.substring(with: contentRange))
+    }
+  }
+
   private static func apply(
     to body: String,
     selection: NSRange,

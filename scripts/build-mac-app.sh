@@ -118,10 +118,6 @@ cat <<PLIST
   <string>14.0</string>
   <key>NSHighResolutionCapable</key>
   <true/>
-  <key>NSRemindersUsageDescription</key>
-  <string>Lattice syncs Markdown checkbox tasks to your selected Reminders list.</string>
-  <key>NSRemindersFullAccessUsageDescription</key>
-  <string>Lattice syncs Markdown checkbox tasks to your selected Reminders list.</string>
 PLIST
 
 if [[ -n "$sparkle_feed_url" ]]; then
