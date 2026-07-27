@@ -30,6 +30,9 @@ struct LiveMarkdownEditor: NSViewRepresentable {
     textView.onInsertLink = { [weak coordinator = context.coordinator] in
       coordinator?.insertLink()
     }
+    textView.onCancelSlashCommandPalette = { [weak coordinator = context.coordinator] in
+      coordinator?.cancelSlashCommandPalette() ?? false
+    }
     textView.onOpenLink = { url in
       guard NSWorkspace.shared.open(url) else {
         NSSound.beep()
@@ -102,6 +105,14 @@ struct LiveMarkdownEditor: NSViewRepresentable {
     private var pendingEdits: [LiveMarkdownPresentationController.PendingEdit] = []
     private var isLoading = false
     private var needsPresentationResetAfterMarkedText = false
+    private var slashCommandPaletteView: NSHostingView<MacSlashCommandPalette>?
+    private var activeSlashTriggerLocation: Int?
+    private var dismissedSlashTriggerLocation: Int?
+
+    private struct SlashCommandAnchor {
+      let slashRect: NSRect
+      let lineRect: NSRect
+    }
 
     fileprivate var loadedRevision = -1
     fileprivate var lastFocusRequest = 0
@@ -123,6 +134,8 @@ struct LiveMarkdownEditor: NSViewRepresentable {
       guard let textView else { return }
       isLoading = true
       pendingEdits = []
+      closeSlashCommandPalette(suppressCurrentTrigger: false)
+      dismissedSlashTriggerLocation = nil
       textView.string = text
       textView.setSelectedRange(NSRange(location: 0, length: 0))
       loadedRevision = revision
@@ -156,6 +169,7 @@ struct LiveMarkdownEditor: NSViewRepresentable {
 
     func textDidChange(_ notification: Notification) {
       guard !isLoading, let textView = notification.object as? LiveMarkdownTextView else { return }
+      defer { updateSlashCommandPalette(in: textView) }
       guard !pendingEdits.isEmpty else {
         parent.onReplaceAll(textView.string)
         presentation.reset(
@@ -194,6 +208,7 @@ struct LiveMarkdownEditor: NSViewRepresentable {
             !textView.hasMarkedText()
       else { return }
       presentation.selectionDidChange(in: textView, selection: textView.selectedRange())
+      updateSlashCommandPalette(in: textView)
     }
 
     func textView(_ textView: NSTextView, doCommandBy commandSelector: Selector) -> Bool {
@@ -236,6 +251,147 @@ struct LiveMarkdownEditor: NSViewRepresentable {
       textView.insertText(result.replacement, replacementRange: result.replacementRange)
       textView.setSelectedRange(result.selection)
       presentation.selectionDidChange(in: textView, selection: result.selection)
+    }
+
+    func cancelSlashCommandPalette() -> Bool {
+      guard slashCommandPaletteView != nil else { return false }
+      closeSlashCommandPalette(suppressCurrentTrigger: true)
+      if let textView {
+        textView.window?.makeFirstResponder(textView)
+      }
+      return true
+    }
+
+    private func updateSlashCommandPalette(in textView: LiveMarkdownTextView) {
+      if textView.hasMarkedText() {
+        return
+      }
+
+      guard let context = MarkdownSlashCommandTrigger.context(
+        in: textView.string,
+        selection: textView.selectedRange()
+      )
+      else {
+        closeSlashCommandPalette(suppressCurrentTrigger: false)
+        dismissedSlashTriggerLocation = nil
+        return
+      }
+
+      guard dismissedSlashTriggerLocation != context.triggerLocation else {
+        closeSlashCommandPalette(suppressCurrentTrigger: false)
+        return
+      }
+
+      guard let anchor = slashCommandAnchor(
+        in: textView,
+        triggerLocation: context.triggerLocation
+      ) else { return }
+      if activeSlashTriggerLocation == context.triggerLocation,
+         let slashCommandPaletteView {
+        positionSlashCommandPalette(
+          slashCommandPaletteView,
+          below: anchor,
+          in: textView
+        )
+        return
+      }
+
+      closeSlashCommandPalette(suppressCurrentTrigger: false)
+      let paletteView = NSHostingView(
+        rootView: MacSlashCommandPalette { [weak self] in
+          _ = self?.cancelSlashCommandPalette()
+        }
+      )
+      paletteView.frame.size = NSSize(
+        width: MacSlashCommandPaletteMetrics.width,
+        height: MacSlashCommandPaletteMetrics.height
+      )
+      textView.addSubview(paletteView, positioned: .above, relativeTo: nil)
+      slashCommandPaletteView = paletteView
+      activeSlashTriggerLocation = context.triggerLocation
+      positionSlashCommandPalette(
+        paletteView,
+        below: anchor,
+        in: textView
+      )
+    }
+
+    private func slashCommandAnchor(
+      in textView: LiveMarkdownTextView,
+      triggerLocation: Int
+    ) -> SlashCommandAnchor? {
+      guard let window = textView.window else { return nil }
+      guard triggerLocation >= 0,
+            triggerLocation < (textView.string as NSString).length
+      else { return nil }
+      let slashRange = NSRange(location: triggerLocation, length: 1)
+      var actualRange = NSRange(location: NSNotFound, length: 0)
+      let screenRect = textView.firstRect(
+        forCharacterRange: slashRange,
+        actualRange: &actualRange
+      )
+      guard !screenRect.isEmpty, actualRange.location != NSNotFound else { return nil }
+      let windowRect = window.convertFromScreen(screenRect)
+      let slashRect = textView.convert(windowRect, from: nil)
+      let lineRect = textKitLineRect(
+        in: textView,
+        at: triggerLocation
+      ) ?? slashRect
+      return SlashCommandAnchor(slashRect: slashRect, lineRect: lineRect)
+    }
+
+    private func textKitLineRect(
+      in textView: LiveMarkdownTextView,
+      at characterLocation: Int
+    ) -> NSRect? {
+      guard let textLayoutManager = textView.textLayoutManager,
+            let textContentManager = textLayoutManager.textContentManager,
+            let location = textContentManager.location(
+              textContentManager.documentRange.location,
+              offsetBy: characterLocation
+            ),
+            let layoutFragment = textLayoutManager.textLayoutFragment(for: location),
+            let lineFragment = layoutFragment.textLineFragment(
+              for: location,
+              isUpstreamAffinity: false
+            )
+      else { return nil }
+
+      let origin = textView.textContainerOrigin
+      return lineFragment.typographicBounds.offsetBy(
+        dx: layoutFragment.layoutFragmentFrame.minX + origin.x,
+        dy: layoutFragment.layoutFragmentFrame.minY + origin.y
+      )
+    }
+
+    private func positionSlashCommandPalette(
+      _ paletteView: NSView,
+      below anchor: SlashCommandAnchor,
+      in textView: LiveMarkdownTextView
+    ) {
+      let visibleRect = textView.visibleRect
+      let width = MacSlashCommandPaletteMetrics.width
+      let height = MacSlashCommandPaletteMetrics.height
+      let minimumX = visibleRect.minX + 8
+      let maximumX = max(minimumX, visibleRect.maxX - width - 8)
+      let x = min(max(anchor.slashRect.minX, minimumX), maximumX)
+      let preferredY = anchor.lineRect.maxY + MacSlashCommandPaletteMetrics.verticalGap
+      let y = preferredY + height <= visibleRect.maxY - 8
+        ? preferredY
+        : max(
+          visibleRect.minY + 8,
+          anchor.lineRect.minY - height - MacSlashCommandPaletteMetrics.verticalGap
+        )
+      paletteView.frame = NSRect(x: x, y: y, width: width, height: height)
+    }
+
+    private func closeSlashCommandPalette(suppressCurrentTrigger: Bool) {
+      if suppressCurrentTrigger {
+        dismissedSlashTriggerLocation = activeSlashTriggerLocation
+      }
+      slashCommandPaletteView?.removeFromSuperview()
+      slashCommandPaletteView = nil
+      activeSlashTriggerLocation = nil
     }
   }
 }

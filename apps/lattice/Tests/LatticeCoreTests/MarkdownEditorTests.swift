@@ -574,6 +574,38 @@ struct MarkdownListIndentationTests {
   }
 }
 
+@Suite("Markdown slash command trigger")
+struct MarkdownSlashCommandTriggerTests {
+  @Test("opens for a slash at a token boundary")
+  func opensAtTokenBoundary() {
+    #expect(MarkdownSlashCommandTrigger.context(
+      in: "/",
+      selection: NSRange(location: 1, length: 0)
+    ) == MarkdownSlashCommandContext(triggerLocation: 0))
+
+    #expect(MarkdownSlashCommandTrigger.context(
+      in: "Hello /pla",
+      selection: NSRange(location: 10, length: 0)
+    ) == MarkdownSlashCommandContext(triggerLocation: 6))
+  }
+
+  @Test("ignores URLs, repeated slashes, and selections")
+  func ignoresNonCommandSlashes() {
+    #expect(MarkdownSlashCommandTrigger.context(
+      in: "https://example.com",
+      selection: NSRange(location: 8, length: 0)
+    ) == nil)
+    #expect(MarkdownSlashCommandTrigger.context(
+      in: "//",
+      selection: NSRange(location: 2, length: 0)
+    ) == nil)
+    #expect(MarkdownSlashCommandTrigger.context(
+      in: "/command",
+      selection: NSRange(location: 0, length: 8)
+    ) == nil)
+  }
+}
+
 @Suite("MarkdownStyler")
 struct MarkdownStylerTests {
   @Test("generates style spans for core live markdown")

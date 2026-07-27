@@ -20,6 +20,9 @@ Later edits do not keep changing the filename.
 Press Command-Shift-P to open the command palette. Its initial command is New
 Note, and Command-N creates a note directly instead of opening another window.
 
+Type `/` at the beginning of a word to open the inline slash command palette.
+Press Escape to dismiss it without removing the slash or interrupting typing.
+
 The live editor reveals Markdown syntax only for the active construct and
 collapses it as soon as the caret moves beyond that construct. New notes turn
 their first typed line into a real Markdown H1.

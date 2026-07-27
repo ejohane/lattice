@@ -16,6 +16,7 @@ final class LiveMarkdownTextView: NSTextView {
   var onInsertLink: (() -> Void)?
   var onOpenLink: ((URL) -> Void)?
   var onFocusChange: ((Bool) -> Void)?
+  var onCancelSlashCommandPalette: (() -> Bool)?
 
   private var taskHitTargets: [(range: NSRange, rect: NSRect)] = []
 
@@ -73,6 +74,14 @@ final class LiveMarkdownTextView: NSTextView {
     }
 
     super.insertBacktab(sender)
+  }
+
+  override func cancelOperation(_ sender: Any?) {
+    if onCancelSlashCommandPalette?() == true {
+      return
+    }
+
+    super.cancelOperation(sender)
   }
 
   override func resignFirstResponder() -> Bool {

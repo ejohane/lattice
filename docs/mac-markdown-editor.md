@@ -38,6 +38,9 @@ The macOS Lattice app is intentionally a small, source-preserving live Markdown 
   the chosen folder's root without adding frontmatter.
 - Command-Shift-P opens a command palette containing only New Note and displays
   Command-N as its shortcut.
+- Typing `/` at a token boundary opens a caret-anchored slash command palette.
+  The initial palette contains one placeholder item; Escape dismisses it while
+  leaving the slash in the note and returning focus to the editor.
 - Choosing New Note in the palette or pressing Command-N runs the same creation
   flow instead of opening a new app window.
 - New files use the first available `Untitled.md` name, then rename once from

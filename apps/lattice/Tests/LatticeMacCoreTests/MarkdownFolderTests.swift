@@ -282,6 +282,20 @@ struct LiveMarkdownPresentationTests {
     #expect(textView.selectedRange() == NSRange(location: 16, length: 0))
   }
 
+  @Test("Escape dismisses an active slash command palette")
+  func escapeDismissesSlashCommandPalette() {
+    let textView = LiveMarkdownTextView(usingTextLayoutManager: true)
+    var dismissalCount = 0
+    textView.onCancelSlashCommandPalette = {
+      dismissalCount += 1
+      return true
+    }
+
+    textView.cancelOperation(nil)
+
+    #expect(dismissalCount == 1)
+  }
+
   @Test("starts an empty note with title-sized typing attributes")
   func startsEmptyNoteAsTitle() throws {
     let textView = LiveMarkdownTextView(usingTextLayoutManager: true)
