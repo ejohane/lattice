@@ -5,6 +5,7 @@ import UniformTypeIdentifiers
 struct MacMarkdownRootView: View {
   @State private var model = MacMarkdownAppModel()
   @State private var isChoosingFolder = false
+  @State private var isShowingCommandPalette = false
 
   var body: some View {
     @Bindable var model = model
@@ -25,6 +26,29 @@ struct MacMarkdownRootView: View {
         .disabled(!model.canCreateNote)
         .help("New Note")
       }
+    }
+    .focusedSceneValue(
+      \.macMarkdownNewNoteAction,
+      MacMarkdownFocusedAction(isEnabled: model.canCreateNote) {
+        model.createNote()
+      }
+    )
+    .focusedSceneValue(
+      \.macMarkdownShowCommandPaletteAction,
+      MacMarkdownFocusedAction {
+        isShowingCommandPalette = true
+      }
+    )
+    .sheet(isPresented: $isShowingCommandPalette) {
+      MacCommandPaletteView(
+        canCreateNote: model.canCreateNote,
+        onCreateNote: {
+          isShowingCommandPalette = false
+          Task { @MainActor in
+            model.createNote()
+          }
+        }
+      )
     }
     .fileImporter(
       isPresented: $isChoosingFolder,

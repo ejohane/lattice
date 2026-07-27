@@ -17,11 +17,15 @@ file. New files start with an available `Untitled.md` name and are renamed once
 from their first meaningful line when that line ends or the note is left.
 Later edits do not keep changing the filename.
 
+Press Command-Shift-P to open the command palette. Its initial command is New
+Note, and Command-N creates a note directly instead of opening another window.
+
 The live editor reveals Markdown syntax only for the active construct and
 collapses it as soon as the caret moves beyond that construct. New notes turn
 their first typed line into a real Markdown H1.
 List returns continue the current bullet or task, empty items exit the list,
-and rendered task checkboxes toggle the source between `[ ]` and `[x]`.
+Tab and Shift-Tab nest or unnest list items, and rendered task checkboxes toggle
+the source between `[ ]` and `[x]`.
 
 The current macOS app still excludes attachments, tables, autocomplete, task
 sync, modes, themes, and other note-specific features. Those capabilities

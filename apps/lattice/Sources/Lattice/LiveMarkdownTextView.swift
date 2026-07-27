@@ -59,6 +59,22 @@ final class LiveMarkdownTextView: NSTextView {
     return super.performKeyEquivalent(with: event)
   }
 
+  override func insertTab(_ sender: Any?) {
+    if applyMarkdownListIndentation(direction: .indent) {
+      return
+    }
+
+    super.insertTab(sender)
+  }
+
+  override func insertBacktab(_ sender: Any?) {
+    if applyMarkdownListIndentation(direction: .outdent) {
+      return
+    }
+
+    super.insertBacktab(sender)
+  }
+
   override func resignFirstResponder() -> Bool {
     let resignedFirstResponder = super.resignFirstResponder()
     if resignedFirstResponder {
@@ -127,6 +143,51 @@ final class LiveMarkdownTextView: NSTextView {
 
   private func linkTarget(at characterIndex: Int) -> LiveMarkdownLinkTarget? {
     presentationLinks.first { NSLocationInRange(characterIndex, $0.range) }
+  }
+
+  private enum IndentationDirection: Equatable {
+    case indent
+    case outdent
+  }
+
+  private func applyMarkdownListIndentation(
+    direction: IndentationDirection
+  ) -> Bool {
+    let source = string
+    let selection = selectedRange()
+    let result: MarkdownListIndentationResult?
+    switch direction {
+    case .indent:
+      result = MarkdownListIndentation.applyIndent(
+        to: source,
+        selection: selection
+      )
+    case .outdent:
+      result = MarkdownListIndentation.applyOutdent(
+        to: source,
+        selection: selection
+      )
+    }
+
+    guard let result else {
+      return direction == .outdent
+        && MarkdownListIndentation.containsListItem(
+          in: source,
+          selection: selection
+        )
+    }
+    guard shouldChangeText(
+      in: result.replacementRange,
+      replacementString: result.replacement
+    ) else { return true }
+
+    textStorage?.replaceCharacters(
+      in: result.replacementRange,
+      with: result.replacement
+    )
+    setSelectedRange(result.selection)
+    didChangeText()
+    return true
   }
 
   private func drawBullet(in markerRect: NSRect) {

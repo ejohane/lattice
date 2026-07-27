@@ -25,6 +25,8 @@ The macOS Lattice app is intentionally a small, source-preserving live Markdown 
 - The first insertion in an empty note seeds a real `# ` H1 prefix as part of
   the same native undo operation.
 - Return continues bullet and task items; Return on an empty item exits its list.
+- Tab indents list items and Shift-Tab outdents them; Shift-Tab at the outermost
+  list level stays in the editor without changing the note.
 - Rendered task controls toggle only the Markdown checkbox marker.
 - The writing column stays centered, grows to at most 760 points, and uses
   responsive horizontal and top padding as the window changes size.
@@ -34,6 +36,10 @@ The macOS Lattice app is intentionally a small, source-preserving live Markdown 
 - Hidden files and non-Markdown files are ignored.
 - The trailing New Note button creates and selects an empty Markdown file in
   the chosen folder's root without adding frontmatter.
+- Command-Shift-P opens a command palette containing only New Note and displays
+  Command-N as its shortcut.
+- Choosing New Note in the palette or pressing Command-N runs the same creation
+  flow instead of opening a new app window.
 - New files use the first available `Untitled.md` name, then rename once from
   their first meaningful line when that line ends or the user leaves the note.
 - Generated names remove heading markers, replace unsafe filename characters,

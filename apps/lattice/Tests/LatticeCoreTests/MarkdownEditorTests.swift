@@ -554,6 +554,24 @@ struct MarkdownListIndentationTests {
 
     #expect(result == nil)
   }
+
+  @Test("recognizes top-level list selections that cannot outdent further")
+  func recognizesTopLevelListSelection() {
+    let body = "- Parent\nplain text"
+
+    #expect(MarkdownListIndentation.applyOutdent(
+      to: body,
+      selection: NSRange(location: 5, length: 0)
+    ) == nil)
+    #expect(MarkdownListIndentation.containsListItem(
+      in: body,
+      selection: NSRange(location: 5, length: 0)
+    ))
+    #expect(!MarkdownListIndentation.containsListItem(
+      in: body,
+      selection: NSRange(location: 15, length: 0)
+    ))
+  }
 }
 
 @Suite("MarkdownStyler")

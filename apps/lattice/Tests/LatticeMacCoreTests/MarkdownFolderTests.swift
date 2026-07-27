@@ -265,6 +265,23 @@ struct MacMarkdownAppModelTests {
 @MainActor
 @Suite("Live Markdown presentation")
 struct LiveMarkdownPresentationTests {
+  @Test("Tab and Shift-Tab indent and outdent rendered list items")
+  func indentsAndOutdentsListItems() {
+    let textView = LiveMarkdownTextView(usingTextLayoutManager: true)
+    textView.string = "- Parent\n- Child"
+    textView.setSelectedRange(NSRange(location: 16, length: 0))
+
+    textView.insertTab(nil)
+
+    #expect(textView.string == "- Parent\n    - Child")
+    #expect(textView.selectedRange() == NSRange(location: 20, length: 0))
+
+    textView.insertBacktab(nil)
+
+    #expect(textView.string == "- Parent\n- Child")
+    #expect(textView.selectedRange() == NSRange(location: 16, length: 0))
+  }
+
   @Test("starts an empty note with title-sized typing attributes")
   func startsEmptyNoteAsTitle() throws {
     let textView = LiveMarkdownTextView(usingTextLayoutManager: true)

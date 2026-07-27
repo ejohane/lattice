@@ -12,6 +12,33 @@ struct LatticeMacApp: App {
         .frame(minWidth: 640, minHeight: 420)
     }
     .defaultSize(width: 960, height: 680)
+    .commands {
+      MacMarkdownCommands()
+    }
+  }
+}
+
+private struct MacMarkdownCommands: Commands {
+  @FocusedValue(\.macMarkdownNewNoteAction) private var newNoteAction
+  @FocusedValue(\.macMarkdownShowCommandPaletteAction)
+  private var showCommandPaletteAction
+
+  var body: some Commands {
+    CommandGroup(replacing: .newItem) {
+      Button("New Note") {
+        newNoteAction?.perform()
+      }
+      .keyboardShortcut("n", modifiers: .command)
+      .disabled(newNoteAction?.isEnabled != true)
+    }
+
+    CommandMenu("Commands") {
+      Button("Command Palette…") {
+        showCommandPaletteAction?.perform()
+      }
+      .keyboardShortcut("p", modifiers: [.command, .shift])
+      .disabled(showCommandPaletteAction?.isEnabled != true)
+    }
   }
 }
 
