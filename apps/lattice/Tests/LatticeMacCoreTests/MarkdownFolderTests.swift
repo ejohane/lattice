@@ -282,6 +282,23 @@ struct LiveMarkdownPresentationTests {
     #expect(textView.selectedRange() == NSRange(location: 16, length: 0))
   }
 
+  @Test("typing after outdenting an empty continued item preserves order")
+  func typesAfterOutdentingEmptyContinuedItem() {
+    let textView = LiveMarkdownTextView(usingTextLayoutManager: true)
+    textView.string = "- Parent\n    - Child\n    - "
+    textView.setSelectedRange(NSRange(location: (textView.string as NSString).length, length: 0))
+
+    textView.insertBacktab(nil)
+
+    #expect(textView.string == "- Parent\n    - Child\n- ")
+    let staleReplacementRange = textView.selectedRange()
+    for character in "[ ] Checklist" {
+      textView.insertText(String(character), replacementRange: staleReplacementRange)
+    }
+
+    #expect(textView.string == "- Parent\n    - Child\n- [ ] Checklist")
+  }
+
   @Test("Escape dismisses an active slash command palette")
   func escapeDismissesSlashCommandPalette() {
     let textView = LiveMarkdownTextView(usingTextLayoutManager: true)

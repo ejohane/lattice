@@ -28,8 +28,13 @@ final class LiveMarkdownTextView: NSTextView {
       replacement = String(describing: insertString)
     }
 
-    let effectiveRange = replacementRange.location == NSNotFound
-      ? selectedRange()
+    let selection = selectedRange()
+    let hasStaleTypingRange = !hasMarkedText()
+      && selection.length == 0
+      && replacementRange.length == 0
+      && replacementRange.location != selection.location
+    let effectiveRange = replacementRange.location == NSNotFound || hasStaleTypingRange
+      ? selection
       : replacementRange
     let seeded = LiveMarkdownEditing.seededTitleInsertion(
       currentText: string,
@@ -37,6 +42,13 @@ final class LiveMarkdownTextView: NSTextView {
       replacement: replacement
     )
     super.insertText(seeded, replacementRange: effectiveRange)
+    if !hasMarkedText() {
+      let nextLocation = min(
+        effectiveRange.location + (seeded as NSString).length,
+        (string as NSString).length
+      )
+      setSelectedRange(NSRange(location: nextLocation, length: 0))
+    }
   }
 
   override func becomeFirstResponder() -> Bool {
