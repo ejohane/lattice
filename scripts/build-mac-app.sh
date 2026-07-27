@@ -159,6 +159,16 @@ if [[ -n "$codesign_identity" ]]; then
   fi
 
   sparkle_version_dir="$frameworks_dir/Sparkle.framework/Versions/Current"
+  sparkle_xpc_services_dir="$sparkle_version_dir/XPCServices"
+  if [[ -d "$sparkle_xpc_services_dir/Installer.xpc" ]]; then
+    codesign "${codesign_args[@]}" "$sparkle_xpc_services_dir/Installer.xpc"
+  fi
+  if [[ -d "$sparkle_xpc_services_dir/Downloader.xpc" ]]; then
+    codesign \
+      "${codesign_args[@]}" \
+      --preserve-metadata=entitlements \
+      "$sparkle_xpc_services_dir/Downloader.xpc"
+  fi
   if [[ -x "$sparkle_version_dir/Autoupdate" ]]; then
     codesign "${codesign_args[@]}" "$sparkle_version_dir/Autoupdate"
   fi
