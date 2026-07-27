@@ -13,17 +13,26 @@ struct LatticeMacApp: App {
     }
     .defaultSize(width: 960, height: 680)
     .commands {
-      MacMarkdownCommands()
+      MacMarkdownCommands {
+        appDelegate.checkForUpdates()
+      }
     }
   }
 }
 
 private struct MacMarkdownCommands: Commands {
+  let checkForUpdates: @MainActor () -> Void
   @FocusedValue(\.macMarkdownNewNoteAction) private var newNoteAction
   @FocusedValue(\.macMarkdownShowCommandPaletteAction)
   private var showCommandPaletteAction
 
   var body: some Commands {
+    CommandGroup(after: .appInfo) {
+      Button("Check for Updates…") {
+        checkForUpdates()
+      }
+    }
+
     CommandGroup(replacing: .newItem) {
       Button("New Note") {
         newNoteAction?.perform()
@@ -61,5 +70,18 @@ private final class MacAppDelegate: NSObject, NSApplicationDelegate {
       updaterDelegate: nil,
       userDriverDelegate: nil
     )
+  }
+
+  func checkForUpdates() {
+    guard let updaterController else {
+      let alert = NSAlert()
+      alert.messageText = "Updates are unavailable in this build"
+      alert.informativeText = "Install a released build of Lattice to check for updates."
+      alert.alertStyle = .informational
+      alert.runModal()
+      return
+    }
+
+    updaterController.checkForUpdates(nil)
   }
 }
