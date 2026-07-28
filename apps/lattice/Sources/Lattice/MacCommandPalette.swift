@@ -34,21 +34,58 @@ extension FocusedValues {
 }
 
 struct MacCommandPaletteView: View {
-  private enum Selection: Hashable {
+  private enum Selection: CaseIterable, Hashable {
     case newNote
+    case todayNote
+
+    var title: String {
+      switch self {
+      case .newNote: "New Note"
+      case .todayNote: "Today’s Note"
+      }
+    }
+
+    var subtitle: String? {
+      switch self {
+      case .newNote: nil
+      case .todayNote: "Create or open today’s daily note"
+      }
+    }
+
+    var systemImage: String {
+      switch self {
+      case .newNote: "square.and.pencil"
+      case .todayNote: "calendar"
+      }
+    }
+
+    var shortcut: String? {
+      switch self {
+      case .newNote: "⌘N"
+      case .todayNote: nil
+      }
+    }
   }
 
   let canCreateNote: Bool
   let onCreateNote: @MainActor () -> Void
+  let onOpenTodayNote: @MainActor () -> Void
 
   @Environment(\.dismiss) private var dismiss
   @FocusState private var isSearchFocused: Bool
   @State private var query = ""
   @State private var selection: Selection? = .newNote
 
-  private var showsNewNote: Bool {
-    query.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
-      || "new note".localizedCaseInsensitiveContains(query)
+  private var visibleCommands: [Selection] {
+    let trimmedQuery = query.trimmingCharacters(in: .whitespacesAndNewlines)
+    guard !trimmedQuery.isEmpty else { return Selection.allCases }
+
+    return Selection.allCases.filter { command in
+      [command.title, command.subtitle]
+        .compactMap { $0 }
+        .joined(separator: " ")
+        .localizedCaseInsensitiveContains(trimmedQuery)
+    }
   }
 
   var body: some View {
@@ -61,7 +98,7 @@ struct MacCommandPaletteView: View {
           .textFieldStyle(.plain)
           .font(.title3)
           .focused($isSearchFocused)
-          .onSubmit(performNewNote)
+          .onSubmit(performSelectedCommand)
       }
       .padding(.horizontal, 16)
       .padding(.vertical, 14)
@@ -69,30 +106,19 @@ struct MacCommandPaletteView: View {
       Divider()
 
       List(selection: $selection) {
-        if showsNewNote {
-          Button(action: performNewNote) {
-            HStack(spacing: 12) {
-              Image(systemName: "square.and.pencil")
-                .foregroundStyle(.secondary)
-                .frame(width: 20)
-
-              Text("New Note")
-
-              Spacer()
-
-              Text("⌘N")
-                .font(.system(.callout, design: .rounded, weight: .medium))
-                .foregroundStyle(.secondary)
+        if !visibleCommands.isEmpty {
+          ForEach(visibleCommands, id: \.self) { command in
+            Button {
+              perform(command)
+            } label: {
+              commandRow(command)
             }
-            .contentShape(Rectangle())
-            .padding(.horizontal, 8)
-            .padding(.vertical, 7)
+            .buttonStyle(.plain)
+            .disabled(!canCreateNote)
+            .tag(command)
+            .listRowInsets(EdgeInsets(top: 2, leading: 6, bottom: 2, trailing: 6))
+            .listRowSeparator(.hidden)
           }
-          .buttonStyle(.plain)
-          .disabled(!canCreateNote)
-          .tag(Selection.newNote)
-          .listRowInsets(EdgeInsets(top: 2, leading: 6, bottom: 2, trailing: 6))
-          .listRowSeparator(.hidden)
         } else {
           ContentUnavailableView.search(text: query)
             .frame(maxWidth: .infinity)
@@ -108,12 +134,14 @@ struct MacCommandPaletteView: View {
       isSearchFocused = true
     }
     .onChange(of: query) {
-      selection = showsNewNote ? .newNote : nil
+      selection = visibleCommands.first
     }
-    .onKeyPress(keys: [.upArrow, .downArrow]) { _ in
-      if showsNewNote {
-        selection = .newNote
-      }
+    .onKeyPress(.upArrow) {
+      moveSelection(by: -1)
+      return .handled
+    }
+    .onKeyPress(.downArrow) {
+      moveSelection(by: 1)
       return .handled
     }
     .onExitCommand {
@@ -121,8 +149,64 @@ struct MacCommandPaletteView: View {
     }
   }
 
-  private func performNewNote() {
-    guard canCreateNote, showsNewNote else { return }
-    onCreateNote()
+  private func commandRow(_ command: Selection) -> some View {
+    HStack(spacing: 12) {
+      Image(systemName: command.systemImage)
+        .foregroundStyle(.secondary)
+        .frame(width: 20)
+
+      VStack(alignment: .leading, spacing: 2) {
+        Text(command.title)
+
+        if let subtitle = command.subtitle {
+          Text(subtitle)
+            .font(.callout)
+            .foregroundStyle(.secondary)
+        }
+      }
+
+      Spacer()
+
+      if let shortcut = command.shortcut {
+        Text(shortcut)
+          .font(.system(.callout, design: .rounded, weight: .medium))
+          .foregroundStyle(.secondary)
+      }
+    }
+    .contentShape(Rectangle())
+    .padding(.horizontal, 8)
+    .padding(.vertical, 7)
+    .frame(height: 56)
+  }
+
+  private func performSelectedCommand() {
+    guard let command = selection ?? visibleCommands.first else { return }
+    perform(command)
+  }
+
+  private func perform(_ command: Selection) {
+    guard canCreateNote, visibleCommands.contains(command) else { return }
+    switch command {
+    case .newNote:
+      onCreateNote()
+    case .todayNote:
+      onOpenTodayNote()
+    }
+  }
+
+  private func moveSelection(by offset: Int) {
+    guard !visibleCommands.isEmpty else {
+      selection = nil
+      return
+    }
+    guard let selection,
+          let currentIndex = visibleCommands.firstIndex(of: selection)
+    else {
+      self.selection = visibleCommands.first
+      return
+    }
+
+    let nextIndex = min(max(currentIndex + offset, 0), visibleCommands.count - 1)
+    self.selection = visibleCommands[nextIndex]
   }
 }

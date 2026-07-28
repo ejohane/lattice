@@ -91,6 +91,10 @@ struct LiveMarkdownEditor: NSViewRepresentable {
       context.coordinator.lastFocusRequest = focusRequest
       DispatchQueue.main.asyncAfter(deadline: .now() + 0.05) { [weak textView] in
         guard let textView else { return }
+        textView.setSelectedRange(NSRange(
+          location: (textView.string as NSString).length,
+          length: 0
+        ))
         textView.window?.makeFirstResponder(textView)
       }
     }

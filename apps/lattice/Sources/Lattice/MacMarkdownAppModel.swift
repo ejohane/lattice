@@ -78,6 +78,60 @@ final class MacMarkdownAppModel {
     startNextNoteCreationIfNeeded()
   }
 
+  func openTodayNote(
+    now: Date = Date(),
+    calendar: Calendar = .current
+  ) {
+    guard canCreateNote, let activeFolder = folder else { return }
+
+    pendingNoteCreations = 0
+    saveTask?.cancel()
+    fileLoadTask?.cancel()
+    loadGeneration += 1
+    let generation = loadGeneration
+    isCreatingNote = true
+
+    fileLoadTask = Task {
+      defer {
+        if generation == loadGeneration {
+          isCreatingNote = false
+        }
+      }
+      do {
+        try await saveSelectedNote(in: activeFolder)
+        do {
+          try await finalizeAutomaticNameIfPossible(in: activeFolder)
+        } catch {
+          present(error)
+        }
+
+        let todayFile = try await activeFolder.ensureDailyNote(
+          now: now,
+          calendar: calendar
+        )
+        let document = try await activeFolder.read(todayFile)
+        let discoveredFiles = try await activeFolder.files()
+        guard generation == loadGeneration else { return }
+
+        automaticallyNamedFileIDs.remove(todayFile.id)
+        files = discoveredFiles
+        selectedFileID = todayFile.id
+        selectedFile = todayFile
+        selectedDocument = document
+        hasLoadedSelectedFile = true
+        text = document.body
+        editorContentRevision += 1
+        isLoadingFile = false
+        editorFocusRequest += 1
+      } catch is CancellationError {
+        return
+      } catch {
+        guard generation == loadGeneration else { return }
+        present(error)
+      }
+    }
+  }
+
   private func startNextNoteCreationIfNeeded() {
     guard !isCreatingNote,
           pendingNoteCreations > 0,

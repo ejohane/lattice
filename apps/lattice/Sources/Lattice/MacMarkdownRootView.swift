@@ -47,6 +47,12 @@ struct MacMarkdownRootView: View {
           Task { @MainActor in
             model.createNote()
           }
+        },
+        onOpenTodayNote: {
+          isShowingCommandPalette = false
+          Task { @MainActor in
+            model.openTodayNote()
+          }
         }
       )
     }
