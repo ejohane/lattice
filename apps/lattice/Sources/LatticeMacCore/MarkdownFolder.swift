@@ -70,6 +70,28 @@ public actor MarkdownFolder {
     throw CocoaError(.fileWriteUnknown)
   }
 
+  public func ensureDailyNote(
+    now: Date = Date(),
+    calendar: Calendar = .current
+  ) throws -> MarkdownFile {
+    let stem = Self.dailyNoteStem(for: now, calendar: calendar)
+    let url = rootURL.appendingPathComponent("\(stem).md").standardizedFileURL
+
+    if !FileManager.default.fileExists(atPath: url.path) {
+      let heading = Self.dailyNoteHeading(for: now, calendar: calendar)
+      let body = "# \(heading)\n\n"
+      do {
+        try Data(body.utf8).write(to: url, options: .withoutOverwriting)
+      } catch {
+        guard FileManager.default.fileExists(atPath: url.path) else {
+          throw error
+        }
+      }
+    }
+
+    return MarkdownFile(url: url, relativePath: relativePath(for: url))
+  }
+
   public func renameUsingFirstMeaningfulLine(
     _ file: MarkdownFile,
     body: String
@@ -111,5 +133,22 @@ public actor MarkdownFolder {
       return url.lastPathComponent
     }
     return fileComponents.dropFirst(rootComponents.count).joined(separator: "/")
+  }
+
+  private static func dailyNoteStem(for date: Date, calendar: Calendar) -> String {
+    dateFormatter("yyyy-MM-dd", calendar: calendar).string(from: date)
+  }
+
+  private static func dailyNoteHeading(for date: Date, calendar: Calendar) -> String {
+    dateFormatter("EEEE, MMMM d, yyyy", calendar: calendar).string(from: date)
+  }
+
+  private static func dateFormatter(_ format: String, calendar: Calendar) -> DateFormatter {
+    let formatter = DateFormatter()
+    formatter.locale = Locale(identifier: "en_US_POSIX")
+    formatter.calendar = calendar
+    formatter.timeZone = calendar.timeZone
+    formatter.dateFormat = format
+    return formatter
   }
 }

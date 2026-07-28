@@ -87,6 +87,37 @@ struct MarkdownFolderTests {
     #expect(try String(contentsOf: root.appendingPathComponent("Untitled.md"), encoding: .utf8) == "existing")
   }
 
+  @Test("creates and reuses one local-date daily note without overwriting it")
+  func createsAndReusesDailyNote() async throws {
+    let root = try temporaryDirectory()
+    defer { try? FileManager.default.removeItem(at: root) }
+    var calendar = Calendar(identifier: .gregorian)
+    calendar.timeZone = try #require(TimeZone(identifier: "America/Chicago"))
+    let date = try #require(calendar.date(from: DateComponents(
+      year: 2026,
+      month: 7,
+      day: 28,
+      hour: 9
+    )))
+
+    let folder = MarkdownFolder(rootURL: root)
+    let first = try await folder.ensureDailyNote(now: date, calendar: calendar)
+
+    #expect(first.relativePath == "2026-07-28.md")
+    #expect(try String(contentsOf: first.url, encoding: .utf8) == "# Tuesday, July 28, 2026\n\n")
+
+    let updatedBody = "# Tuesday, July 28, 2026\n\nJournal entry\n"
+    try updatedBody.write(to: first.url, atomically: true, encoding: .utf8)
+    let second = try await folder.ensureDailyNote(
+      now: date.addingTimeInterval(60),
+      calendar: calendar
+    )
+
+    #expect(second == first)
+    #expect(try String(contentsOf: second.url, encoding: .utf8) == updatedBody)
+    #expect(try await folder.files().filter { $0.relativePath == "2026-07-28.md" }.count == 1)
+  }
+
   @Test("renames from content without changing bytes and resolves collisions")
   func renamesFromContentWithoutChangingBytes() async throws {
     let root = try temporaryDirectory()
@@ -244,6 +275,48 @@ struct MacMarkdownAppModelTests {
     #expect(await eventually { model.selectedFileID?.lastPathComponent == "Untitled 3.md" })
 
     #expect(model.files.map(\.relativePath) == ["Untitled 2.md", "Untitled 3.md", "Untitled.md"])
+  }
+
+  @Test("opens and reuses today's canonical note from the app model")
+  func opensAndReusesTodayNote() async throws {
+    let root = try temporaryDirectory()
+    defer { try? FileManager.default.removeItem(at: root) }
+    let existingURL = root.appendingPathComponent("Existing.md")
+    try "Existing".write(to: existingURL, atomically: true, encoding: .utf8)
+    var calendar = Calendar(identifier: .gregorian)
+    calendar.timeZone = try #require(TimeZone(identifier: "America/Chicago"))
+    let date = try #require(calendar.date(from: DateComponents(
+      year: 2026,
+      month: 7,
+      day: 28,
+      hour: 9
+    )))
+    let model = MacMarkdownAppModel(folderURL: root)
+    #expect(await eventually { !model.isLoadingFiles && !model.isLoadingFile })
+
+    model.openTodayNote(now: date, calendar: calendar)
+    #expect(await eventually { model.selectedFileID?.lastPathComponent == "2026-07-28.md" })
+    #expect(model.text == "# Tuesday, July 28, 2026\n\n")
+    #expect(model.editorFocusRequest == 1)
+
+    let updatedBody = "# Tuesday, July 28, 2026\n\nJournal entry\n"
+    model.updateText(updatedBody)
+    try await Task.sleep(for: .milliseconds(400))
+    model.selectFile(existingURL.standardizedFileURL)
+    #expect(await eventually {
+      model.selectedFileID == existingURL.standardizedFileURL && !model.isLoadingFile
+    })
+
+    model.openTodayNote(now: date.addingTimeInterval(60), calendar: calendar)
+    #expect(await eventually {
+      model.selectedFileID?.lastPathComponent == "2026-07-28.md" && !model.isCreatingNote
+    })
+    #expect(model.text == updatedBody)
+    #expect(model.editorFocusRequest == 2)
+    #expect(model.files.filter { $0.relativePath == "2026-07-28.md" }.count == 1)
+    #expect(!FileManager.default.fileExists(
+      atPath: root.appendingPathComponent("Tuesday, July 28, 2026.md").path
+    ))
   }
 
   @Test("reports creation failure without adding a phantom note")
