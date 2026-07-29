@@ -3,7 +3,7 @@ import SwiftUI
 import UniformTypeIdentifiers
 
 struct MacMarkdownRootView: View {
-  @State private var model = MacMarkdownAppModel()
+  let model: MacMarkdownAppModel
   @State private var isChoosingFolder = false
   @State private var isShowingCommandPalette = false
 
@@ -160,6 +160,7 @@ struct MacMarkdownRootView: View {
         LiveMarkdownEditor(
           text: model.text,
           contentRevision: model.editorContentRevision,
+          externalRefreshRequest: model.editorExternalRefreshRequest,
           focusRequest: model.editorFocusRequest,
           isEditable: !model.isLoadingFile && !model.isCreatingNote,
           onEdit: { range, replacement in

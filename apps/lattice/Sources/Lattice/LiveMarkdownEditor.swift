@@ -6,12 +6,47 @@ import SwiftUI
 struct LiveMarkdownEditor: NSViewRepresentable {
   let text: String
   let contentRevision: Int
+  let externalRefreshRequest: Int
   let focusRequest: Int
   let isEditable: Bool
+  let treatsEmptyDocumentAsTitle: Bool
+  let accessibilityIdentifier: String
   let onEdit: (NSRange, String) -> Void
   let onReplaceAll: (String) -> Void
   let onOpenWikiLink: (String) -> Void
   let onEnsureTodayNote: (Date, Calendar) -> Void
+  let onSubmit: (() -> Void)?
+  let onCancel: (() -> Void)?
+
+  init(
+    text: String,
+    contentRevision: Int,
+    externalRefreshRequest: Int,
+    focusRequest: Int,
+    isEditable: Bool,
+    treatsEmptyDocumentAsTitle: Bool = true,
+    accessibilityIdentifier: String = "noteEditor",
+    onEdit: @escaping (NSRange, String) -> Void,
+    onReplaceAll: @escaping (String) -> Void,
+    onOpenWikiLink: @escaping (String) -> Void,
+    onEnsureTodayNote: @escaping (Date, Calendar) -> Void,
+    onSubmit: (() -> Void)? = nil,
+    onCancel: (() -> Void)? = nil
+  ) {
+    self.text = text
+    self.contentRevision = contentRevision
+    self.externalRefreshRequest = externalRefreshRequest
+    self.focusRequest = focusRequest
+    self.isEditable = isEditable
+    self.treatsEmptyDocumentAsTitle = treatsEmptyDocumentAsTitle
+    self.accessibilityIdentifier = accessibilityIdentifier
+    self.onEdit = onEdit
+    self.onReplaceAll = onReplaceAll
+    self.onOpenWikiLink = onOpenWikiLink
+    self.onEnsureTodayNote = onEnsureTodayNote
+    self.onSubmit = onSubmit
+    self.onCancel = onCancel
+  }
 
   func makeCoordinator() -> Coordinator {
     Coordinator(parent: self)
@@ -36,6 +71,9 @@ struct LiveMarkdownEditor: NSViewRepresentable {
     textView.onCancelSlashCommandPalette = { [weak coordinator = context.coordinator] in
       coordinator?.cancelSlashCommandPalette() ?? false
     }
+    textView.onSubmit = onSubmit
+    textView.onCancel = onCancel
+    textView.seedsTitleOnFirstInsertion = treatsEmptyDocumentAsTitle
     textView.onOpenLink = { [weak coordinator = context.coordinator] destination in
       coordinator?.openLink(destination)
     }
@@ -69,10 +107,11 @@ struct LiveMarkdownEditor: NSViewRepresentable {
       width: CGFloat.greatestFiniteMagnitude,
       height: CGFloat.greatestFiniteMagnitude
     )
-    textView.setAccessibilityIdentifier("noteEditor")
+    textView.setAccessibilityIdentifier(accessibilityIdentifier)
 
     scrollView.documentView = textView
     context.coordinator.attach(textView: textView, scrollView: scrollView)
+    context.coordinator.lastExternalRefreshRequest = externalRefreshRequest
     context.coordinator.load(text: text, revision: contentRevision)
     return scrollView
   }
@@ -80,8 +119,14 @@ struct LiveMarkdownEditor: NSViewRepresentable {
   func updateNSView(_ scrollView: NSScrollView, context: Context) {
     context.coordinator.parent = self
     guard let textView = context.coordinator.textView else { return }
+    textView.onSubmit = onSubmit
+    textView.onCancel = onCancel
+    textView.seedsTitleOnFirstInsertion = treatsEmptyDocumentAsTitle
 
-    if context.coordinator.loadedRevision != contentRevision {
+    if context.coordinator.lastExternalRefreshRequest != externalRefreshRequest {
+      context.coordinator.lastExternalRefreshRequest = externalRefreshRequest
+      context.coordinator.refreshPreservingViewState(text: text)
+    } else if context.coordinator.loadedRevision != contentRevision {
       context.coordinator.load(text: text, revision: contentRevision)
     }
     textView.isEditable = isEditable
@@ -105,7 +150,7 @@ struct LiveMarkdownEditor: NSViewRepresentable {
     var parent: LiveMarkdownEditor
     fileprivate weak var textView: LiveMarkdownTextView?
     private weak var scrollView: NSScrollView?
-    private let presentation = LiveMarkdownPresentationController()
+    private let presentation: LiveMarkdownPresentationController
     private var pendingEdits: [LiveMarkdownPresentationController.PendingEdit] = []
     private var isLoading = false
     private var needsPresentationResetAfterMarkedText = false
@@ -119,10 +164,14 @@ struct LiveMarkdownEditor: NSViewRepresentable {
     }
 
     fileprivate var loadedRevision = -1
+    fileprivate var lastExternalRefreshRequest = 0
     fileprivate var lastFocusRequest = 0
 
     init(parent: LiveMarkdownEditor) {
       self.parent = parent
+      presentation = LiveMarkdownPresentationController(
+        usesTitleStyleForEmptyDocument: parent.treatsEmptyDocumentAsTitle
+      )
     }
 
     func attach(textView: LiveMarkdownTextView, scrollView: NSScrollView) {
@@ -152,6 +201,33 @@ struct LiveMarkdownEditor: NSViewRepresentable {
       isLoading = false
       if let scrollView {
         scrollView.contentView.scroll(to: .zero)
+        scrollView.reflectScrolledClipView(scrollView.contentView)
+      }
+    }
+
+    func refreshPreservingViewState(text: String) {
+      guard let textView else { return }
+      let selection = textView.selectedRange()
+      let visibleOrigin = scrollView?.contentView.bounds.origin
+      isLoading = true
+      pendingEdits = []
+      closeSlashCommandPalette(suppressCurrentTrigger: false)
+      dismissedSlashTriggerLocation = nil
+      textView.string = text
+      let length = (text as NSString).length
+      textView.setSelectedRange(NSRange(
+        location: min(selection.location, length),
+        length: min(selection.length, max(0, length - min(selection.location, length)))
+      ))
+      presentation.reset(
+        textView: textView,
+        text: text,
+        selection: textView.selectedRange()
+      )
+      needsPresentationResetAfterMarkedText = false
+      isLoading = false
+      if let scrollView, let visibleOrigin {
+        scrollView.contentView.scroll(to: visibleOrigin)
         scrollView.reflectScrolledClipView(scrollView.contentView)
       }
     }

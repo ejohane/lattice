@@ -1,5 +1,6 @@
 import AppKit
 import Foundation
+import KeyboardShortcuts
 @testable import Lattice
 @testable import LatticeMacCore
 import Testing
@@ -116,6 +117,108 @@ struct MarkdownFolderTests {
     #expect(second == first)
     #expect(try String(contentsOf: second.url, encoding: .utf8) == updatedBody)
     #expect(try await folder.files().filter { $0.relativePath == "2026-07-28.md" }.count == 1)
+  }
+
+  @Test("appends raw Markdown to today's note with stable separation")
+  func appendsToDailyNote() async throws {
+    let root = try temporaryDirectory()
+    defer { try? FileManager.default.removeItem(at: root) }
+    var calendar = Calendar(identifier: .gregorian)
+    calendar.timeZone = try #require(TimeZone(identifier: "America/Chicago"))
+    let date = try #require(calendar.date(from: DateComponents(
+      year: 2026,
+      month: 7,
+      day: 28,
+      hour: 21
+    )))
+    let folder = MarkdownFolder(rootURL: root)
+
+    let first = try await folder.appendToDailyNote(
+      "A quick **thought**.",
+      now: date,
+      calendar: calendar
+    )
+    #expect(first.file.relativePath == "2026-07-28.md")
+    #expect(first.document.body == "# Tuesday, July 28, 2026\n\nA quick **thought**.")
+
+    let second = try await folder.appendToDailyNote(
+      "- [ ] Follow up\n  - Keep the indentation",
+      now: date.addingTimeInterval(60),
+      calendar: calendar
+    )
+    #expect(second.file == first.file)
+    #expect(second.document.body == """
+      # Tuesday, July 28, 2026
+
+      A quick **thought**.
+
+      - [ ] Follow up
+        - Keep the indentation
+      """)
+  }
+
+  @Test("preserves hidden frontmatter while appending to today's note")
+  func appendsToDailyNotePreservingFrontMatter() async throws {
+    let root = try temporaryDirectory()
+    defer { try? FileManager.default.removeItem(at: root) }
+    var calendar = Calendar(identifier: .gregorian)
+    calendar.timeZone = try #require(TimeZone(identifier: "America/Chicago"))
+    let date = try #require(calendar.date(from: DateComponents(
+      year: 2026,
+      month: 7,
+      day: 28,
+      hour: 21
+    )))
+    let prefix = "---\nlattice:\n  id: today\n---\n\n"
+    let originalBody = "# Tuesday, July 28, 2026\n\nExisting entry"
+    let url = root.appendingPathComponent("2026-07-28.md")
+    try (prefix + originalBody).write(to: url, atomically: true, encoding: .utf8)
+    let folder = MarkdownFolder(rootURL: root)
+
+    let result = try await folder.appendToDailyNote(
+      "New entry",
+      now: date,
+      calendar: calendar
+    )
+
+    #expect(result.document.hiddenPrefix == prefix)
+    #expect(try String(contentsOf: url, encoding: .utf8) == prefix + originalBody + "\n\nNew entry")
+  }
+
+  @Test("serializes consecutive Today appends without losing a capture")
+  func serializesDailyNoteAppends() async throws {
+    let root = try temporaryDirectory()
+    defer { try? FileManager.default.removeItem(at: root) }
+    var calendar = Calendar(identifier: .gregorian)
+    calendar.timeZone = try #require(TimeZone(identifier: "America/Chicago"))
+    let date = try #require(calendar.date(from: DateComponents(
+      year: 2026,
+      month: 7,
+      day: 28,
+      hour: 21
+    )))
+    let folder = MarkdownFolder(rootURL: root)
+    let firstCalendar = calendar
+    let secondCalendar = calendar
+
+    async let first = folder.appendToDailyNote(
+      "First capture",
+      now: date,
+      calendar: firstCalendar
+    )
+    async let second = folder.appendToDailyNote(
+      "Second capture",
+      now: date,
+      calendar: secondCalendar
+    )
+    _ = try await (first, second)
+
+    let contents = try String(
+      contentsOf: root.appendingPathComponent("2026-07-28.md"),
+      encoding: .utf8
+    )
+    #expect(contents.components(separatedBy: "First capture").count == 2)
+    #expect(contents.components(separatedBy: "Second capture").count == 2)
   }
 
   @Test("creates and resolves wiki notes by case-insensitive filename")
@@ -563,11 +666,184 @@ struct MacMarkdownAppModelTests {
     #expect(model.selectedFileID == nil)
     #expect(model.errorMessage != nil)
   }
+
+  @Test("Jot appends without navigating away and clears only after success")
+  func submitsJotWithoutNavigating() async throws {
+    let root = try temporaryDirectory()
+    defer { try? FileManager.default.removeItem(at: root) }
+    let sourceURL = root.appendingPathComponent("Source.md")
+    try "# Source\n".write(to: sourceURL, atomically: true, encoding: .utf8)
+    var calendar = Calendar(identifier: .gregorian)
+    calendar.timeZone = try #require(TimeZone(identifier: "America/Chicago"))
+    let date = try #require(calendar.date(from: DateComponents(
+      year: 2026,
+      month: 7,
+      day: 28,
+      hour: 21
+    )))
+    let model = MacMarkdownAppModel(folderURL: root)
+    #expect(await eventually {
+      model.selectedFileID == sourceURL.standardizedFileURL && !model.isLoadingFile
+    })
+
+    model.jotDraft = "Remember [[Project Plan]]"
+    #expect(await model.submitJot(now: date, calendar: calendar))
+
+    #expect(model.selectedFileID == sourceURL.standardizedFileURL)
+    #expect(model.text == "# Source\n")
+    #expect(model.jotDraft.isEmpty)
+    #expect(model.jotErrorMessage == nil)
+    #expect(model.files.contains { $0.relativePath == "2026-07-28.md" })
+    #expect(try String(
+      contentsOf: root.appendingPathComponent("2026-07-28.md"),
+      encoding: .utf8
+    ) == "# Tuesday, July 28, 2026\n\nRemember [[Project Plan]]")
+  }
+
+  @Test("applies incremental Jot edits against the latest draft")
+  func appliesIncrementalJotEdits() async throws {
+    let root = try temporaryDirectory()
+    defer { try? FileManager.default.removeItem(at: root) }
+    let model = MacMarkdownAppModel(folderURL: root)
+    #expect(await eventually { !model.isLoadingFiles })
+    model.jotDraft = "Fast typng"
+
+    model.applyJotEdit(range: NSRange(location: 8, length: 0), replacement: "i")
+    model.applyJotEdit(range: NSRange(location: 11, length: 0), replacement: " **works**")
+
+    #expect(model.jotDraft == "Fast typing **works**")
+  }
+
+  @Test("Jot preserves unsaved edits when Today is open")
+  func submitsJotIntoOpenTodayNote() async throws {
+    let root = try temporaryDirectory()
+    defer { try? FileManager.default.removeItem(at: root) }
+    var calendar = Calendar(identifier: .gregorian)
+    calendar.timeZone = try #require(TimeZone(identifier: "America/Chicago"))
+    let date = try #require(calendar.date(from: DateComponents(
+      year: 2026,
+      month: 7,
+      day: 28,
+      hour: 21
+    )))
+    let model = MacMarkdownAppModel(folderURL: root)
+    #expect(await eventually { !model.isLoadingFiles })
+    model.openTodayNote(now: date, calendar: calendar)
+    #expect(await eventually {
+      model.selectedFileID?.lastPathComponent == "2026-07-28.md" && !model.isCreatingNote
+    })
+
+    let unsavedBody = "# Tuesday, July 28, 2026\n\nStill being edited"
+    model.updateText(unsavedBody)
+    model.jotDraft = "Captured from Jot"
+    let refreshRequest = model.editorExternalRefreshRequest
+
+    #expect(await model.submitJot(now: date, calendar: calendar))
+
+    let expected = unsavedBody + "\n\nCaptured from Jot"
+    #expect(model.text == expected)
+    #expect(model.editorExternalRefreshRequest == refreshRequest + 1)
+    #expect(try String(
+      contentsOf: root.appendingPathComponent("2026-07-28.md"),
+      encoding: .utf8
+    ) == expected)
+  }
+
+  @Test("Jot retains its draft after a write failure")
+  func retainsJotAfterWriteFailure() async throws {
+    let root = try temporaryDirectory()
+    let model = MacMarkdownAppModel(folderURL: root)
+    #expect(await eventually { !model.isLoadingFiles })
+    try FileManager.default.removeItem(at: root)
+    model.jotDraft = "Do not lose this"
+
+    #expect(!(await model.submitJot()))
+    #expect(model.jotDraft == "Do not lose this")
+    #expect(model.jotErrorMessage != nil)
+    #expect(!model.isSubmittingJot)
+  }
+
+  @Test("Jot ignores empty and duplicate submissions")
+  func ignoresInvalidJotSubmissions() async throws {
+    let root = try temporaryDirectory()
+    defer { try? FileManager.default.removeItem(at: root) }
+    let model = MacMarkdownAppModel(folderURL: root)
+    #expect(await eventually { !model.isLoadingFiles })
+
+    model.jotDraft = "  \n"
+    #expect(!(await model.submitJot()))
+    model.jotDraft = "Exactly once"
+    async let first = model.submitJot()
+    async let second = model.submitJot()
+    let results = await [first, second]
+
+    #expect(results.filter { $0 }.count == 1)
+    let dailyFile = try #require(model.files.first { $0.relativePath.hasSuffix(".md") })
+    let contents = try String(contentsOf: dailyFile.url, encoding: .utf8)
+    #expect(contents.components(separatedBy: "Exactly once").count == 2)
+  }
+}
+
+@MainActor
+@Suite("Mac Jot shortcut")
+struct MacJotShortcutTests {
+  @Test("uses a collision-resistant default global shortcut")
+  func usesDefaultGlobalShortcut() throws {
+    let shortcut = try #require(KeyboardShortcuts.Name.showJot.defaultShortcut)
+
+    #expect(shortcut.key == .j)
+    #expect(shortcut.modifiers == [.command, .option, .control])
+  }
 }
 
 @MainActor
 @Suite("Live Markdown presentation")
 struct LiveMarkdownPresentationTests {
+  @Test("Jot starts with body typing attributes and does not seed a title")
+  func startsJotAsBodyText() throws {
+    let textView = LiveMarkdownTextView(usingTextLayoutManager: true)
+    textView.seedsTitleOnFirstInsertion = false
+    let presentation = LiveMarkdownPresentationController(
+      usesTitleStyleForEmptyDocument: false
+    )
+    presentation.reset(
+      textView: textView,
+      text: "",
+      selection: NSRange(location: 0, length: 0)
+    )
+
+    let font = try #require(textView.typingAttributes[.font] as? NSFont)
+    #expect(font.pointSize == 16)
+    textView.insertText("Capture this", replacementRange: NSRange(location: 0, length: 0))
+    #expect(textView.string == "Capture this")
+  }
+
+  @Test("Jot handles Command-Return submit and Escape cancellation")
+  func handlesJotWindowCommands() throws {
+    let textView = LiveMarkdownTextView(usingTextLayoutManager: true)
+    var submitCount = 0
+    var cancelCount = 0
+    textView.onSubmit = { submitCount += 1 }
+    textView.onCancel = { cancelCount += 1 }
+    let commandReturn = try #require(NSEvent.keyEvent(
+      with: .keyDown,
+      location: .zero,
+      modifierFlags: .command,
+      timestamp: 0,
+      windowNumber: 0,
+      context: nil,
+      characters: "\r",
+      charactersIgnoringModifiers: "\r",
+      isARepeat: false,
+      keyCode: 36
+    ))
+
+    #expect(textView.performKeyEquivalent(with: commandReturn))
+    textView.cancelOperation(nil)
+    #expect(submitCount == 1)
+    #expect(cancelCount == 1)
+  }
+
   @Test("Tab and Shift-Tab indent and outdent rendered list items")
   func indentsAndOutdentsListItems() {
     let textView = LiveMarkdownTextView(usingTextLayoutManager: true)
@@ -642,6 +918,7 @@ struct LiveMarkdownPresentationTests {
     let editor = LiveMarkdownEditor(
       text: "Decision /tod",
       contentRevision: 0,
+      externalRefreshRequest: 0,
       focusRequest: 0,
       isEditable: true,
       onEdit: { _, _ in },
