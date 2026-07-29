@@ -119,7 +119,7 @@ struct MarkdownFolderTests {
     #expect(try await folder.files().filter { $0.relativePath == "2026-07-28.md" }.count == 1)
   }
 
-  @Test("appends raw Markdown to today's note with stable separation")
+  @Test("separates appended Jots with a Markdown horizontal rule")
   func appendsToDailyNote() async throws {
     let root = try temporaryDirectory()
     defer { try? FileManager.default.removeItem(at: root) }
@@ -152,6 +152,8 @@ struct MarkdownFolderTests {
 
       A quick **thought**.
 
+      ---
+
       - [ ] Follow up
         - Keep the indentation
       """)
@@ -182,7 +184,7 @@ struct MarkdownFolderTests {
     )
 
     #expect(result.document.hiddenPrefix == prefix)
-    #expect(try String(contentsOf: url, encoding: .utf8) == prefix + originalBody + "\n\nNew entry")
+    #expect(try String(contentsOf: url, encoding: .utf8) == prefix + originalBody + "\n\n---\n\nNew entry")
   }
 
   @Test("serializes consecutive Today appends without losing a capture")
@@ -219,6 +221,7 @@ struct MarkdownFolderTests {
     )
     #expect(contents.components(separatedBy: "First capture").count == 2)
     #expect(contents.components(separatedBy: "Second capture").count == 2)
+    #expect(contents.components(separatedBy: "\n\n---\n\n").count == 2)
   }
 
   @Test("creates and resolves wiki notes by case-insensitive filename")
@@ -740,7 +743,7 @@ struct MacMarkdownAppModelTests {
 
     #expect(await model.submitJot(now: date, calendar: calendar))
 
-    let expected = unsavedBody + "\n\nCaptured from Jot"
+    let expected = unsavedBody + "\n\n---\n\nCaptured from Jot"
     #expect(model.text == expected)
     #expect(model.editorExternalRefreshRequest == refreshRequest + 1)
     #expect(try String(
@@ -1193,6 +1196,47 @@ struct LiveMarkdownPresentationTests {
       .task(isChecked: false),
       .task(isChecked: true)
     ])
+    #expect(textView.string == text)
+  }
+
+  @Test("renders an inactive thematic break and reveals its Markdown source when active")
+  func rendersThematicBreak() throws {
+    let text = "Before\n---\nAfter"
+    let ruleRange = (text as NSString).range(of: "---")
+    let textView = LiveMarkdownTextView(usingTextLayoutManager: true)
+    textView.string = text
+    textView.setSelectedRange(NSRange(location: ruleRange.location, length: 0))
+    let presentation = LiveMarkdownPresentationController()
+    presentation.reset(
+      textView: textView,
+      text: text,
+      selection: textView.selectedRange()
+    )
+
+    #expect(presentation.tokens.contains { $0.kind == .thematicBreak })
+    #expect(textView.presentationDecorations.map(\.kind) == [.thematicBreak])
+    let hiddenColor = textView.textStorage?.attribute(
+      .foregroundColor,
+      at: ruleRange.location,
+      effectiveRange: nil
+    ) as? NSColor
+    let hiddenFont = try #require(textView.textStorage?.attribute(
+      .font,
+      at: ruleRange.location,
+      effectiveRange: nil
+    ) as? NSFont)
+    #expect(hiddenColor == NSColor.clear)
+    #expect(hiddenFont.pointSize == 16)
+
+    presentation.focusDidChange(in: textView, isFocused: true)
+
+    #expect(textView.presentationDecorations.isEmpty)
+    let revealedColor = textView.textStorage?.attribute(
+      .foregroundColor,
+      at: ruleRange.location,
+      effectiveRange: nil
+    ) as? NSColor
+    #expect(revealedColor == NSColor.tertiaryLabelColor)
     #expect(textView.string == text)
   }
 }
