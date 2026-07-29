@@ -3,6 +3,13 @@ import LatticeEditor
 
 @MainActor
 final class LiveMarkdownTextView: NSTextView {
+  static func makeForEditing() -> LiveMarkdownTextView {
+    // The live presentation layer rewrites NSTextStorage attributes after edits.
+    // TextKit 2 can crash during a concurrent viewport layout with an invalid
+    // NSRLEArray run index, so keep this editor on TextKit 1's layout manager.
+    LiveMarkdownTextView(usingTextLayoutManager: false)
+  }
+
   var presentationDecorations: [LiveMarkdownDecoration] = [] {
     didSet { needsDisplay = true }
   }
