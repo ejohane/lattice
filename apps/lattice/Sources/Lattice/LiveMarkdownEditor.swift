@@ -60,7 +60,7 @@ struct LiveMarkdownEditor: NSViewRepresentable {
     scrollView.autohidesScrollers = true
     scrollView.scrollerStyle = .overlay
 
-    let textView = LiveMarkdownTextView(usingTextLayoutManager: true)
+    let textView = LiveMarkdownTextView.makeForEditing()
     textView.delegate = context.coordinator
     textView.onTaskToggle = { [weak coordinator = context.coordinator] location in
       coordinator?.toggleTask(at: location)
@@ -476,24 +476,21 @@ struct LiveMarkdownEditor: NSViewRepresentable {
       in textView: LiveMarkdownTextView,
       at characterLocation: Int
     ) -> NSRect? {
-      guard let textLayoutManager = textView.textLayoutManager,
-            let textContentManager = textLayoutManager.textContentManager,
-            let location = textContentManager.location(
-              textContentManager.documentRange.location,
-              offsetBy: characterLocation
-            ),
-            let layoutFragment = textLayoutManager.textLayoutFragment(for: location),
-            let lineFragment = layoutFragment.textLineFragment(
-              for: location,
-              isUpstreamAffinity: false
-            )
+      guard let layoutManager = textView.layoutManager,
+            characterLocation >= 0,
+            characterLocation < (textView.string as NSString).length
       else { return nil }
-
-      let origin = textView.textContainerOrigin
-      return lineFragment.typographicBounds.offsetBy(
-        dx: layoutFragment.layoutFragmentFrame.minX + origin.x,
-        dy: layoutFragment.layoutFragmentFrame.minY + origin.y
+      let glyphRange = layoutManager.glyphRange(
+        forCharacterRange: NSRange(location: characterLocation, length: 1),
+        actualCharacterRange: nil
       )
+      guard glyphRange.length > 0 else { return nil }
+      let lineRect = layoutManager.lineFragmentUsedRect(
+        forGlyphAt: glyphRange.location,
+        effectiveRange: nil
+      )
+      let origin = textView.textContainerOrigin
+      return lineRect.offsetBy(dx: origin.x, dy: origin.y)
     }
 
     private func positionSlashCommandPalette(

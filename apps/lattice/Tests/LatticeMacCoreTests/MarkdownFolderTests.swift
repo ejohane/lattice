@@ -802,9 +802,17 @@ struct MacJotShortcutTests {
 @MainActor
 @Suite("Live Markdown presentation")
 struct LiveMarkdownPresentationTests {
+  @Test("uses TextKit 1 for live presentation")
+  func usesStableTextLayoutEngine() {
+    let textView = LiveMarkdownTextView.makeForEditing()
+
+    #expect(textView.textLayoutManager == nil)
+    #expect(textView.layoutManager != nil)
+  }
+
   @Test("Jot starts with body typing attributes and does not seed a title")
   func startsJotAsBodyText() throws {
-    let textView = LiveMarkdownTextView(usingTextLayoutManager: true)
+    let textView = LiveMarkdownTextView.makeForEditing()
     textView.seedsTitleOnFirstInsertion = false
     let presentation = LiveMarkdownPresentationController(
       usesTitleStyleForEmptyDocument: false
@@ -823,7 +831,7 @@ struct LiveMarkdownPresentationTests {
 
   @Test("Jot handles Command-Return submit and Escape cancellation")
   func handlesJotWindowCommands() throws {
-    let textView = LiveMarkdownTextView(usingTextLayoutManager: true)
+    let textView = LiveMarkdownTextView.makeForEditing()
     var submitCount = 0
     var cancelCount = 0
     textView.onSubmit = { submitCount += 1 }
@@ -849,7 +857,7 @@ struct LiveMarkdownPresentationTests {
 
   @Test("Tab and Shift-Tab indent and outdent rendered list items")
   func indentsAndOutdentsListItems() {
-    let textView = LiveMarkdownTextView(usingTextLayoutManager: true)
+    let textView = LiveMarkdownTextView.makeForEditing()
     textView.string = "- Parent\n- Child"
     textView.setSelectedRange(NSRange(location: 16, length: 0))
 
@@ -866,7 +874,7 @@ struct LiveMarkdownPresentationTests {
 
   @Test("typing after outdenting an empty continued item preserves order")
   func typesAfterOutdentingEmptyContinuedItem() {
-    let textView = LiveMarkdownTextView(usingTextLayoutManager: true)
+    let textView = LiveMarkdownTextView.makeForEditing()
     textView.string = "- Parent\n    - Child\n    - "
     textView.setSelectedRange(NSRange(location: (textView.string as NSString).length, length: 0))
 
@@ -883,7 +891,7 @@ struct LiveMarkdownPresentationTests {
 
   @Test("Escape dismisses an active slash command palette")
   func escapeDismissesSlashCommandPalette() {
-    let textView = LiveMarkdownTextView(usingTextLayoutManager: true)
+    let textView = LiveMarkdownTextView.makeForEditing()
     var dismissalCount = 0
     textView.onCancelSlashCommandPalette = {
       dismissalCount += 1
@@ -897,7 +905,7 @@ struct LiveMarkdownPresentationTests {
 
   @Test("activates wiki links through the native text view")
   func activatesWikiLinks() {
-    let textView = LiveMarkdownTextView(usingTextLayoutManager: true)
+    let textView = LiveMarkdownTextView.makeForEditing()
     textView.string = "Open [[Project Plan]]"
     textView.presentationLinks = [LiveMarkdownLinkTarget(
       destination: .wiki("Project Plan"),
@@ -933,7 +941,7 @@ struct LiveMarkdownPresentationTests {
       }
     )
     let coordinator = editor.makeCoordinator()
-    let textView = LiveMarkdownTextView(usingTextLayoutManager: true)
+    let textView = LiveMarkdownTextView.makeForEditing()
     textView.string = editor.text
     textView.setSelectedRange(NSRange(
       location: (textView.string as NSString).length,
@@ -958,8 +966,7 @@ struct LiveMarkdownPresentationTests {
 
   @Test("starts an empty note with title-sized typing attributes")
   func startsEmptyNoteAsTitle() throws {
-    let textView = LiveMarkdownTextView(usingTextLayoutManager: true)
-    #expect(textView.textLayoutManager != nil)
+    let textView = LiveMarkdownTextView.makeForEditing()
     let presentation = LiveMarkdownPresentationController()
     presentation.reset(
       textView: textView,
@@ -975,7 +982,7 @@ struct LiveMarkdownPresentationTests {
   @Test("reveals only syntax touched by the selection")
   func revealsOnlySyntaxTouchedBySelection() throws {
     let text = "# Title\n\n**bold** and _italic_"
-    let textView = LiveMarkdownTextView(usingTextLayoutManager: true)
+    let textView = LiveMarkdownTextView.makeForEditing()
     textView.string = text
     let presentation = LiveMarkdownPresentationController()
     presentation.reset(
@@ -1033,7 +1040,7 @@ struct LiveMarkdownPresentationTests {
   @Test("collapses inline syntax as soon as typing moves beyond the token")
   func collapsesSyntaxAfterTrailingSpace() throws {
     let text = "_italic_"
-    let textView = LiveMarkdownTextView(usingTextLayoutManager: true)
+    let textView = LiveMarkdownTextView.makeForEditing()
     textView.string = text
     let presentation = LiveMarkdownPresentationController()
     presentation.reset(
@@ -1076,7 +1083,7 @@ struct LiveMarkdownPresentationTests {
   @Test("renders web and wiki link targets")
   func rendersLinks() throws {
     let text = "[Lattice](https://example.com), https://openai.com, and [[Project Plan]]"
-    let textView = LiveMarkdownTextView(usingTextLayoutManager: true)
+    let textView = LiveMarkdownTextView.makeForEditing()
     textView.string = text
     let presentation = LiveMarkdownPresentationController()
     presentation.reset(
@@ -1151,7 +1158,7 @@ struct LiveMarkdownPresentationTests {
   @Test("keeps later token ranges stable after an incremental edit")
   func shiftsTokensAfterIncrementalEdit() throws {
     let text = "# Title\n\n**bold**"
-    let textView = LiveMarkdownTextView(usingTextLayoutManager: true)
+    let textView = LiveMarkdownTextView.makeForEditing()
     textView.string = text
     let presentation = LiveMarkdownPresentationController()
     presentation.reset(
@@ -1182,7 +1189,7 @@ struct LiveMarkdownPresentationTests {
   @Test("creates presentation-only bullet and task decorations")
   func createsListDecorations() {
     let text = "- bullet\n- [ ] open\n- [x] done"
-    let textView = LiveMarkdownTextView(usingTextLayoutManager: true)
+    let textView = LiveMarkdownTextView.makeForEditing()
     textView.string = text
     let presentation = LiveMarkdownPresentationController()
     presentation.reset(
@@ -1203,7 +1210,7 @@ struct LiveMarkdownPresentationTests {
   func rendersThematicBreak() throws {
     let text = "Before\n---\nAfter"
     let ruleRange = (text as NSString).range(of: "---")
-    let textView = LiveMarkdownTextView(usingTextLayoutManager: true)
+    let textView = LiveMarkdownTextView.makeForEditing()
     textView.string = text
     textView.setSelectedRange(NSRange(location: ruleRange.location, length: 0))
     let presentation = LiveMarkdownPresentationController()
