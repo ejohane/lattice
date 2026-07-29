@@ -12,7 +12,12 @@ struct LiveMarkdownDecoration: Equatable {
 }
 
 struct LiveMarkdownLinkTarget: Equatable {
-  let url: URL
+  enum Destination: Equatable {
+    case web(URL)
+    case wiki(String)
+  }
+
+  let destination: Destination
   let range: NSRange
 }
 
@@ -192,7 +197,7 @@ final class LiveMarkdownPresentationController {
       ], range: token.contentRange)
       applySyntax(token, to: storage, selection: selection, collapsesWhenInactive: true)
 
-    case .markdownLink:
+    case .markdownLink, .wikiLink:
       applyLinkStyle(to: token.contentRange, storage: storage)
       applySyntax(token, to: storage, selection: selection, collapsesWhenInactive: true)
 
@@ -276,21 +281,27 @@ final class LiveMarkdownPresentationController {
       }
     }
     textView.presentationLinks = tokens.compactMap { token in
-      let destination: String
       switch token.kind {
       case .markdownLink(let value), .bareLink(let value):
-        destination = value
+        guard let url = LiveMarkdownLinkDestination.webURL(for: value) else {
+          return nil
+        }
+        return LiveMarkdownLinkTarget(
+          destination: .web(url),
+          range: token.contentRange
+        )
+      case .wikiLink(let target):
+        return LiveMarkdownLinkTarget(
+          destination: .wiki(target),
+          range: token.contentRange
+        )
       default:
         return nil
       }
-      guard let url = LiveMarkdownLinkDestination.webURL(for: destination) else {
-        return nil
-      }
-      return LiveMarkdownLinkTarget(url: url, range: token.contentRange)
     }
   }
 
-  private static let bodyFont = NSFont.systemFont(ofSize: 16.5, weight: .regular)
+  private static let bodyFont = NSFont.systemFont(ofSize: 16, weight: .regular)
 
   private static var baseAttributes: [NSAttributedString.Key: Any] {
     [
@@ -317,9 +328,9 @@ final class LiveMarkdownPresentationController {
 
   private static func headingFont(level: Int) -> NSFont {
     switch level {
-    case 1: NSFont.systemFont(ofSize: 30, weight: .bold)
-    case 2: NSFont.systemFont(ofSize: 25, weight: .bold)
-    case 3: NSFont.systemFont(ofSize: 21, weight: .semibold)
+    case 1: NSFont.systemFont(ofSize: 28, weight: .bold)
+    case 2: NSFont.systemFont(ofSize: 24, weight: .bold)
+    case 3: NSFont.systemFont(ofSize: 20, weight: .semibold)
     default: NSFont.systemFont(ofSize: 18, weight: .semibold)
     }
   }

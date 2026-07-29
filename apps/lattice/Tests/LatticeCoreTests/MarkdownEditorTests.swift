@@ -581,12 +581,20 @@ struct MarkdownSlashCommandTriggerTests {
     #expect(MarkdownSlashCommandTrigger.context(
       in: "/",
       selection: NSRange(location: 1, length: 0)
-    ) == MarkdownSlashCommandContext(triggerLocation: 0))
+    ) == MarkdownSlashCommandContext(
+      triggerLocation: 0,
+      query: "",
+      replacementRange: NSRange(location: 0, length: 1)
+    ))
 
     #expect(MarkdownSlashCommandTrigger.context(
       in: "Hello /pla",
       selection: NSRange(location: 10, length: 0)
-    ) == MarkdownSlashCommandContext(triggerLocation: 6))
+    ) == MarkdownSlashCommandContext(
+      triggerLocation: 6,
+      query: "pla",
+      replacementRange: NSRange(location: 6, length: 4)
+    ))
   }
 
   @Test("ignores URLs, repeated slashes, and selections")
@@ -855,13 +863,36 @@ struct LiveMarkdownParserTests {
     }.count == 1)
   }
 
+  @Test("parses wiki links as opaque inline links")
+  func parsesWikiLinks() throws {
+    let text = "See [[My **Important** https://example.com Note]] next"
+    let tokens = LiveMarkdownParser.tokens(in: text)
+    let wikiLink = try #require(tokens.first {
+      if case .wikiLink = $0.kind { return true }
+      return false
+    })
+
+    #expect(wikiLink.kind == .wikiLink(target: "My **Important** https://example.com Note"))
+    #expect((text as NSString).substring(with: wikiLink.contentRange)
+      == "My **Important** https://example.com Note")
+    #expect(wikiLink.syntaxRanges.map { (text as NSString).substring(with: $0) } == [
+      "[[",
+      "]]"
+    ])
+    #expect(!tokens.contains { $0.kind == .bold })
+    #expect(!tokens.contains {
+      if case .bareLink = $0.kind { return true }
+      return false
+    })
+  }
+
   @Test("ignores link-looking text inside inline code")
   func ignoresLinksInCode() {
     let tokens = LiveMarkdownParser.tokens(in: "`https://example.com` and https://openai.com")
 
     #expect(tokens.filter {
       switch $0.kind {
-      case .markdownLink, .bareLink: true
+      case .markdownLink, .bareLink, .wikiLink: true
       default: false
       }
     }.count == 1)

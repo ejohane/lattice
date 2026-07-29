@@ -47,6 +47,28 @@ public actor MarkdownFolder {
     return MarkdownDocument(fileContents: contents)
   }
 
+  public func sidebarPreviews(
+    for files: [MarkdownFile]
+  ) -> [MarkdownFile.ID: MarkdownSidebarPreview] {
+    var previews: [MarkdownFile.ID: MarkdownSidebarPreview] = [:]
+    previews.reserveCapacity(files.count)
+
+    for file in files {
+      let contents = (try? String(contentsOf: file.url, encoding: .utf8)) ?? ""
+      let body = MarkdownDocument(fileContents: contents).body
+      let modifiedAt = try? file.url.resourceValues(
+        forKeys: [.contentModificationDateKey]
+      ).contentModificationDate
+      previews[file.id] = MarkdownSidebarPreview(
+        file: file,
+        body: body,
+        modifiedAt: modifiedAt
+      )
+    }
+
+    return previews
+  }
+
   public func write(_ document: MarkdownDocument, to file: MarkdownFile) throws {
     try document.fileContents.write(to: file.url, atomically: true, encoding: .utf8)
   }
@@ -74,11 +96,11 @@ public actor MarkdownFolder {
     now: Date = Date(),
     calendar: Calendar = .current
   ) throws -> MarkdownFile {
-    let stem = Self.dailyNoteStem(for: now, calendar: calendar)
+    let stem = MarkdownFilename.dailyNoteStem(for: now, calendar: calendar)
     let url = rootURL.appendingPathComponent("\(stem).md").standardizedFileURL
 
     if !FileManager.default.fileExists(atPath: url.path) {
-      let heading = Self.dailyNoteHeading(for: now, calendar: calendar)
+      let heading = MarkdownFilename.dailyNoteHeading(for: now, calendar: calendar)
       let body = "# \(heading)\n\n"
       do {
         try Data(body.utf8).write(to: url, options: .withoutOverwriting)
@@ -87,6 +109,29 @@ public actor MarkdownFolder {
           throw error
         }
       }
+    }
+
+    return MarkdownFile(url: url, relativePath: relativePath(for: url))
+  }
+
+  public func ensureWikiNote(named target: String) throws -> MarkdownFile? {
+    guard let title = MarkdownFilename.wikiLinkTitle(from: target),
+          let stem = MarkdownFilename.wikiLinkStem(from: target)
+    else { return nil }
+
+    if let existing = try existingWikiNote(matching: stem) {
+      return existing
+    }
+
+    let url = rootURL.appendingPathComponent("\(stem).md").standardizedFileURL
+    let body = "# \(title)\n\n"
+    do {
+      try Data(body.utf8).write(to: url, options: .withoutOverwriting)
+    } catch {
+      if let existing = try existingWikiNote(matching: stem) {
+        return existing
+      }
+      throw error
     }
 
     return MarkdownFile(url: url, relativePath: relativePath(for: url))
@@ -135,20 +180,18 @@ public actor MarkdownFolder {
     return fileComponents.dropFirst(rootComponents.count).joined(separator: "/")
   }
 
-  private static func dailyNoteStem(for date: Date, calendar: Calendar) -> String {
-    dateFormatter("yyyy-MM-dd", calendar: calendar).string(from: date)
+  private func existingWikiNote(matching stem: String) throws -> MarkdownFile? {
+    let candidates = try files().filter {
+      $0.url.deletingPathExtension().lastPathComponent.compare(
+        stem,
+        options: [.caseInsensitive],
+        range: nil,
+        locale: Locale(identifier: "en_US_POSIX")
+      ) == .orderedSame
+    }
+    return candidates.first {
+      $0.url.deletingPathExtension().lastPathComponent == stem
+    } ?? candidates.first
   }
 
-  private static func dailyNoteHeading(for date: Date, calendar: Calendar) -> String {
-    dateFormatter("EEEE, MMMM d, yyyy", calendar: calendar).string(from: date)
-  }
-
-  private static func dateFormatter(_ format: String, calendar: Calendar) -> DateFormatter {
-    let formatter = DateFormatter()
-    formatter.locale = Locale(identifier: "en_US_POSIX")
-    formatter.calendar = calendar
-    formatter.timeZone = calendar.timeZone
-    formatter.dateFormat = format
-    return formatter
-  }
 }

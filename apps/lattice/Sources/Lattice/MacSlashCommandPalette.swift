@@ -7,21 +7,21 @@ enum MacSlashCommandPaletteMetrics {
 }
 
 struct MacSlashCommandPalette: View {
-  let onSelectPlaceholder: @MainActor () -> Void
+  let onSelectToday: @MainActor () -> Void
 
   var body: some View {
-    Button(action: onSelectPlaceholder) {
+    Button(action: onSelectToday) {
       HStack(spacing: 12) {
-        Image(systemName: "command")
+        Image(systemName: "calendar")
           .font(.system(size: 15, weight: .semibold))
           .foregroundStyle(.secondary)
           .frame(width: 24, height: 24)
 
         VStack(alignment: .leading, spacing: 2) {
-          Text("Placeholder")
+          Text("Today")
             .font(.body.weight(.medium))
 
-          Text("More commands coming soon")
+          Text("Insert a link to today's note")
             .font(.caption)
             .foregroundStyle(.secondary)
         }
@@ -46,6 +46,6 @@ struct MacSlashCommandPalette: View {
         .stroke(.separator.opacity(0.5), lineWidth: 0.5)
     }
     .shadow(color: .black.opacity(0.2), radius: 8, y: 4)
-    .accessibilityLabel("Placeholder command, more commands coming soon")
+    .accessibilityLabel("Today, insert a link to today's note")
   }
 }

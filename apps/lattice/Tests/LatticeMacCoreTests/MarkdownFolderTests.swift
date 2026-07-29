@@ -118,6 +118,25 @@ struct MarkdownFolderTests {
     #expect(try await folder.files().filter { $0.relativePath == "2026-07-28.md" }.count == 1)
   }
 
+  @Test("creates and resolves wiki notes by case-insensitive filename")
+  func createsAndResolvesWikiNotes() async throws {
+    let root = try temporaryDirectory()
+    defer { try? FileManager.default.removeItem(at: root) }
+    let folder = MarkdownFolder(rootURL: root)
+
+    let created = try #require(await folder.ensureWikiNote(named: "my note"))
+    #expect(created.relativePath == "my note.md")
+    #expect(try String(contentsOf: created.url, encoding: .utf8) == "# my note\n\n")
+
+    let existing = try #require(await folder.ensureWikiNote(named: "MY NOTE.md"))
+    #expect(existing == created)
+    #expect(try await folder.files().filter {
+      $0.url.deletingPathExtension().lastPathComponent.lowercased() == "my note"
+    }.count == 1)
+
+    #expect(try await folder.ensureWikiNote(named: "   ") == nil)
+  }
+
   @Test("renames from content without changing bytes and resolves collisions")
   func renamesFromContentWithoutChangingBytes() async throws {
     let root = try temporaryDirectory()
@@ -191,6 +210,51 @@ struct MarkdownFilenameTests {
   }
 }
 
+@Suite("Markdown sidebar preview")
+struct MarkdownSidebarPreviewTests {
+  @Test("renders note titles and excerpts instead of Markdown filenames")
+  func rendersTitleAndExcerpt() {
+    let file = MarkdownFile(
+      url: URL(fileURLWithPath: "/tmp/Friday notes.md"),
+      relativePath: "notes/Friday notes.md"
+    )
+    let preview = MarkdownSidebarPreview(
+      file: file,
+      body: "# **Friday notes**\n\nKeep the writing surface quiet.\n- [ ] Ship it"
+    )
+
+    #expect(preview.title == "Friday notes")
+    #expect(preview.excerpt == "Keep the writing surface quiet. Ship it")
+  }
+
+  @Test("falls back to the filename for an empty note")
+  func fallsBackToFilename() {
+    let file = MarkdownFile(
+      url: URL(fileURLWithPath: "/tmp/Untitled.md"),
+      relativePath: "Untitled.md"
+    )
+
+    #expect(MarkdownSidebarPreview(file: file, body: "").title == "Untitled")
+  }
+
+  @Test("formats recent modification dates like Bear")
+  func formatsRecentDates() {
+    let now = Date(timeIntervalSince1970: 10_000)
+    #expect(MacMarkdownSidebarDateLabel.text(
+      for: now.addingTimeInterval(-30),
+      relativeTo: now
+    ) == "Just now")
+    #expect(MacMarkdownSidebarDateLabel.text(
+      for: now.addingTimeInterval(-15 * 60),
+      relativeTo: now
+    ) == "15 min ago")
+    #expect(MacMarkdownSidebarDateLabel.text(
+      for: now.addingTimeInterval(-2 * 3_600),
+      relativeTo: now
+    ) == "2 hours ago")
+  }
+}
+
 @MainActor
 @Suite("Mac Markdown app model")
 struct MacMarkdownAppModelTests {
@@ -256,6 +320,12 @@ struct MacMarkdownAppModelTests {
     model.selectFile(existingURL.standardizedFileURL)
     #expect(await eventually { model.selectedFileID == existingURL.standardizedFileURL && !model.isLoadingFile })
     #expect(try String(contentsOf: root.appendingPathComponent("Call the dentist.md"), encoding: .utf8) == "Call the dentist")
+
+    model.navigateBack()
+    #expect(await eventually {
+      model.selectedFileID?.lastPathComponent == "Call the dentist.md" && !model.isLoadingFile
+    })
+    #expect(model.text == "Call the dentist")
   }
 
   @Test("creates numbered notes across rapid consecutive actions")
@@ -274,7 +344,95 @@ struct MacMarkdownAppModelTests {
     model.createNote()
     #expect(await eventually { model.selectedFileID?.lastPathComponent == "Untitled 3.md" })
 
-    #expect(model.files.map(\.relativePath) == ["Untitled 2.md", "Untitled 3.md", "Untitled.md"])
+    #expect(Set(model.files.map(\.relativePath)) == ["Untitled 2.md", "Untitled 3.md", "Untitled.md"])
+  }
+
+  @Test("navigates backward and forward through note selection history")
+  func navigatesSelectionHistory() async throws {
+    let root = try temporaryDirectory()
+    defer { try? FileManager.default.removeItem(at: root) }
+    let alphaURL = root.appendingPathComponent("Alpha.md")
+    let betaURL = root.appendingPathComponent("Beta.md")
+    let gammaURL = root.appendingPathComponent("Gamma.md")
+    try "Alpha".write(to: alphaURL, atomically: true, encoding: .utf8)
+    try "Beta".write(to: betaURL, atomically: true, encoding: .utf8)
+    try "Gamma".write(to: gammaURL, atomically: true, encoding: .utf8)
+    try FileManager.default.setAttributes(
+      [.modificationDate: Date(timeIntervalSince1970: 3_000)],
+      ofItemAtPath: alphaURL.path
+    )
+    try FileManager.default.setAttributes(
+      [.modificationDate: Date(timeIntervalSince1970: 2_000)],
+      ofItemAtPath: betaURL.path
+    )
+    try FileManager.default.setAttributes(
+      [.modificationDate: Date(timeIntervalSince1970: 1_000)],
+      ofItemAtPath: gammaURL.path
+    )
+    let model = MacMarkdownAppModel(folderURL: root)
+    #expect(await eventually {
+      model.selectedFileID == alphaURL.standardizedFileURL && !model.isLoadingFile
+    })
+    #expect(!model.canNavigateBack)
+    #expect(!model.canNavigateForward)
+
+    model.selectFile(betaURL.standardizedFileURL)
+    #expect(await eventually {
+      model.selectedFileID == betaURL.standardizedFileURL && !model.isLoadingFile
+    })
+    model.selectFile(gammaURL.standardizedFileURL)
+    #expect(await eventually {
+      model.selectedFileID == gammaURL.standardizedFileURL && !model.isLoadingFile
+    })
+
+    model.navigateBack()
+    #expect(await eventually {
+      model.selectedFileID == betaURL.standardizedFileURL && !model.isLoadingFile
+    })
+    #expect(model.canNavigateBack)
+    #expect(model.canNavigateForward)
+
+    model.navigateBack()
+    #expect(await eventually {
+      model.selectedFileID == alphaURL.standardizedFileURL && !model.isLoadingFile
+    })
+    #expect(!model.canNavigateBack)
+    #expect(model.canNavigateForward)
+
+    model.navigateForward()
+    #expect(await eventually {
+      model.selectedFileID == betaURL.standardizedFileURL && !model.isLoadingFile
+    })
+    model.selectFile(gammaURL.standardizedFileURL)
+    #expect(await eventually {
+      model.selectedFileID == gammaURL.standardizedFileURL && !model.isLoadingFile
+    })
+    #expect(model.canNavigateBack)
+    #expect(!model.canNavigateForward)
+  }
+
+  @Test("orders sidebar notes by most recent modification")
+  func ordersSidebarByRecency() async throws {
+    let root = try temporaryDirectory()
+    defer { try? FileManager.default.removeItem(at: root) }
+    let olderURL = root.appendingPathComponent("Alpha.md")
+    let newerURL = root.appendingPathComponent("Beta.md")
+    try "# Alpha".write(to: olderURL, atomically: true, encoding: .utf8)
+    try "# Beta".write(to: newerURL, atomically: true, encoding: .utf8)
+    try FileManager.default.setAttributes(
+      [.modificationDate: Date(timeIntervalSince1970: 1_000)],
+      ofItemAtPath: olderURL.path
+    )
+    try FileManager.default.setAttributes(
+      [.modificationDate: Date(timeIntervalSince1970: 2_000)],
+      ofItemAtPath: newerURL.path
+    )
+
+    let model = MacMarkdownAppModel(folderURL: root)
+    #expect(await eventually { !model.isLoadingFiles && !model.isLoadingFile })
+
+    #expect(model.files.map(\.relativePath) == ["Beta.md", "Alpha.md"])
+    #expect(model.selectedFileID == newerURL.standardizedFileURL)
   }
 
   @Test("opens and reuses today's canonical note from the app model")
@@ -317,6 +475,78 @@ struct MacMarkdownAppModelTests {
     #expect(!FileManager.default.fileExists(
       atPath: root.appendingPathComponent("Tuesday, July 28, 2026.md").path
     ))
+  }
+
+  @Test("ensures today's note without navigating away from the source note")
+  func ensuresTodayNoteWithoutNavigating() async throws {
+    let root = try temporaryDirectory()
+    defer { try? FileManager.default.removeItem(at: root) }
+    let sourceURL = root.appendingPathComponent("Source.md")
+    let sourceBody = "# Source\n\nDecision [[2026-07-28]]\n"
+    try sourceBody.write(to: sourceURL, atomically: true, encoding: .utf8)
+    var calendar = Calendar(identifier: .gregorian)
+    calendar.timeZone = try #require(TimeZone(identifier: "America/Chicago"))
+    let date = try #require(calendar.date(from: DateComponents(
+      year: 2026,
+      month: 7,
+      day: 28,
+      hour: 9
+    )))
+    let model = MacMarkdownAppModel(folderURL: root)
+    #expect(await eventually {
+      model.selectedFileID == sourceURL.standardizedFileURL && !model.isLoadingFile
+    })
+
+    model.ensureTodayNote(now: date, calendar: calendar)
+
+    #expect(await eventually {
+      model.files.contains { $0.relativePath == "2026-07-28.md" }
+    })
+    #expect(model.selectedFileID == sourceURL.standardizedFileURL)
+    #expect(model.text == sourceBody)
+    #expect(try String(
+      contentsOf: root.appendingPathComponent("2026-07-28.md"),
+      encoding: .utf8
+    ) == "# Tuesday, July 28, 2026\n\n")
+  }
+
+  @Test("opens or creates wiki links while preserving the source note")
+  func opensOrCreatesWikiLinks() async throws {
+    let root = try temporaryDirectory()
+    defer { try? FileManager.default.removeItem(at: root) }
+    let sourceURL = root.appendingPathComponent("Source.md")
+    try "# Source\n".write(to: sourceURL, atomically: true, encoding: .utf8)
+    let model = MacMarkdownAppModel(folderURL: root)
+    #expect(await eventually {
+      model.selectedFileID == sourceURL.standardizedFileURL && !model.isLoadingFile
+    })
+
+    let sourceBody = "# Source\n\nOpen [[my note]]\n"
+    model.updateText(sourceBody)
+    model.openWikiLink("my note")
+
+    #expect(await eventually {
+      model.selectedFileID?.lastPathComponent == "my note.md" && !model.isCreatingNote
+    })
+    #expect(model.text == "# my note\n\n")
+    #expect(model.editorFocusRequest == 1)
+    #expect(try String(contentsOf: sourceURL, encoding: .utf8) == sourceBody)
+
+    #expect(model.canNavigateBack)
+    model.navigateBack()
+    #expect(await eventually {
+      model.selectedFileID == sourceURL.standardizedFileURL && !model.isLoadingFile
+    })
+    #expect(model.canNavigateForward)
+
+    model.openWikiLink("MY NOTE.md")
+    #expect(await eventually {
+      model.selectedFileID?.lastPathComponent == "my note.md" && !model.isCreatingNote
+    })
+    #expect(model.files.filter {
+      $0.url.deletingPathExtension().lastPathComponent.lowercased() == "my note"
+    }.count == 1)
+    #expect(model.editorFocusRequest == 2)
   }
 
   @Test("reports creation failure without adding a phantom note")
@@ -386,6 +616,66 @@ struct LiveMarkdownPresentationTests {
     #expect(dismissalCount == 1)
   }
 
+  @Test("activates wiki links through the native text view")
+  func activatesWikiLinks() {
+    let textView = LiveMarkdownTextView(usingTextLayoutManager: true)
+    textView.string = "Open [[Project Plan]]"
+    textView.presentationLinks = [LiveMarkdownLinkTarget(
+      destination: .wiki("Project Plan"),
+      range: NSRange(location: 7, length: 12)
+    )]
+    var openedTarget: String?
+    textView.onOpenLink = { destination in
+      guard case .wiki(let target) = destination else { return }
+      openedTarget = target
+    }
+
+    #expect(textView.activateLink(at: 8))
+    #expect(openedTarget == "Project Plan")
+    #expect(!textView.activateLink(at: 0))
+  }
+
+  @Test("Return commits the Today slash command as a wiki link")
+  func commitsTodaySlashCommand() throws {
+    var ensuredDate: Date?
+    var ensuredCalendar: Calendar?
+    let editor = LiveMarkdownEditor(
+      text: "Decision /tod",
+      contentRevision: 0,
+      focusRequest: 0,
+      isEditable: true,
+      onEdit: { _, _ in },
+      onReplaceAll: { _ in },
+      onOpenWikiLink: { _ in },
+      onEnsureTodayNote: { date, calendar in
+        ensuredDate = date
+        ensuredCalendar = calendar
+      }
+    )
+    let coordinator = editor.makeCoordinator()
+    let textView = LiveMarkdownTextView(usingTextLayoutManager: true)
+    textView.string = editor.text
+    textView.setSelectedRange(NSRange(
+      location: (textView.string as NSString).length,
+      length: 0
+    ))
+    coordinator.attach(textView: textView, scrollView: NSScrollView())
+
+    #expect(coordinator.textView(
+      textView,
+      doCommandBy: #selector(NSResponder.insertNewline(_:))
+    ))
+
+    let date = try #require(ensuredDate)
+    let calendar = try #require(ensuredCalendar)
+    let stem = MarkdownFilename.dailyNoteStem(for: date, calendar: calendar)
+    #expect(textView.string == "Decision [[\(stem)]]")
+    #expect(textView.selectedRange() == NSRange(
+      location: (textView.string as NSString).length,
+      length: 0
+    ))
+  }
+
   @Test("starts an empty note with title-sized typing attributes")
   func startsEmptyNoteAsTitle() throws {
     let textView = LiveMarkdownTextView(usingTextLayoutManager: true)
@@ -398,7 +688,7 @@ struct LiveMarkdownPresentationTests {
     )
 
     let font = try #require(textView.typingAttributes[.font] as? NSFont)
-    #expect(font.pointSize == 30)
+    #expect(font.pointSize == 28)
     #expect(font.fontDescriptor.symbolicTraits.contains(.bold))
   }
 
@@ -503,9 +793,9 @@ struct LiveMarkdownPresentationTests {
     #expect(hiddenAfterSpace.pointSize < 1)
   }
 
-  @Test("renders Markdown link labels and highlights bare web URLs")
+  @Test("renders web and wiki link targets")
   func rendersLinks() throws {
-    let text = "[Lattice](https://example.com) and https://openai.com"
+    let text = "[Lattice](https://example.com), https://openai.com, and [[Project Plan]]"
     let textView = LiveMarkdownTextView(usingTextLayoutManager: true)
     textView.string = text
     let presentation = LiveMarkdownPresentationController()
@@ -523,6 +813,10 @@ struct LiveMarkdownPresentationTests {
       if case .bareLink = $0.kind { return true }
       return false
     })
+    let wikiLink = try #require(presentation.tokens.first {
+      if case .wikiLink = $0.kind { return true }
+      return false
+    })
     let hiddenSyntaxFont = try #require(textView.textStorage?.attribute(
       .font,
       at: markdownLink.syntaxRanges[0].location,
@@ -538,17 +832,27 @@ struct LiveMarkdownPresentationTests {
       at: bareLink.contentRange.location,
       effectiveRange: nil
     ) as? NSColor)
+    let wikiLinkColor = try #require(textView.textStorage?.attribute(
+      .foregroundColor,
+      at: wikiLink.contentRange.location,
+      effectiveRange: nil
+    ) as? NSColor)
+    let exampleURL = try #require(URL(string: "https://example.com"))
+    let openAIURL = try #require(URL(string: "https://openai.com"))
 
     #expect(hiddenSyntaxFont.pointSize < 1)
     #expect(markdownLabelColor.isEqual(NSColor.linkColor))
     #expect(bareLinkColor.isEqual(NSColor.linkColor))
-    #expect(textView.presentationLinks.map(\.url.absoluteString) == [
-      "https://example.com",
-      "https://openai.com"
+    #expect(wikiLinkColor.isEqual(NSColor.linkColor))
+    #expect(textView.presentationLinks.map(\.destination) == [
+      .web(exampleURL),
+      .web(openAIURL),
+      .wiki("Project Plan")
     ])
     #expect(textView.presentationLinks.map(\.range) == [
       markdownLink.contentRange,
-      bareLink.contentRange
+      bareLink.contentRange,
+      wikiLink.contentRange
     ])
 
     presentation.focusDidChange(in: textView, isFocused: true)

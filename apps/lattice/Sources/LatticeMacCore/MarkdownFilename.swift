@@ -17,6 +17,32 @@ public enum MarkdownFilename {
     return constrained(stem, suffix: suffix) + suffix
   }
 
+  public static func wikiLinkTitle(from target: String) -> String? {
+    guard !target.contains("\n"), !target.contains("\r") else { return nil }
+    let title = removingMarkdownExtension(
+      from: target.trimmingCharacters(in: .whitespacesAndNewlines)
+    )
+    return sanitizedStem(title) == nil ? nil : title
+  }
+
+  public static func wikiLinkStem(from target: String) -> String? {
+    wikiLinkTitle(from: target).flatMap { sanitizedStem($0) }
+  }
+
+  public static func dailyNoteStem(
+    for date: Date,
+    calendar: Calendar = .current
+  ) -> String {
+    dateFormatter("yyyy-MM-dd", calendar: calendar).string(from: date)
+  }
+
+  public static func dailyNoteHeading(
+    for date: Date,
+    calendar: Calendar = .current
+  ) -> String {
+    dateFormatter("EEEE, MMMM d, yyyy", calendar: calendar).string(from: date)
+  }
+
   private static func firstMeaningfulLine(
     in body: String
   ) -> (stem: String, isTerminated: Bool)? {
@@ -112,5 +138,14 @@ public enum MarkdownFilename {
     }
 
     return result.trimmingCharacters(in: CharacterSet(charactersIn: " .-"))
+  }
+
+  private static func dateFormatter(_ format: String, calendar: Calendar) -> DateFormatter {
+    let formatter = DateFormatter()
+    formatter.locale = Locale(identifier: "en_US_POSIX")
+    formatter.calendar = calendar
+    formatter.timeZone = calendar.timeZone
+    formatter.dateFormat = format
+    return formatter
   }
 }
