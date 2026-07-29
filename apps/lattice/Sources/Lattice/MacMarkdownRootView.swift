@@ -12,11 +12,30 @@ struct MacMarkdownRootView: View {
 
     NavigationSplitView {
       sidebar(model: model)
-        .navigationSplitViewColumnWidth(min: 220, ideal: 280, max: 360)
+        .navigationSplitViewColumnWidth(min: 210, ideal: 240, max: 280)
     } detail: {
       editor(model: model)
     }
+    .navigationTitle(model.selectedNoteTitle)
     .toolbar {
+      ToolbarItemGroup(placement: .navigation) {
+        Button {
+          model.navigateBack()
+        } label: {
+          Label("Back", systemImage: "chevron.left")
+        }
+        .disabled(!model.canNavigateBack)
+        .help("Back")
+
+        Button {
+          model.navigateForward()
+        } label: {
+          Label("Forward", systemImage: "chevron.right")
+        }
+        .disabled(!model.canNavigateForward)
+        .help("Forward")
+      }
+
       ToolbarItem(placement: .primaryAction) {
         Button {
           model.createNote()
@@ -92,11 +111,10 @@ struct MacMarkdownRootView: View {
       set: { model.selectFile($0) }
     )) {
       ForEach(model.files) { file in
-        Text(file.relativePath)
-          .lineLimit(1)
+        MacMarkdownSidebarRow(preview: model.sidebarPreview(for: file))
           .help(file.relativePath)
           .tag(file.id)
-          .listRowInsets(EdgeInsets(top: 8, leading: 14, bottom: 8, trailing: 12))
+          .listRowInsets(EdgeInsets(top: 2, leading: 12, bottom: 2, trailing: 10))
       }
     }
     .listStyle(.sidebar)
@@ -149,6 +167,12 @@ struct MacMarkdownRootView: View {
           },
           onReplaceAll: { replacement in
             model.updateText(replacement)
+          },
+          onOpenWikiLink: { target in
+            model.openWikiLink(target)
+          },
+          onEnsureTodayNote: { now, calendar in
+            model.ensureTodayNote(now: now, calendar: calendar)
           }
         )
         .frame(

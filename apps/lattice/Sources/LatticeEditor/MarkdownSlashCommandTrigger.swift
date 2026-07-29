@@ -2,9 +2,13 @@ import Foundation
 
 public struct MarkdownSlashCommandContext: Equatable, Sendable {
   public let triggerLocation: Int
+  public let query: String
+  public let replacementRange: NSRange
 
-  public init(triggerLocation: Int) {
+  public init(triggerLocation: Int, query: String, replacementRange: NSRange) {
     self.triggerLocation = triggerLocation
+    self.query = query
+    self.replacementRange = replacementRange
   }
 }
 
@@ -39,6 +43,10 @@ public enum MarkdownSlashCommandTrigger {
       return nil
     }
 
-    return MarkdownSlashCommandContext(triggerLocation: tokenStart)
+    return MarkdownSlashCommandContext(
+      triggerLocation: tokenStart,
+      query: String(token.dropFirst()),
+      replacementRange: tokenRange
+    )
   }
 }

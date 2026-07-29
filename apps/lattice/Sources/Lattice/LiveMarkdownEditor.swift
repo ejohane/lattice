@@ -1,5 +1,6 @@
 import AppKit
 import LatticeEditor
+import LatticeMacCore
 import SwiftUI
 
 struct LiveMarkdownEditor: NSViewRepresentable {
@@ -9,6 +10,8 @@ struct LiveMarkdownEditor: NSViewRepresentable {
   let isEditable: Bool
   let onEdit: (NSRange, String) -> Void
   let onReplaceAll: (String) -> Void
+  let onOpenWikiLink: (String) -> Void
+  let onEnsureTodayNote: (Date, Calendar) -> Void
 
   func makeCoordinator() -> Coordinator {
     Coordinator(parent: self)
@@ -33,11 +36,8 @@ struct LiveMarkdownEditor: NSViewRepresentable {
     textView.onCancelSlashCommandPalette = { [weak coordinator = context.coordinator] in
       coordinator?.cancelSlashCommandPalette() ?? false
     }
-    textView.onOpenLink = { url in
-      guard NSWorkspace.shared.open(url) else {
-        NSSound.beep()
-        return
-      }
+    textView.onOpenLink = { [weak coordinator = context.coordinator] destination in
+      coordinator?.openLink(destination)
     }
     textView.onFocusChange = { [weak coordinator = context.coordinator, weak textView] isFocused in
       guard let coordinator, let textView else { return }
@@ -217,6 +217,9 @@ struct LiveMarkdownEditor: NSViewRepresentable {
 
     func textView(_ textView: NSTextView, doCommandBy commandSelector: Selector) -> Bool {
       guard commandSelector == #selector(NSResponder.insertNewline(_:)) else { return false }
+      if commitTodaySlashCommand() {
+        return true
+      }
       guard let result = MarkdownListContinuation.applyReturn(
         to: textView.string,
         selection: textView.selectedRange()
@@ -257,12 +260,52 @@ struct LiveMarkdownEditor: NSViewRepresentable {
       presentation.selectionDidChange(in: textView, selection: result.selection)
     }
 
+    func openLink(_ destination: LiveMarkdownLinkTarget.Destination) {
+      switch destination {
+      case .web(let url):
+        guard NSWorkspace.shared.open(url) else {
+          NSSound.beep()
+          return
+        }
+      case .wiki(let target):
+        parent.onOpenWikiLink(target)
+      }
+    }
+
     func cancelSlashCommandPalette() -> Bool {
       guard slashCommandPaletteView != nil else { return false }
       closeSlashCommandPalette(suppressCurrentTrigger: true)
       if let textView {
         textView.window?.makeFirstResponder(textView)
       }
+      return true
+    }
+
+    @discardableResult
+    func commitTodaySlashCommand() -> Bool {
+      guard let textView,
+            let context = MarkdownSlashCommandTrigger.context(
+              in: textView.string,
+              selection: textView.selectedRange()
+            ),
+            dismissedSlashTriggerLocation != context.triggerLocation,
+            Self.matchesTodayCommand(context.query)
+      else { return false }
+
+      let now = Date()
+      let calendar = Calendar.current
+      let target = MarkdownFilename.dailyNoteStem(for: now, calendar: calendar)
+      let replacement = "[[\(target)]]"
+      closeSlashCommandPalette(suppressCurrentTrigger: false)
+      textView.window?.makeFirstResponder(textView)
+      textView.insertText(replacement, replacementRange: context.replacementRange)
+      let selection = NSRange(
+        location: context.replacementRange.location + (replacement as NSString).length,
+        length: 0
+      )
+      textView.setSelectedRange(selection)
+      presentation.selectionDidChange(in: textView, selection: selection)
+      parent.onEnsureTodayNote(now, calendar)
       return true
     }
 
@@ -278,6 +321,11 @@ struct LiveMarkdownEditor: NSViewRepresentable {
       else {
         closeSlashCommandPalette(suppressCurrentTrigger: false)
         dismissedSlashTriggerLocation = nil
+        return
+      }
+
+      guard Self.matchesTodayCommand(context.query) else {
+        closeSlashCommandPalette(suppressCurrentTrigger: false)
         return
       }
 
@@ -303,7 +351,7 @@ struct LiveMarkdownEditor: NSViewRepresentable {
       closeSlashCommandPalette(suppressCurrentTrigger: false)
       let paletteView = NSHostingView(
         rootView: MacSlashCommandPalette { [weak self] in
-          _ = self?.cancelSlashCommandPalette()
+          _ = self?.commitTodaySlashCommand()
         }
       )
       paletteView.frame.size = NSSize(
@@ -318,6 +366,10 @@ struct LiveMarkdownEditor: NSViewRepresentable {
         below: anchor,
         in: textView
       )
+    }
+
+    private static func matchesTodayCommand(_ query: String) -> Bool {
+      "today".hasPrefix(query.lowercased())
     }
 
     private func slashCommandAnchor(

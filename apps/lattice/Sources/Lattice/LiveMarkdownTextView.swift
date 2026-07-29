@@ -14,7 +14,7 @@ final class LiveMarkdownTextView: NSTextView {
   }
   var onTaskToggle: ((Int) -> Void)?
   var onInsertLink: (() -> Void)?
-  var onOpenLink: ((URL) -> Void)?
+  var onOpenLink: ((LiveMarkdownLinkTarget.Destination) -> Void)?
   var onFocusChange: ((Bool) -> Void)?
   var onCancelSlashCommandPalette: (() -> Bool)?
 
@@ -131,11 +131,17 @@ final class LiveMarkdownTextView: NSTextView {
     let modifiers = event.modifierFlags.intersection(.deviceIndependentFlagsMask)
     if event.clickCount == 1,
        !modifiers.contains(.option),
-       let target = linkTarget(at: characterIndexForInsertion(at: location)) {
-      onOpenLink?(target.url)
+       activateLink(at: characterIndexForInsertion(at: location)) {
       return
     }
     super.mouseDown(with: event)
+  }
+
+  @discardableResult
+  func activateLink(at characterIndex: Int) -> Bool {
+    guard let target = linkTarget(at: characterIndex) else { return false }
+    onOpenLink?(target.destination)
+    return true
   }
 
   override func resetCursorRects() {

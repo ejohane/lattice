@@ -7,6 +7,7 @@ public enum LiveMarkdownTokenKind: Equatable, Sendable {
   case inlineCode
   case markdownLink(destination: String)
   case bareLink(destination: String)
+  case wikiLink(target: String)
   case bullet
   case task(isChecked: Bool)
 }
@@ -177,12 +178,24 @@ public enum LiveMarkdownParser {
     }
     let codeRanges = codeTokens.map(\.fullRange).map { shifted($0, by: -offset) }
 
+    let wikiLinkTokens = line.contains("[[")
+      ? matches(
+        pattern: "\\[\\[([^\\[\\]\\n]+)\\]\\]",
+        in: line,
+        range: fullRange,
+        skippedRanges: codeRanges
+      ) { match in
+        wikiLinkToken(match: match, in: line, offset: offset)
+      }
+      : []
+    let wikiLinkRanges = wikiLinkTokens.map(\.fullRange).map { shifted($0, by: -offset) }
+
     let markdownLinkTokens = line.contains("](")
       ? matches(
         pattern: "\\[([^]\\n]+)\\]\\(([^\\s)\\n]+)\\)",
         in: line,
         range: fullRange,
-        skippedRanges: codeRanges
+        skippedRanges: codeRanges + wikiLinkRanges
       ) { match in
         markdownLinkToken(match: match, in: line, offset: offset)
       }
@@ -191,10 +204,10 @@ public enum LiveMarkdownParser {
     let bareLinkTokens = bareLinkTokens(
       in: line,
       offset: offset,
-      skippedRanges: codeRanges + markdownLinkRanges
+      skippedRanges: codeRanges + wikiLinkRanges + markdownLinkRanges
     )
     let bareLinkRanges = bareLinkTokens.map(\.fullRange).map { shifted($0, by: -offset) }
-    let opaqueRanges = codeRanges + markdownLinkRanges + bareLinkRanges
+    let opaqueRanges = codeRanges + wikiLinkRanges + markdownLinkRanges + bareLinkRanges
 
     let boldTokens = matches(
       pattern: "(\\*\\*|__)(.+?)\\1",
@@ -231,7 +244,26 @@ public enum LiveMarkdownParser {
       token(kind: .italic, match: $0, contentGroup: 1, markerLength: 1, offset: offset)
     }
 
-    return codeTokens + markdownLinkTokens + bareLinkTokens + boldTokens + starItalic + underscoreItalic
+    return codeTokens + wikiLinkTokens + markdownLinkTokens + bareLinkTokens
+      + boldTokens + starItalic + underscoreItalic
+  }
+
+  private static func wikiLinkToken(
+    match: NSTextCheckingResult,
+    in line: String,
+    offset: Int
+  ) -> LiveMarkdownToken {
+    let source = line as NSString
+    let localFullRange = match.range(at: 0)
+    let localContentRange = match.range(at: 1)
+    let opening = NSRange(location: localFullRange.location, length: 2)
+    let closing = NSRange(location: NSMaxRange(localFullRange) - 2, length: 2)
+    return LiveMarkdownToken(
+      kind: .wikiLink(target: source.substring(with: localContentRange)),
+      fullRange: shifted(localFullRange, by: offset),
+      contentRange: shifted(localContentRange, by: offset),
+      syntaxRanges: [shifted(opening, by: offset), shifted(closing, by: offset)]
+    )
   }
 
   private static func markdownLinkToken(
