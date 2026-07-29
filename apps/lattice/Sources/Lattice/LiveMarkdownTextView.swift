@@ -135,6 +135,8 @@ final class LiveMarkdownTextView: NSTextView {
       case .task(let isChecked):
         let checkboxRect = drawTask(in: markerRect, isChecked: isChecked)
         taskHitTargets.append((decoration.range, checkboxRect.insetBy(dx: -4, dy: -4)))
+      case .thematicBreak:
+        drawThematicBreak(in: markerRect)
       }
     }
   }
@@ -244,6 +246,16 @@ final class LiveMarkdownTextView: NSTextView {
     )
     NSColor.controlAccentColor.setFill()
     NSBezierPath(ovalIn: rect).fill()
+  }
+
+  private func drawThematicBreak(in markerRect: NSRect) {
+    let pixelAlignedY = markerRect.midY.rounded(.down) + 0.5
+    let path = NSBezierPath()
+    path.lineWidth = 1
+    path.move(to: NSPoint(x: bounds.minX + 1, y: pixelAlignedY))
+    path.line(to: NSPoint(x: bounds.maxX - 1, y: pixelAlignedY))
+    NSColor.separatorColor.withAlphaComponent(0.85).setStroke()
+    path.stroke()
   }
 
   @discardableResult

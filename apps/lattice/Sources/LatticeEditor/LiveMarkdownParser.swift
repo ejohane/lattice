@@ -2,6 +2,7 @@ import Foundation
 
 public enum LiveMarkdownTokenKind: Equatable, Sendable {
   case heading(level: Int)
+  case thematicBreak
   case bold
   case italic
   case inlineCode
@@ -82,8 +83,11 @@ public enum LiveMarkdownParser {
       let lineRange = MarkdownTextRange.contentRangeWithoutLineEnding(rawLineRange, in: source)
       let line = source.substring(with: lineRange)
 
-      result += blockTokens(in: line, offset: lineRange.location, lineRange: lineRange)
-      result += inlineTokens(in: line, offset: lineRange.location)
+      let blockTokens = blockTokens(in: line, offset: lineRange.location, lineRange: lineRange)
+      result += blockTokens
+      if !blockTokens.contains(where: { $0.kind == .thematicBreak }) {
+        result += inlineTokens(in: line, offset: lineRange.location)
+      }
 
       let nextLocation = NSMaxRange(rawLineRange)
       guard nextLocation > location else { break }
@@ -128,6 +132,19 @@ public enum LiveMarkdownParser {
     lineRange: NSRange
   ) -> [LiveMarkdownToken] {
     let source = line as NSString
+    if MarkdownTextRange.firstRegexMatch(
+      "^([ \\t]{0,3})([-*_])(?:[ \\t]*\\2){2,}[ \\t]*$",
+      in: line
+    ) != nil {
+      return [LiveMarkdownToken(
+        kind: .thematicBreak,
+        fullRange: lineRange,
+        contentRange: lineRange,
+        syntaxRanges: [lineRange],
+        decorationRange: lineRange
+      )]
+    }
+
     if let match = MarkdownTextRange.firstRegexMatch("^([ \\t]{0,3})(#{1,6})([ \\t]+)(.*)$", in: line) {
       let level = min(6, match.range(at: 2).length)
       let syntax = combined(match.range(at: 2), match.range(at: 3), offset: offset)

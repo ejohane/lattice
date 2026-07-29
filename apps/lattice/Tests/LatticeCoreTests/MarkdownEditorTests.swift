@@ -825,6 +825,26 @@ struct LiveMarkdownParserTests {
     #expect(bold.syntaxRanges.map { (text as NSString).substring(with: $0) } == ["**", "**"])
   }
 
+  @Test("parses CommonMark thematic breaks without treating mixed markers as rules")
+  func parsesThematicBreaks() {
+    let text = """
+    ---
+    * * *
+      _  _  _
+    - - *
+        ---
+    """
+    let tokens = LiveMarkdownParser.tokens(in: text)
+    let rules = tokens.filter { $0.kind == .thematicBreak }
+
+    #expect(rules.map { (text as NSString).substring(with: $0.fullRange) } == [
+      "---",
+      "* * *",
+      "  _  _  _"
+    ])
+    #expect(!tokens.contains { $0.kind == .italic })
+  }
+
   @Test("reveals syntax only while the caret touches its construct")
   func tracksActiveSyntax() throws {
     let text = "Before **bold** after"

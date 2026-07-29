@@ -4,6 +4,7 @@ import LatticeEditor
 enum LiveMarkdownDecorationKind: Equatable {
   case bullet
   case task(isChecked: Bool)
+  case thematicBreak
 }
 
 struct LiveMarkdownDecoration: Equatable {
@@ -75,6 +76,7 @@ final class LiveMarkdownPresentationController {
       in: range,
       selection: textView.selectedRange()
     )
+    updateDecorations(in: textView)
   }
 
   func didApplyEdit(
@@ -135,6 +137,7 @@ final class LiveMarkdownPresentationController {
       in: NSUnionRange(previousRange, currentRange),
       selection: selection
     )
+    updateDecorations(in: textView)
   }
 
   func refresh(in textView: LiveMarkdownTextView) {
@@ -186,6 +189,14 @@ final class LiveMarkdownPresentationController {
       )
       storage.addAttribute(.font, value: Self.headingFont(level: level), range: token.contentRange)
       applySyntax(token, to: storage, selection: selection, collapsesWhenInactive: true)
+
+    case .thematicBreak:
+      let isActive = isEditorFocused && token.isActive(selection: selection)
+      storage.addAttribute(
+        .foregroundColor,
+        value: isActive ? NSColor.tertiaryLabelColor : NSColor.clear,
+        range: token.fullRange
+      )
 
     case .bold:
       addFontTrait(.boldFontMask, to: token.contentRange, storage: storage)
@@ -281,6 +292,11 @@ final class LiveMarkdownPresentationController {
         return LiveMarkdownDecoration(kind: .bullet, range: range)
       case .task(let isChecked):
         return LiveMarkdownDecoration(kind: .task(isChecked: isChecked), range: range)
+      case .thematicBreak:
+        guard !(isEditorFocused && token.isActive(selection: lastSelection)) else {
+          return nil
+        }
+        return LiveMarkdownDecoration(kind: .thematicBreak, range: range)
       default:
         return nil
       }

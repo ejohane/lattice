@@ -131,7 +131,11 @@ public actor MarkdownFolder {
   ) throws -> DailyNoteAppendResult {
     let file = try ensureDailyNote(now: now, calendar: calendar)
     var document = try read(file)
-    document.body = Self.appending(text, to: document.body)
+    document.body = Self.appendingJot(
+      text,
+      to: document.body,
+      dailyHeading: MarkdownFilename.dailyNoteHeading(for: now, calendar: calendar)
+    )
     try write(document, to: file)
     return DailyNoteAppendResult(file: file, document: document)
   }
@@ -225,6 +229,20 @@ public actor MarkdownFolder {
       return body + "\n" + text
     }
     return body + "\n\n" + text
+  }
+
+  private static func appendingJot(
+    _ text: String,
+    to body: String,
+    dailyHeading: String
+  ) -> String {
+    let meaningfulBody = body.trimmingCharacters(in: .whitespacesAndNewlines)
+    let isEmptyDailyNote = meaningfulBody.isEmpty || meaningfulBody == "# \(dailyHeading)"
+    guard !isEmptyDailyNote else {
+      return appending(text, to: body)
+    }
+
+    return appending(text, to: appending("---", to: body))
   }
 
 }
