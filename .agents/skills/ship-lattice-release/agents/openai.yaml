@@ -1,0 +1,4 @@
+interface:
+  display_name: "Ship Lattice Release"
+  short_description: "Ship a Lattice change through PR and release"
+  default_prompt: "Use $ship-lattice-release to publish the current Lattice changes and report the released version and notes."
