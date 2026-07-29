@@ -17,6 +17,9 @@ final class LiveMarkdownTextView: NSTextView {
   var onOpenLink: ((LiveMarkdownLinkTarget.Destination) -> Void)?
   var onFocusChange: ((Bool) -> Void)?
   var onCancelSlashCommandPalette: (() -> Bool)?
+  var onSubmit: (() -> Void)?
+  var onCancel: (() -> Void)?
+  var seedsTitleOnFirstInsertion = true
 
   private var taskHitTargets: [(range: NSRange, rect: NSRect)] = []
 
@@ -36,11 +39,13 @@ final class LiveMarkdownTextView: NSTextView {
     let effectiveRange = replacementRange.location == NSNotFound || hasStaleTypingRange
       ? selection
       : replacementRange
-    let seeded = LiveMarkdownEditing.seededTitleInsertion(
-      currentText: string,
-      range: effectiveRange,
-      replacement: replacement
-    )
+    let seeded = seedsTitleOnFirstInsertion
+      ? LiveMarkdownEditing.seededTitleInsertion(
+        currentText: string,
+        range: effectiveRange,
+        replacement: replacement
+      )
+      : replacement
     super.insertText(seeded, replacementRange: effectiveRange)
     if !hasMarkedText() {
       let nextLocation = min(
@@ -61,6 +66,14 @@ final class LiveMarkdownTextView: NSTextView {
 
   override func performKeyEquivalent(with event: NSEvent) -> Bool {
     let modifiers = event.modifierFlags.intersection(.deviceIndependentFlagsMask)
+    if modifiers.contains(.command),
+       !modifiers.contains(.option),
+       !modifiers.contains(.control),
+       (event.keyCode == 36 || event.keyCode == 76),
+       let onSubmit {
+      onSubmit()
+      return true
+    }
     if modifiers.contains(.command),
        !modifiers.contains(.option),
        !modifiers.contains(.control),
@@ -90,6 +103,10 @@ final class LiveMarkdownTextView: NSTextView {
 
   override func cancelOperation(_ sender: Any?) {
     if onCancelSlashCommandPalette?() == true {
+      return
+    }
+    if let onCancel {
+      onCancel()
       return
     }
 

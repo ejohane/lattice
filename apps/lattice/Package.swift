@@ -15,6 +15,7 @@ let package = Package(
     .library(name: "LatticeMacCore", targets: ["LatticeMacCore"])
   ],
   dependencies: [
+    .package(url: "https://github.com/sindresorhus/KeyboardShortcuts", from: "2.4.0"),
     .package(url: "https://github.com/sparkle-project/Sparkle", from: "2.9.3")
   ],
   targets: [
@@ -49,6 +50,7 @@ let package = Package(
     .executableTarget(
       name: "Lattice",
       dependencies: [
+        .product(name: "KeyboardShortcuts", package: "KeyboardShortcuts"),
         "LatticeEditor",
         "LatticeMacCore",
         .product(name: "Sparkle", package: "Sparkle")
@@ -60,6 +62,7 @@ let package = Package(
     .testTarget(
       name: "LatticeMacCoreTests",
       dependencies: [
+        .product(name: "KeyboardShortcuts", package: "KeyboardShortcuts"),
         "Lattice",
         "LatticeMacCore"
       ]

@@ -32,10 +32,30 @@ final class MacMarkdownAppModel {
   private(set) var isCreatingNote = false
   private(set) var editorFocusRequest = 0
   private(set) var editorContentRevision = 0
+  private(set) var editorExternalRefreshRequest = 0
+  var jotDraft = "" {
+    didSet {
+      if jotErrorMessage != nil {
+        jotErrorMessage = nil
+      }
+    }
+  }
+  private(set) var isSubmittingJot = false
+  private(set) var jotErrorMessage: String?
   var errorMessage: String?
 
   var canCreateNote: Bool {
     folder != nil && !isLoadingFiles
+  }
+
+  var canSubmitJot: Bool {
+    folder != nil
+      && !isSubmittingJot
+      && !jotDraft.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+  }
+
+  var jotAvailabilityMessage: String? {
+    folder == nil ? "Choose a notes folder in Lattice first." : nil
   }
 
   var canNavigateBack: Bool {
@@ -256,6 +276,59 @@ final class MacMarkdownAppModel {
     }
   }
 
+  @discardableResult
+  func submitJot(
+    now: Date = Date(),
+    calendar: Calendar = .current
+  ) async -> Bool {
+    guard !isSubmittingJot else { return false }
+    guard !jotDraft.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {
+      return false
+    }
+    guard let activeFolder = folder else {
+      jotErrorMessage = "Choose a notes folder in Lattice first."
+      return false
+    }
+
+    let submittedText = jotDraft
+    isSubmittingJot = true
+    jotErrorMessage = nil
+    saveTask?.cancel()
+    defer { isSubmittingJot = false }
+
+    do {
+      try await saveSelectedNote(in: activeFolder)
+      let result = try await activeFolder.appendToDailyNote(
+        submittedText,
+        now: now,
+        calendar: calendar
+      )
+      let discoveredFiles = try await activeFolder.files()
+      let discoveredPreviews = await activeFolder.sidebarPreviews(for: discoveredFiles)
+      guard folder === activeFolder else {
+        jotErrorMessage = "The notes folder changed before Jot finished saving."
+        return false
+      }
+
+      replaceDiscoveredFiles(discoveredFiles, previews: discoveredPreviews)
+      automaticallyNamedFileIDs.remove(result.file.id)
+
+      if selectedFileID == result.file.id {
+        selectedFile = result.file
+        selectedDocument = result.document
+        hasLoadedSelectedFile = true
+        text = result.document.body
+        editorExternalRefreshRequest += 1
+      }
+
+      jotDraft = ""
+      return true
+    } catch {
+      jotErrorMessage = error.localizedDescription
+      return false
+    }
+  }
+
   private func startNextNoteCreationIfNeeded() {
     guard !isCreatingNote,
           pendingNoteCreations > 0,
@@ -436,6 +509,16 @@ final class MacMarkdownAppModel {
       length: max(0, min(range.length, source.length - location))
     )
     updateText(source.replacingCharacters(in: clampedRange, with: replacement))
+  }
+
+  func applyJotEdit(range: NSRange, replacement: String) {
+    let source = jotDraft as NSString
+    let location = max(0, min(range.location, source.length))
+    let clampedRange = NSRange(
+      location: location,
+      length: max(0, min(range.length, source.length - location))
+    )
+    jotDraft = source.replacingCharacters(in: clampedRange, with: replacement)
   }
 
   func flushSave() {

@@ -30,8 +30,13 @@ final class LiveMarkdownPresentationController {
   }
 
   private(set) var tokens: [LiveMarkdownToken] = []
+  private let usesTitleStyleForEmptyDocument: Bool
   private var lastSelection = NSRange(location: 0, length: 0)
   private var isEditorFocused = false
+
+  init(usesTitleStyleForEmptyDocument: Bool = true) {
+    self.usesTitleStyleForEmptyDocument = usesTitleStyleForEmptyDocument
+  }
 
   func pendingEdit(text: NSString, range: NSRange, replacement: String) -> PendingEdit {
     PendingEdit(
@@ -149,7 +154,7 @@ final class LiveMarkdownPresentationController {
     guard !textView.hasMarkedText(), let storage = textView.textStorage else { return }
     let range = clamped(requestedRange, length: storage.length)
     guard range.length > 0 else {
-      textView.typingAttributes = storage.length == 0
+      textView.typingAttributes = storage.length == 0 && usesTitleStyleForEmptyDocument
         ? Self.titleTypingAttributes
         : Self.baseAttributes
       textView.needsDisplay = true

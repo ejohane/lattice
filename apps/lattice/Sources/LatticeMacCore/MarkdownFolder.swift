@@ -1,5 +1,15 @@
 import Foundation
 
+public struct DailyNoteAppendResult: Equatable, Sendable {
+  public let file: MarkdownFile
+  public let document: MarkdownDocument
+
+  public init(file: MarkdownFile, document: MarkdownDocument) {
+    self.file = file
+    self.document = document
+  }
+}
+
 public actor MarkdownFolder {
   public let rootURL: URL
 
@@ -114,6 +124,18 @@ public actor MarkdownFolder {
     return MarkdownFile(url: url, relativePath: relativePath(for: url))
   }
 
+  public func appendToDailyNote(
+    _ text: String,
+    now: Date = Date(),
+    calendar: Calendar = .current
+  ) throws -> DailyNoteAppendResult {
+    let file = try ensureDailyNote(now: now, calendar: calendar)
+    var document = try read(file)
+    document.body = Self.appending(text, to: document.body)
+    try write(document, to: file)
+    return DailyNoteAppendResult(file: file, document: document)
+  }
+
   public func ensureWikiNote(named target: String) throws -> MarkdownFile? {
     guard let title = MarkdownFilename.wikiLinkTitle(from: target),
           let stem = MarkdownFilename.wikiLinkStem(from: target)
@@ -192,6 +214,17 @@ public actor MarkdownFolder {
     return candidates.first {
       $0.url.deletingPathExtension().lastPathComponent == stem
     } ?? candidates.first
+  }
+
+  private static func appending(_ text: String, to body: String) -> String {
+    guard !body.isEmpty else { return text }
+    if body.hasSuffix("\n\n") || text.hasPrefix("\n\n") {
+      return body + text
+    }
+    if body.hasSuffix("\n") || text.hasPrefix("\n") {
+      return body + "\n" + text
+    }
+    return body + "\n\n" + text
   }
 
 }
