@@ -12,7 +12,10 @@ struct MacSettingsView: View {
   var body: some View {
     Form {
       Section("Jot") {
-        KeyboardShortcuts.Recorder("Global shortcut", name: .showJot)
+        LabeledContent("Global shortcut") {
+          Text("⌘⌥⌃J")
+            .monospaced()
+        }
 
         Text("Use this shortcut from any app while Lattice is running.")
           .font(.caption)
