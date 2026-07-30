@@ -144,6 +144,8 @@ final class LiveMarkdownTextView: NSTextView {
         taskHitTargets.append((decoration.range, checkboxRect.insetBy(dx: -4, dy: -4)))
       case .thematicBreak:
         drawThematicBreak(in: markerRect)
+      case .blockquote(let level):
+        drawBlockquote(in: markerRect, level: level)
       }
     }
   }
@@ -263,6 +265,19 @@ final class LiveMarkdownTextView: NSTextView {
     path.line(to: NSPoint(x: bounds.maxX - 1, y: pixelAlignedY))
     NSColor.separatorColor.withAlphaComponent(0.85).setStroke()
     path.stroke()
+  }
+
+  private func drawBlockquote(in markerRect: NSRect, level: Int) {
+    let width: CGFloat = 3
+    let inset = CGFloat(max(1, level) - 1) * 20
+    let rect = NSRect(
+      x: markerRect.minX + inset,
+      y: markerRect.minY,
+      width: width,
+      height: markerRect.height
+    )
+    NSColor.controlAccentColor.setFill()
+    NSBezierPath(roundedRect: rect, xRadius: width / 2, yRadius: width / 2).fill()
   }
 
   @discardableResult

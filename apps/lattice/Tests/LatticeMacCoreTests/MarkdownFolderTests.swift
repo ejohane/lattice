@@ -1037,6 +1037,83 @@ struct LiveMarkdownPresentationTests {
     #expect(revealedItalicFont.pointSize > 10)
   }
 
+  @Test("renders combined emphasis and strikethrough in one paragraph")
+  func rendersCombinedInlineFormatting() throws {
+    let text = "This is **bold text**, *italic text*, ***bold italic text***, ~~strikethrough text~~, and `inline code`."
+    let textView = LiveMarkdownTextView.makeForEditing()
+    textView.string = text
+    let presentation = LiveMarkdownPresentationController()
+    presentation.reset(
+      textView: textView,
+      text: text,
+      selection: NSRange(location: (text as NSString).length, length: 0)
+    )
+
+    let source = text as NSString
+    let boldItalic = try #require(presentation.tokens.first { $0.kind == .boldItalic })
+    let boldItalicFont = try #require(textView.textStorage?.attribute(
+      .font,
+      at: boldItalic.contentRange.location,
+      effectiveRange: nil
+    ) as? NSFont)
+    let strikethrough = try #require(presentation.tokens.first { $0.kind == .strikethrough })
+    let strikethroughStyle = textView.textStorage?.attribute(
+      .strikethroughStyle,
+      at: strikethrough.contentRange.location,
+      effectiveRange: nil
+    ) as? Int
+
+    #expect(source.substring(with: boldItalic.contentRange) == "bold italic text")
+    #expect(boldItalicFont.fontDescriptor.symbolicTraits.contains(.bold))
+    #expect(boldItalicFont.fontDescriptor.symbolicTraits.contains(.italic))
+    #expect(strikethroughStyle == NSUnderlineStyle.single.rawValue)
+
+    for syntaxRange in boldItalic.syntaxRanges + strikethrough.syntaxRanges {
+      let syntaxFont = try #require(textView.textStorage?.attribute(
+        .font,
+        at: syntaxRange.location,
+        effectiveRange: nil
+      ) as? NSFont)
+      #expect(syntaxFont.pointSize < 1)
+    }
+  }
+
+  @Test("renders escaped asterisks as literal characters")
+  func rendersEscapedAsterisks() throws {
+    let text = "Here are *underscores*, **double underscores**, and a\\*literal asterisk\\*."
+    let textView = LiveMarkdownTextView.makeForEditing()
+    textView.string = text
+    let presentation = LiveMarkdownPresentationController()
+    presentation.reset(
+      textView: textView,
+      text: text,
+      selection: NSRange(location: (text as NSString).length, length: 0)
+    )
+
+    let source = text as NSString
+    let escapedTokens = presentation.tokens.filter { $0.kind == .escapedCharacter }
+    #expect(escapedTokens.count == 2)
+    #expect(presentation.tokens.filter { $0.kind == .italic }.count == 1)
+
+    for token in escapedTokens {
+      let slashFont = try #require(textView.textStorage?.attribute(
+        .font,
+        at: token.syntaxRanges[0].location,
+        effectiveRange: nil
+      ) as? NSFont)
+      let asteriskFont = try #require(textView.textStorage?.attribute(
+        .font,
+        at: token.contentRange.location,
+        effectiveRange: nil
+      ) as? NSFont)
+
+      #expect(source.substring(with: token.contentRange) == "*")
+      #expect(slashFont.pointSize < 1)
+      #expect(asteriskFont.pointSize > 10)
+      #expect(!asteriskFont.fontDescriptor.symbolicTraits.contains(.italic))
+    }
+  }
+
   @Test("collapses inline syntax as soon as typing moves beyond the token")
   func collapsesSyntaxAfterTrailingSpace() throws {
     let text = "_italic_"
