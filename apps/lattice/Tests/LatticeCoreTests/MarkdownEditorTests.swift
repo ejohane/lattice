@@ -825,6 +825,84 @@ struct LiveMarkdownParserTests {
     #expect(bold.syntaxRanges.map { (text as NSString).substring(with: $0) } == ["**", "**"])
   }
 
+  @Test("parses combined emphasis and strikethrough without leaving syntax behind")
+  func parsesCombinedInlineFormatting() throws {
+    let text = "This is **bold text**, *italic text*, ***bold italic text***, ~~strikethrough text~~, and `inline code`."
+    let tokens = LiveMarkdownParser.tokens(in: text)
+    let source = text as NSString
+
+    let boldItalic = try #require(tokens.first { $0.kind == .boldItalic })
+    #expect(source.substring(with: boldItalic.contentRange) == "bold italic text")
+    #expect(boldItalic.syntaxRanges.map { source.substring(with: $0) } == ["***", "***"])
+
+    let strikethrough = try #require(tokens.first { $0.kind == .strikethrough })
+    #expect(source.substring(with: strikethrough.contentRange) == "strikethrough text")
+    #expect(strikethrough.syntaxRanges.map { source.substring(with: $0) } == ["~~", "~~"])
+    #expect(tokens.filter { $0.kind == .bold }.count == 1)
+    #expect(tokens.filter { $0.kind == .italic }.count == 1)
+    #expect(tokens.filter { $0.kind == .inlineCode }.count == 1)
+  }
+
+  @Test("keeps escaped asterisks literal instead of treating them as italic")
+  func parsesEscapedAsterisks() throws {
+    let text = "Here are *underscores*, **double underscores**, and a\\*literal asterisk\\*."
+    let tokens = LiveMarkdownParser.tokens(in: text)
+    let source = text as NSString
+
+    #expect(tokens.filter { $0.kind == .italic }.count == 1)
+    #expect(tokens.filter { $0.kind == .escapedCharacter }.count == 2)
+    for token in tokens.filter({ $0.kind == .escapedCharacter }) {
+      #expect(source.substring(with: token.contentRange) == "*")
+      #expect(token.syntaxRanges.map { source.substring(with: $0) } == ["\\"])
+    }
+  }
+
+  @Test("parses Bear-compatible links, breaks, quotes, lists, and fenced code")
+  func parsesRemainingBlockAndLinkSyntax() throws {
+    let text = """
+    A URL: <https://example.com/path>. An email: <test@example.com>.
+    A note.[^one]
+    A [normal link](https://example.com \"Example title\") and a [reference][docs].
+    [docs]: https://example.com/docs \"Documentation\"
+    [^one]: Footnote text.
+    A hard break\\
+    next
+    > **Quoted** text
+    42. Ordered item
+    ```text
+    **not bold**
+    ```
+    """
+    let tokens = LiveMarkdownParser.tokens(in: text)
+    let source = text as NSString
+
+    #expect(tokens.contains { if case .autolink = $0.kind { return true }; return false })
+    #expect(tokens.contains { if case .referenceLink(destination: "https://example.com/docs") = $0.kind { return true }; return false })
+    #expect(tokens.contains { $0.kind == .blockquote(level: 1) })
+    #expect(tokens.contains { $0.kind == .orderedList })
+    #expect(tokens.filter { if case .codeBlock = $0.kind { return true }; return false }.count == 3)
+    #expect(tokens.contains { $0.kind == .footnoteReference(label: "one") })
+    #expect(tokens.contains { $0.kind == .footnoteDefinition(label: "one") })
+    #expect(!LiveMarkdownParser.tokens(in: "![image](https://example.com/image.png)").contains {
+      if case .markdownLink = $0.kind { return true }
+      return false
+    })
+    let hardBreak = try #require(tokens.first {
+      if case .escapedCharacter = $0.kind {
+        return $0.fullRange.length == 1
+      }
+      return false
+    })
+    #expect(source.substring(with: hardBreak.fullRange) == "\\")
+  }
+
+  @Test("parses nested emphasis in ambiguous strong spans")
+  func parsesNestedEmphasis() {
+    let tokens = LiveMarkdownParser.tokens(in: "Asterisks: ****bold *nested italic* bold****.")
+    #expect(tokens.contains { $0.kind == .bold })
+    #expect(tokens.contains { $0.kind == .italic })
+  }
+
   @Test("parses CommonMark thematic breaks without treating mixed markers as rules")
   func parsesThematicBreaks() {
     let text = """

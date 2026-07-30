@@ -5,6 +5,7 @@ enum LiveMarkdownDecorationKind: Equatable {
   case bullet
   case task(isChecked: Bool)
   case thematicBreak
+  case blockquote(level: Int)
 }
 
 struct LiveMarkdownDecoration: Equatable {
@@ -181,6 +182,30 @@ final class LiveMarkdownPresentationController {
     selection: NSRange
   ) {
     switch token.kind {
+    case .codeBlock(let isFence):
+      storage.addAttributes([
+        .font: NSFont.monospacedSystemFont(ofSize: 15, weight: .regular),
+        .backgroundColor: NSColor.tertiaryLabelColor.withAlphaComponent(0.16),
+        .paragraphStyle: Self.codeParagraphStyle
+      ], range: token.fullRange)
+      if isFence {
+        applySyntax(token, to: storage, selection: selection, collapsesWhenInactive: true)
+      }
+
+    case .blockquote(let level):
+      storage.addAttribute(
+        .paragraphStyle,
+        value: Self.quoteParagraphStyle(level: level),
+        range: token.fullRange
+      )
+      if token.contentRange.length > 0 {
+        storage.addAttributes([
+          .foregroundColor: NSColor.secondaryLabelColor
+        ], range: token.contentRange)
+        addFontTrait(.italicFontMask, to: token.contentRange, storage: storage)
+      }
+      applySyntax(token, to: storage, selection: selection, collapsesWhenInactive: true)
+
     case .heading(let level):
       storage.addAttribute(
         .paragraphStyle,
@@ -202,8 +227,24 @@ final class LiveMarkdownPresentationController {
       addFontTrait(.boldFontMask, to: token.contentRange, storage: storage)
       applySyntax(token, to: storage, selection: selection, collapsesWhenInactive: true)
 
+    case .boldItalic:
+      addFontTrait(.boldFontMask, to: token.contentRange, storage: storage)
+      addFontTrait(.italicFontMask, to: token.contentRange, storage: storage)
+      applySyntax(token, to: storage, selection: selection, collapsesWhenInactive: true)
+
     case .italic:
       addFontTrait(.italicFontMask, to: token.contentRange, storage: storage)
+      applySyntax(token, to: storage, selection: selection, collapsesWhenInactive: true)
+
+    case .strikethrough:
+      storage.addAttribute(
+        .strikethroughStyle,
+        value: NSUnderlineStyle.single.rawValue,
+        range: token.contentRange
+      )
+      applySyntax(token, to: storage, selection: selection, collapsesWhenInactive: true)
+
+    case .escapedCharacter:
       applySyntax(token, to: storage, selection: selection, collapsesWhenInactive: true)
 
     case .inlineCode:
@@ -213,7 +254,18 @@ final class LiveMarkdownPresentationController {
       ], range: token.contentRange)
       applySyntax(token, to: storage, selection: selection, collapsesWhenInactive: true)
 
-    case .markdownLink, .wikiLink:
+    case .markdownLink, .referenceLink, .autolink, .footnoteReference:
+      applyLinkStyle(to: token.contentRange, storage: storage)
+      applySyntax(token, to: storage, selection: selection, collapsesWhenInactive: true)
+
+    case .footnoteDefinition:
+      storage.addAttributes([
+        .foregroundColor: NSColor.linkColor,
+        .underlineStyle: NSUnderlineStyle.single.rawValue
+      ], range: token.contentRange)
+      applySyntax(token, to: storage, selection: selection, collapsesWhenInactive: true)
+
+    case .wikiLink:
       applyLinkStyle(to: token.contentRange, storage: storage)
       applySyntax(token, to: storage, selection: selection, collapsesWhenInactive: true)
 
@@ -222,6 +274,15 @@ final class LiveMarkdownPresentationController {
 
     case .bullet:
       applyListSyntax(token, to: storage)
+
+    case .orderedList:
+      storage.addAttribute(.paragraphStyle, value: Self.orderedListParagraphStyle, range: token.fullRange)
+      if let markerRange = token.decorationRange {
+        storage.addAttributes([
+          .foregroundColor: NSColor.controlAccentColor,
+          .font: NSFont.systemFont(ofSize: 16, weight: .semibold)
+        ], range: markerRange)
+      }
 
     case .task(let isChecked):
       applyListSyntax(token, to: storage)
@@ -297,13 +358,15 @@ final class LiveMarkdownPresentationController {
           return nil
         }
         return LiveMarkdownDecoration(kind: .thematicBreak, range: range)
+      case .blockquote(let level):
+        return LiveMarkdownDecoration(kind: .blockquote(level: level), range: range)
       default:
         return nil
       }
     }
     textView.presentationLinks = tokens.compactMap { token in
       switch token.kind {
-      case .markdownLink(let value), .bareLink(let value):
+      case .markdownLink(let value), .referenceLink(let value), .autolink(let value), .bareLink(let value):
         guard let url = LiveMarkdownLinkDestination.webURL(for: value) else {
           return nil
         }
@@ -347,6 +410,23 @@ final class LiveMarkdownPresentationController {
     return style
   }
 
+  private static var codeParagraphStyle: NSParagraphStyle {
+    let style = bodyParagraphStyle.mutableCopy() as? NSMutableParagraphStyle
+      ?? NSMutableParagraphStyle()
+    style.lineSpacing = 1
+    style.paragraphSpacing = 0
+    return style
+  }
+
+  private static var orderedListParagraphStyle: NSParagraphStyle {
+    let style = bodyParagraphStyle.mutableCopy() as? NSMutableParagraphStyle
+      ?? NSMutableParagraphStyle()
+    style.headIndent = 28
+    style.firstLineHeadIndent = 0
+    style.paragraphSpacing = 2
+    return style
+  }
+
   private static func headingFont(level: Int) -> NSFont {
     switch level {
     case 1: NSFont.systemFont(ofSize: 28, weight: .bold)
@@ -361,6 +441,16 @@ final class LiveMarkdownPresentationController {
       ?? NSMutableParagraphStyle()
     style.paragraphSpacingBefore = level == 1 ? 0 : 8
     style.paragraphSpacing = level == 1 ? 18 : 12
+    return style
+  }
+
+  private static func quoteParagraphStyle(level: Int) -> NSParagraphStyle {
+    let style = bodyParagraphStyle.mutableCopy() as? NSMutableParagraphStyle
+      ?? NSMutableParagraphStyle()
+    let indent = CGFloat(max(1, level)) * 20
+    style.headIndent = indent
+    style.firstLineHeadIndent = indent
+    style.paragraphSpacing = 10
     return style
   }
 
