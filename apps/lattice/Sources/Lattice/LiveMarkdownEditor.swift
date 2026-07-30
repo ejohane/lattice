@@ -157,6 +157,7 @@ struct LiveMarkdownEditor: NSViewRepresentable {
     private var slashCommandPaletteView: NSHostingView<MacSlashCommandPalette>?
     private var activeSlashTriggerLocation: Int?
     private var dismissedSlashTriggerLocation: Int?
+    private var presentationRefreshGeneration = 0
 
     private struct SlashCommandAnchor {
       let slashRect: NSRect
@@ -179,8 +180,8 @@ struct LiveMarkdownEditor: NSViewRepresentable {
       self.scrollView = scrollView
     }
 
-    func presentationFocusDidChange(in textView: LiveMarkdownTextView, isFocused: Bool) {
-      presentation.focusDidChange(in: textView, isFocused: isFocused)
+    func presentationFocusDidChange(in textView: LiveMarkdownTextView, isFocused _: Bool) {
+      schedulePresentationReset(in: textView)
     }
 
     func load(text: String, revision: Int) {
@@ -249,14 +250,9 @@ struct LiveMarkdownEditor: NSViewRepresentable {
 
     func textDidChange(_ notification: Notification) {
       guard !isLoading, let textView = notification.object as? LiveMarkdownTextView else { return }
-      defer { updateSlashCommandPalette(in: textView) }
       guard !pendingEdits.isEmpty else {
         parent.onReplaceAll(textView.string)
-        presentation.reset(
-          textView: textView,
-          text: textView.string,
-          selection: textView.selectedRange()
-        )
+        schedulePresentationReset(in: textView)
         return
       }
 
@@ -268,18 +264,8 @@ struct LiveMarkdownEditor: NSViewRepresentable {
       }
       if needsPresentationResetAfterMarkedText {
         needsPresentationResetAfterMarkedText = false
-        presentation.reset(
-          textView: textView,
-          text: textView.string,
-          selection: textView.selectedRange()
-        )
-        return
       }
-      presentation.didApplyEdit(
-        edit,
-        textView: textView,
-        selection: textView.selectedRange()
-      )
+      schedulePresentationReset(in: textView)
     }
 
     func textViewDidChangeSelection(_ notification: Notification) {
@@ -287,8 +273,7 @@ struct LiveMarkdownEditor: NSViewRepresentable {
             let textView = notification.object as? LiveMarkdownTextView,
             !textView.hasMarkedText()
       else { return }
-      presentation.selectionDidChange(in: textView, selection: textView.selectedRange())
-      updateSlashCommandPalette(in: textView)
+      schedulePresentationReset(in: textView)
     }
 
     func textView(_ textView: NSTextView, doCommandBy commandSelector: Selector) -> Bool {
@@ -317,7 +302,6 @@ struct LiveMarkdownEditor: NSViewRepresentable {
       let selection = textView.selectedRange()
       textView.insertText(result.replacement, replacementRange: result.replacementRange)
       textView.setSelectedRange(selection)
-      presentation.selectionDidChange(in: textView, selection: selection)
     }
 
     func insertLink() {
@@ -333,7 +317,6 @@ struct LiveMarkdownEditor: NSViewRepresentable {
 
       textView.insertText(result.replacement, replacementRange: result.replacementRange)
       textView.setSelectedRange(result.selection)
-      presentation.selectionDidChange(in: textView, selection: result.selection)
     }
 
     func openLink(_ destination: LiveMarkdownLinkTarget.Destination) {
@@ -380,9 +363,30 @@ struct LiveMarkdownEditor: NSViewRepresentable {
         length: 0
       )
       textView.setSelectedRange(selection)
-      presentation.selectionDidChange(in: textView, selection: selection)
       parent.onEnsureTodayNote(now, calendar)
       return true
+    }
+
+    private func schedulePresentationReset(in textView: LiveMarkdownTextView) {
+      // NSTextView can be laying out while its delegate callbacks run. Defer
+      // attribute rewrites until the event finishes, and rebuild from the
+      // current text so coalesced edits cannot leave stale token ranges behind.
+      presentationRefreshGeneration += 1
+      let generation = presentationRefreshGeneration
+      DispatchQueue.main.async { [weak self, weak textView] in
+        guard let self,
+              let textView,
+              self.presentationRefreshGeneration == generation,
+              !textView.hasMarkedText()
+        else { return }
+
+        self.presentation.reset(
+          textView: textView,
+          text: textView.string,
+          selection: textView.selectedRange()
+        )
+        self.updateSlashCommandPalette(in: textView)
+      }
     }
 
     private func updateSlashCommandPalette(in textView: LiveMarkdownTextView) {

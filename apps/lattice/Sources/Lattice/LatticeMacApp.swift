@@ -15,14 +15,17 @@ struct LatticeMacApp: App {
     }
     .defaultSize(width: 960, height: 680)
     .commands {
+      CommandGroup(replacing: .appSettings) {
+        Button("Settings…") {
+          appDelegate.showSettings()
+        }
+        .keyboardShortcut(",", modifiers: [.command])
+      }
+
       MacMarkdownCommands(
         checkForUpdates: appDelegate.checkForUpdates,
         showJot: appDelegate.showJot
       )
-    }
-
-    Settings {
-      MacSettingsView()
     }
   }
 }
@@ -70,10 +73,12 @@ final class MacAppDelegate: NSObject, NSApplicationDelegate {
   let model = MacMarkdownAppModel()
   private var updaterController: SPUStandardUpdaterController?
   private lazy var jotWindowController = MacJotWindowController(model: model)
+  private lazy var settingsWindowController = MacSettingsWindowController()
   private var globalJotShortcutTask: Task<Void, Never>?
 
   func applicationDidFinishLaunching(_ notification: Notification) {
     NSApp.setActivationPolicy(.regular)
+    NSApp.activate(ignoringOtherApps: true)
     globalJotShortcutTask = Task { @MainActor [weak self] in
       for await _ in KeyboardShortcuts.events(.keyDown, for: .showJot) {
         self?.showJotFromGlobalShortcut()
@@ -100,6 +105,10 @@ final class MacAppDelegate: NSObject, NSApplicationDelegate {
 
   func showJot() {
     jotWindowController.present(restoringPreviousApplicationOnDismiss: false)
+  }
+
+  func showSettings() {
+    settingsWindowController.present()
   }
 
   private func showJotFromGlobalShortcut() {
