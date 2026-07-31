@@ -1280,7 +1280,68 @@ struct LiveMarkdownPresentationTests {
       .task(isChecked: false),
       .task(isChecked: true)
     ])
+    #expect(textView.presentationDecorations.map(\.usesOutline) == [false, false, false])
     #expect(textView.string == text)
+  }
+
+  @Test("groups blockquote bars and keeps quote content in the body style")
+  func groupsBlockquotes() throws {
+    let text = "> First paragraph\n>\n> Second paragraph\n>> Nested quote\n>> - Nested item\n\n> Separate quote"
+    let textView = LiveMarkdownTextView.makeForEditing()
+    textView.string = text
+    let presentation = LiveMarkdownPresentationController()
+    presentation.reset(
+      textView: textView,
+      text: text,
+      selection: NSRange(location: (text as NSString).length, length: 0)
+    )
+
+    let quoteDecorations = textView.presentationDecorations.filter {
+      if case .blockquote = $0.kind { return true }
+      return false
+    }
+    #expect(quoteDecorations.map(\.kind) == [
+      .blockquote(level: 1),
+      .blockquote(level: 2),
+      .blockquote(level: 1)
+    ])
+    #expect(quoteDecorations.map { (text as NSString).substring(with: $0.range) } == [
+      "> First paragraph\n>\n> Second paragraph\n>> Nested quote\n>> - Nested item",
+      ">> Nested quote\n>> - Nested item",
+      "> Separate quote"
+    ])
+    let quotedBullet = try #require(textView.presentationDecorations.first {
+      $0.kind == .bullet
+    })
+    #expect(quotedBullet.usesOutline)
+
+    let firstQuote = try #require(presentation.tokens.first {
+      if case .blockquote(level: 1) = $0.kind {
+        return $0.contentRange.location == 2
+      }
+      return false
+    })
+    let font = try #require(textView.textStorage?.attribute(
+      .font,
+      at: firstQuote.contentRange.location,
+      effectiveRange: nil
+    ) as? NSFont)
+    let paragraphStyle = try #require(textView.textStorage?.attribute(
+      .paragraphStyle,
+      at: firstQuote.contentRange.location,
+      effectiveRange: nil
+    ) as? NSParagraphStyle)
+    let color = try #require(textView.textStorage?.attribute(
+      .foregroundColor,
+      at: firstQuote.contentRange.location,
+      effectiveRange: nil
+    ) as? NSColor)
+
+    #expect(!font.fontDescriptor.symbolicTraits.contains(.italic))
+    #expect(font.pointSize == 16)
+    #expect(paragraphStyle.headIndent == 76)
+    #expect(paragraphStyle.firstLineHeadIndent == 76)
+    #expect(color.isEqual(NSColor.labelColor))
   }
 
   @Test("renders an inactive thematic break and reveals its Markdown source when active")
