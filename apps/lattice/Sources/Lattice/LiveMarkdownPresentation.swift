@@ -1,6 +1,12 @@
 import AppKit
 import LatticeEditor
 
+enum LiveMarkdownQuoteLayout {
+  static let contentIndent: CGFloat = 76
+  static let levelSpacing: CGFloat = 76
+  static let barIndent: CGFloat = 20
+}
+
 enum LiveMarkdownDecorationKind: Equatable {
   case bullet
   case task(isChecked: Bool)
@@ -11,6 +17,17 @@ enum LiveMarkdownDecorationKind: Equatable {
 struct LiveMarkdownDecoration: Equatable {
   let kind: LiveMarkdownDecorationKind
   let range: NSRange
+  let usesOutline: Bool
+
+  init(
+    kind: LiveMarkdownDecorationKind,
+    range: NSRange,
+    usesOutline: Bool = false
+  ) {
+    self.kind = kind
+    self.range = range
+    self.usesOutline = usesOutline
+  }
 }
 
 struct LiveMarkdownLinkTarget: Equatable {
@@ -198,12 +215,6 @@ final class LiveMarkdownPresentationController {
         value: Self.quoteParagraphStyle(level: level),
         range: token.fullRange
       )
-      if token.contentRange.length > 0 {
-        storage.addAttributes([
-          .foregroundColor: NSColor.secondaryLabelColor
-        ], range: token.contentRange)
-        addFontTrait(.italicFontMask, to: token.contentRange, storage: storage)
-      }
       applySyntax(token, to: storage, selection: selection, collapsesWhenInactive: true)
 
     case .heading(let level):
@@ -346,11 +357,15 @@ final class LiveMarkdownPresentationController {
   }
 
   private func updateDecorations(in textView: LiveMarkdownTextView) {
-    textView.presentationDecorations = tokens.compactMap { token in
+    let nonQuoteDecorations: [LiveMarkdownDecoration] = tokens.compactMap { token in
       guard let range = token.decorationRange else { return nil }
       switch token.kind {
       case .bullet:
-        return LiveMarkdownDecoration(kind: .bullet, range: range)
+        return LiveMarkdownDecoration(
+          kind: .bullet,
+          range: range,
+          usesOutline: isInsideBlockquote(token)
+        )
       case .task(let isChecked):
         return LiveMarkdownDecoration(kind: .task(isChecked: isChecked), range: range)
       case .thematicBreak:
@@ -358,12 +373,12 @@ final class LiveMarkdownPresentationController {
           return nil
         }
         return LiveMarkdownDecoration(kind: .thematicBreak, range: range)
-      case .blockquote(let level):
-        return LiveMarkdownDecoration(kind: .blockquote(level: level), range: range)
       default:
         return nil
       }
     }
+    textView.presentationDecorations = nonQuoteDecorations
+      + blockquoteDecorations(in: textView.string as NSString)
     textView.presentationLinks = tokens.compactMap { token in
       switch token.kind {
       case .markdownLink(let value), .referenceLink(let value), .autolink(let value), .bareLink(let value):
@@ -383,6 +398,80 @@ final class LiveMarkdownPresentationController {
         return nil
       }
     }
+  }
+
+  private func blockquoteDecorations(in source: NSString) -> [LiveMarkdownDecoration] {
+    let quoteTokens = tokens.compactMap { token -> (token: LiveMarkdownToken, level: Int)? in
+      guard case .blockquote(let level) = token.kind else { return nil }
+      return (token, level)
+    }
+    guard let maximumLevel = quoteTokens.map(\.level).max() else { return [] }
+
+    var decorations: [LiveMarkdownDecoration] = []
+    for level in 1...maximumLevel {
+      var group: [LiveMarkdownToken] = []
+      for entry in quoteTokens where entry.level >= level {
+        if let previous = group.last,
+           !isAdjacentQuoteLine(previous, entry.token, in: source) {
+          appendBlockquoteDecoration(
+            for: group,
+            level: level,
+            to: &decorations
+          )
+          group.removeAll(keepingCapacity: true)
+        }
+        group.append(entry.token)
+      }
+      appendBlockquoteDecoration(for: group, level: level, to: &decorations)
+    }
+
+    return decorations.sorted {
+      if $0.range.location == $1.range.location {
+        return blockquoteLevel($0) < blockquoteLevel($1)
+      }
+      return $0.range.location < $1.range.location
+    }
+  }
+
+  private func isInsideBlockquote(_ token: LiveMarkdownToken) -> Bool {
+    tokens.contains { candidate in
+      guard case .blockquote = candidate.kind else { return false }
+      return NSIntersectionRange(candidate.fullRange, token.fullRange) == token.fullRange
+    }
+  }
+
+  private func appendBlockquoteDecoration(
+    for group: [LiveMarkdownToken],
+    level: Int,
+    to decorations: inout [LiveMarkdownDecoration]
+  ) {
+    guard let first = group.first, let last = group.last else { return }
+    decorations.append(LiveMarkdownDecoration(
+      kind: .blockquote(level: level),
+      range: NSRange(
+        location: first.fullRange.location,
+        length: NSMaxRange(last.fullRange) - first.fullRange.location
+      )
+    ))
+  }
+
+  private func isAdjacentQuoteLine(
+    _ previous: LiveMarkdownToken,
+    _ next: LiveMarkdownToken,
+    in source: NSString
+  ) -> Bool {
+    let gap = NSRange(
+      location: NSMaxRange(previous.fullRange),
+      length: next.fullRange.location - NSMaxRange(previous.fullRange)
+    )
+    guard gap.length > 0 else { return true }
+    return source.substring(with: gap) == "\n"
+      || source.substring(with: gap) == "\r\n"
+  }
+
+  private func blockquoteLevel(_ decoration: LiveMarkdownDecoration) -> Int {
+    guard case .blockquote(let level) = decoration.kind else { return .max }
+    return level
   }
 
   private static let bodyFont = NSFont.systemFont(ofSize: 16, weight: .regular)
@@ -447,10 +536,9 @@ final class LiveMarkdownPresentationController {
   private static func quoteParagraphStyle(level: Int) -> NSParagraphStyle {
     let style = bodyParagraphStyle.mutableCopy() as? NSMutableParagraphStyle
       ?? NSMutableParagraphStyle()
-    let indent = CGFloat(max(1, level)) * 20
+    let indent = CGFloat(max(1, level)) * LiveMarkdownQuoteLayout.contentIndent
     style.headIndent = indent
     style.firstLineHeadIndent = indent
-    style.paragraphSpacing = 10
     return style
   }
 

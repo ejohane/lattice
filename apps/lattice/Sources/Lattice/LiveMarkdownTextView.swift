@@ -133,19 +133,28 @@ final class LiveMarkdownTextView: NSTextView {
     taskHitTargets = []
 
     for decoration in presentationDecorations {
-      guard let markerRect = localRect(for: decoration.range), markerRect.intersects(dirtyRect) else {
-        continue
-      }
       switch decoration.kind {
       case .bullet:
-        drawBullet(in: markerRect)
+        guard let markerRect = localRect(for: decoration.range), markerRect.intersects(dirtyRect) else {
+          continue
+        }
+        drawBullet(in: markerRect, usesOutline: decoration.usesOutline)
       case .task(let isChecked):
+        guard let markerRect = localRect(for: decoration.range), markerRect.intersects(dirtyRect) else {
+          continue
+        }
         let checkboxRect = drawTask(in: markerRect, isChecked: isChecked)
         taskHitTargets.append((decoration.range, checkboxRect.insetBy(dx: -4, dy: -4)))
       case .thematicBreak:
+        guard let markerRect = localRect(for: decoration.range), markerRect.intersects(dirtyRect) else {
+          continue
+        }
         drawThematicBreak(in: markerRect)
       case .blockquote(let level):
-        drawBlockquote(in: markerRect, level: level)
+        guard let quoteRect = blockquoteRect(for: decoration.range, level: level),
+              quoteRect.intersects(dirtyRect)
+        else { continue }
+        drawBlockquote(in: quoteRect, level: level)
       }
     }
   }
@@ -194,6 +203,49 @@ final class LiveMarkdownTextView: NSTextView {
     guard !screenRect.isEmpty, actualRange.location != NSNotFound else { return nil }
     let windowRect = window.convertFromScreen(screenRect)
     return convert(windowRect, from: nil)
+  }
+
+  private func blockquoteRect(for range: NSRange, level: Int) -> NSRect? {
+    guard range.location != NSNotFound,
+          range.location < (string as NSString).length,
+          let layoutManager,
+          let textContainer
+    else { return nil }
+
+    layoutManager.ensureLayout(for: textContainer)
+    let lastCharacter = min(NSMaxRange(range) - 1, (string as NSString).length - 1)
+    guard lastCharacter >= range.location else { return nil }
+    let firstGlyphRange = layoutManager.glyphRange(
+      forCharacterRange: NSRange(location: range.location, length: 1),
+      actualCharacterRange: nil
+    )
+    let lastGlyphRange = layoutManager.glyphRange(
+      forCharacterRange: NSRange(location: lastCharacter, length: 1),
+      actualCharacterRange: nil
+    )
+    guard firstGlyphRange.location != NSNotFound,
+          lastGlyphRange.location != NSNotFound
+    else { return nil }
+
+    let firstLine = layoutManager.lineFragmentRect(
+      forGlyphAt: firstGlyphRange.location,
+      effectiveRange: nil
+    )
+    let lastLine = layoutManager.lineFragmentRect(
+      forGlyphAt: lastGlyphRange.location,
+      effectiveRange: nil
+    )
+    let origin = textContainerOrigin
+    let x = origin.x
+      + LiveMarkdownQuoteLayout.barIndent
+      + CGFloat(max(0, level - 1)) * LiveMarkdownQuoteLayout.levelSpacing
+    let y = origin.y + firstLine.minY
+    return NSRect(
+      x: x,
+      y: y,
+      width: level == 1 ? 10 : 9,
+      height: max(1, origin.y + lastLine.maxY - y)
+    )
   }
 
   private func linkTarget(at characterIndex: Int) -> LiveMarkdownLinkTarget? {
@@ -245,16 +297,23 @@ final class LiveMarkdownTextView: NSTextView {
     return true
   }
 
-  private func drawBullet(in markerRect: NSRect) {
-    let diameter: CGFloat = 5
+  private func drawBullet(in markerRect: NSRect, usesOutline: Bool) {
+    let diameter: CGFloat = usesOutline ? 9 : 5
     let rect = NSRect(
       x: markerRect.midX - diameter / 2,
       y: markerRect.midY - diameter / 2,
       width: diameter,
       height: diameter
     )
-    NSColor.controlAccentColor.setFill()
-    NSBezierPath(ovalIn: rect).fill()
+    if usesOutline {
+      let outline = NSBezierPath(ovalIn: rect.insetBy(dx: 1, dy: 1))
+      outline.lineWidth = 2
+      NSColor.controlAccentColor.setStroke()
+      outline.stroke()
+    } else {
+      NSColor.controlAccentColor.setFill()
+      NSBezierPath(ovalIn: rect).fill()
+    }
   }
 
   private func drawThematicBreak(in markerRect: NSRect) {
@@ -268,16 +327,24 @@ final class LiveMarkdownTextView: NSTextView {
   }
 
   private func drawBlockquote(in markerRect: NSRect, level: Int) {
-    let width: CGFloat = 3
-    let inset = CGFloat(max(1, level) - 1) * 20
-    let rect = NSRect(
-      x: markerRect.minX + inset,
-      y: markerRect.minY,
-      width: width,
-      height: markerRect.height
+    if level == 1 {
+      NSColor.controlAccentColor.setFill()
+      NSBezierPath(
+        roundedRect: markerRect,
+        xRadius: markerRect.width / 2,
+        yRadius: markerRect.width / 2
+      ).fill()
+      return
+    }
+
+    let outline = NSBezierPath(
+      roundedRect: markerRect.insetBy(dx: 1, dy: 1),
+      xRadius: 3.5,
+      yRadius: 3.5
     )
-    NSColor.controlAccentColor.setFill()
-    NSBezierPath(roundedRect: rect, xRadius: width / 2, yRadius: width / 2).fill()
+    outline.lineWidth = 2
+    NSColor.controlAccentColor.setStroke()
+    outline.stroke()
   }
 
   @discardableResult
