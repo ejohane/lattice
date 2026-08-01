@@ -342,32 +342,39 @@ final class LiveMarkdownTextView: NSTextView {
 
   @discardableResult
   private func drawTask(in markerRect: NSRect, isChecked: Bool) -> NSRect {
-    let size: CGFloat = 14
+    let size: CGFloat = 24
     let rect = NSRect(
       x: markerRect.midX - size / 2,
       y: markerRect.midY - size / 2,
       width: size,
       height: size
     )
-    let outline = NSBezierPath(roundedRect: rect, xRadius: 3.5, yRadius: 3.5)
-    outline.lineWidth = 1.4
+    let symbolName = isChecked ? "checkmark.square" : "square"
+    guard let image = NSImage(
+      systemSymbolName: symbolName,
+      accessibilityDescription: isChecked ? "Completed task" : "Incomplete task"
+    ) else { return rect }
 
-    if isChecked {
-      NSColor.controlAccentColor.setFill()
-      outline.fill()
-      NSColor.white.setStroke()
-      let check = NSBezierPath()
-      check.lineWidth = 1.7
-      check.lineCapStyle = .round
-      check.lineJoinStyle = .round
-      check.move(to: NSPoint(x: rect.minX + 3.2, y: rect.midY))
-      check.line(to: NSPoint(x: rect.minX + 6.1, y: rect.minY + 3.5))
-      check.line(to: NSPoint(x: rect.maxX - 2.7, y: rect.maxY - 3.1))
-      check.stroke()
-    } else {
-      NSColor.tertiaryLabelColor.setStroke()
-      outline.stroke()
-    }
+    let configuration = NSImage.SymbolConfiguration(
+      pointSize: 22,
+      weight: .regular,
+      scale: .medium
+    ).applying(
+      NSImage.SymbolConfiguration(paletteColors: [NSColor.secondaryLabelColor])
+    )
+    let configuredImage = image.withSymbolConfiguration(configuration) ?? image
+    let context = NSGraphicsContext.current?.cgContext
+    context?.saveGState()
+    context?.translateBy(x: rect.midX, y: rect.midY)
+    context?.scaleBy(x: 1, y: -1)
+    context?.translateBy(x: -rect.midX, y: -rect.midY)
+    configuredImage.draw(
+      in: rect,
+      from: .zero,
+      operation: .sourceOver,
+      fraction: 1
+    )
+    context?.restoreGState()
     return rect
   }
 }
