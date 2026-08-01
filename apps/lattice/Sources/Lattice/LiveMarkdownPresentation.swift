@@ -178,7 +178,6 @@ final class LiveMarkdownPresentationController {
       textView.typingAttributes = storage.length == 0 && usesTitleStyleForEmptyDocument
         ? Self.titleTypingAttributes
         : Self.baseAttributes
-      textView.needsDisplay = true
       return
     }
 
@@ -190,7 +189,6 @@ final class LiveMarkdownPresentationController {
     storage.endEditing()
 
     textView.typingAttributes = Self.baseAttributes
-    textView.needsDisplay = true
   }
 
   private func apply(
@@ -357,6 +355,10 @@ final class LiveMarkdownPresentationController {
   }
 
   private func updateDecorations(in textView: LiveMarkdownTextView) {
+    // Prepare TextKit's line fragments before the view enters draw(_:). Doing
+    // this from the draw path can invalidate the view while AppKit is already
+    // painting it, which makes typing visibly flash.
+    textView.prepareForDecorationDrawing()
     let nonQuoteDecorations: [LiveMarkdownDecoration] = tokens.compactMap { token in
       guard let range = token.decorationRange else { return nil }
       switch token.kind {

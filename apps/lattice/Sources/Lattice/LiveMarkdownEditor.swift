@@ -152,8 +152,11 @@ struct LiveMarkdownEditor: NSViewRepresentable {
     private weak var scrollView: NSScrollView?
     private let presentation: LiveMarkdownPresentationController
     private var pendingEdits: [LiveMarkdownPresentationController.PendingEdit] = []
+    private var pendingPresentationEdits: [LiveMarkdownPresentationController.PendingEdit] = []
     private var isLoading = false
     private var needsPresentationResetAfterMarkedText = false
+    private var needsFullPresentationReset = false
+    private var pendingPresentationFocus: Bool?
     private var slashCommandPaletteView: NSHostingView<MacSlashCommandPalette>?
     private var activeSlashTriggerLocation: Int?
     private var dismissedSlashTriggerLocation: Int?
@@ -180,14 +183,16 @@ struct LiveMarkdownEditor: NSViewRepresentable {
       self.scrollView = scrollView
     }
 
-    func presentationFocusDidChange(in textView: LiveMarkdownTextView, isFocused _: Bool) {
-      schedulePresentationReset(in: textView)
+    func presentationFocusDidChange(in textView: LiveMarkdownTextView, isFocused: Bool) {
+      pendingPresentationFocus = isFocused
+      schedulePresentationUpdate(in: textView)
     }
 
     func load(text: String, revision: Int) {
       guard let textView else { return }
       isLoading = true
       pendingEdits = []
+      cancelPendingPresentationWork()
       closeSlashCommandPalette(suppressCurrentTrigger: false)
       dismissedSlashTriggerLocation = nil
       textView.string = text
@@ -212,6 +217,7 @@ struct LiveMarkdownEditor: NSViewRepresentable {
       let visibleOrigin = scrollView?.contentView.bounds.origin
       isLoading = true
       pendingEdits = []
+      cancelPendingPresentationWork()
       closeSlashCommandPalette(suppressCurrentTrigger: false)
       dismissedSlashTriggerLocation = nil
       textView.string = text
@@ -252,7 +258,7 @@ struct LiveMarkdownEditor: NSViewRepresentable {
       guard !isLoading, let textView = notification.object as? LiveMarkdownTextView else { return }
       guard !pendingEdits.isEmpty else {
         parent.onReplaceAll(textView.string)
-        schedulePresentationReset(in: textView)
+        schedulePresentationUpdate(in: textView, requiresFullReset: true)
         return
       }
 
@@ -264,8 +270,12 @@ struct LiveMarkdownEditor: NSViewRepresentable {
       }
       if needsPresentationResetAfterMarkedText {
         needsPresentationResetAfterMarkedText = false
+        pendingPresentationEdits.removeAll(keepingCapacity: true)
+        schedulePresentationUpdate(in: textView, requiresFullReset: true)
+        return
       }
-      schedulePresentationReset(in: textView)
+      pendingPresentationEdits.append(edit)
+      schedulePresentationUpdate(in: textView)
     }
 
     func textViewDidChangeSelection(_ notification: Notification) {
@@ -273,7 +283,7 @@ struct LiveMarkdownEditor: NSViewRepresentable {
             let textView = notification.object as? LiveMarkdownTextView,
             !textView.hasMarkedText()
       else { return }
-      schedulePresentationReset(in: textView)
+      schedulePresentationUpdate(in: textView)
     }
 
     func textView(_ textView: NSTextView, doCommandBy commandSelector: Selector) -> Bool {
@@ -367,10 +377,18 @@ struct LiveMarkdownEditor: NSViewRepresentable {
       return true
     }
 
-    private func schedulePresentationReset(in textView: LiveMarkdownTextView) {
+    private func schedulePresentationUpdate(
+      in textView: LiveMarkdownTextView,
+      requiresFullReset: Bool = false
+    ) {
+      if requiresFullReset {
+        needsFullPresentationReset = true
+      }
+
       // NSTextView can be laying out while its delegate callbacks run. Defer
-      // attribute rewrites until the event finishes, and rebuild from the
-      // current text so coalesced edits cannot leave stale token ranges behind.
+      // attribute rewrites until the event finishes, but apply queued edits
+      // incrementally so an ordinary keystroke does not rebuild the whole
+      // document and invalidate unrelated markup.
       presentationRefreshGeneration += 1
       let generation = presentationRefreshGeneration
       DispatchQueue.main.async { [weak self, weak textView] in
@@ -380,13 +398,46 @@ struct LiveMarkdownEditor: NSViewRepresentable {
               !textView.hasMarkedText()
         else { return }
 
-        self.presentation.reset(
-          textView: textView,
-          text: textView.string,
-          selection: textView.selectedRange()
-        )
+        if self.needsFullPresentationReset {
+          self.needsFullPresentationReset = false
+          self.pendingPresentationEdits.removeAll(keepingCapacity: true)
+          self.presentation.reset(
+            textView: textView,
+            text: textView.string,
+            selection: textView.selectedRange()
+          )
+        } else {
+          let edits = self.pendingPresentationEdits
+          self.pendingPresentationEdits.removeAll(keepingCapacity: true)
+          for edit in edits {
+            self.presentation.didApplyEdit(
+              edit,
+              textView: textView,
+              selection: textView.selectedRange()
+            )
+          }
+          if let isFocused = self.pendingPresentationFocus {
+            self.pendingPresentationFocus = nil
+            self.presentation.focusDidChange(
+              in: textView,
+              isFocused: isFocused
+            )
+          } else {
+            self.presentation.selectionDidChange(
+              in: textView,
+              selection: textView.selectedRange()
+            )
+          }
+        }
         self.updateSlashCommandPalette(in: textView)
       }
+    }
+
+    private func cancelPendingPresentationWork() {
+      presentationRefreshGeneration += 1
+      pendingPresentationEdits.removeAll(keepingCapacity: true)
+      pendingPresentationFocus = nil
+      needsFullPresentationReset = false
     }
 
     private func updateSlashCommandPalette(in textView: LiveMarkdownTextView) {
