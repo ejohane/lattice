@@ -10,9 +10,7 @@ final class LiveMarkdownTextView: NSTextView {
     LiveMarkdownTextView(usingTextLayoutManager: false)
   }
 
-  var presentationDecorations: [LiveMarkdownDecoration] = [] {
-    didSet { needsDisplay = true }
-  }
+  var presentationDecorations: [LiveMarkdownDecoration] = []
   var presentationLinks: [LiveMarkdownLinkTarget] = [] {
     didSet {
       guard let window else { return }
@@ -159,6 +157,11 @@ final class LiveMarkdownTextView: NSTextView {
     }
   }
 
+  func prepareForDecorationDrawing() {
+    guard let layoutManager, let textContainer else { return }
+    layoutManager.ensureLayout(for: textContainer)
+  }
+
   override func mouseDown(with event: NSEvent) {
     let location = convert(event.locationInWindow, from: nil)
     if let target = taskHitTargets.first(where: { $0.rect.contains(location) }) {
@@ -208,11 +211,12 @@ final class LiveMarkdownTextView: NSTextView {
   private func blockquoteRect(for range: NSRange, level: Int) -> NSRect? {
     guard range.location != NSNotFound,
           range.location < (string as NSString).length,
-          let layoutManager,
-          let textContainer
+          let layoutManager
     else { return nil }
 
-    layoutManager.ensureLayout(for: textContainer)
+    // `draw(_:)` is already called after AppKit has prepared the visible
+    // layout. Forcing layout here can invalidate the same text view while it
+    // is being drawn, which produces a visible flash after each edit.
     let lastCharacter = min(NSMaxRange(range) - 1, (string as NSString).length - 1)
     guard lastCharacter >= range.location else { return nil }
     let firstGlyphRange = layoutManager.glyphRange(
@@ -243,7 +247,7 @@ final class LiveMarkdownTextView: NSTextView {
     return NSRect(
       x: x,
       y: y,
-      width: level == 1 ? 10 : 9,
+      width: 3,
       height: max(1, origin.y + lastLine.maxY - y)
     )
   }
@@ -326,55 +330,51 @@ final class LiveMarkdownTextView: NSTextView {
     path.stroke()
   }
 
-  private func drawBlockquote(in markerRect: NSRect, level: Int) {
-    if level == 1 {
-      NSColor.controlAccentColor.setFill()
-      NSBezierPath(
-        roundedRect: markerRect,
-        xRadius: markerRect.width / 2,
-        yRadius: markerRect.width / 2
-      ).fill()
-      return
-    }
-
-    let outline = NSBezierPath(
-      roundedRect: markerRect.insetBy(dx: 1, dy: 1),
-      xRadius: 3.5,
-      yRadius: 3.5
+  private func drawBlockquote(in markerRect: NSRect, level _: Int) {
+    let bar = NSBezierPath(
+      roundedRect: markerRect,
+      xRadius: markerRect.width / 2,
+      yRadius: markerRect.width / 2
     )
-    outline.lineWidth = 2
-    NSColor.controlAccentColor.setStroke()
-    outline.stroke()
+    NSColor.controlAccentColor.setFill()
+    bar.fill()
   }
 
   @discardableResult
   private func drawTask(in markerRect: NSRect, isChecked: Bool) -> NSRect {
-    let size: CGFloat = 14
+    let size: CGFloat = 24
     let rect = NSRect(
       x: markerRect.midX - size / 2,
       y: markerRect.midY - size / 2,
       width: size,
       height: size
     )
-    let outline = NSBezierPath(roundedRect: rect, xRadius: 3.5, yRadius: 3.5)
-    outline.lineWidth = 1.4
+    let symbolName = isChecked ? "checkmark.square" : "square"
+    guard let image = NSImage(
+      systemSymbolName: symbolName,
+      accessibilityDescription: isChecked ? "Completed task" : "Incomplete task"
+    ) else { return rect }
 
-    if isChecked {
-      NSColor.controlAccentColor.setFill()
-      outline.fill()
-      NSColor.white.setStroke()
-      let check = NSBezierPath()
-      check.lineWidth = 1.7
-      check.lineCapStyle = .round
-      check.lineJoinStyle = .round
-      check.move(to: NSPoint(x: rect.minX + 3.2, y: rect.midY))
-      check.line(to: NSPoint(x: rect.minX + 6.1, y: rect.minY + 3.5))
-      check.line(to: NSPoint(x: rect.maxX - 2.7, y: rect.maxY - 3.1))
-      check.stroke()
-    } else {
-      NSColor.tertiaryLabelColor.setStroke()
-      outline.stroke()
-    }
+    let configuration = NSImage.SymbolConfiguration(
+      pointSize: 22,
+      weight: .regular,
+      scale: .medium
+    ).applying(
+      NSImage.SymbolConfiguration(paletteColors: [NSColor.secondaryLabelColor])
+    )
+    let configuredImage = image.withSymbolConfiguration(configuration) ?? image
+    let context = NSGraphicsContext.current?.cgContext
+    context?.saveGState()
+    context?.translateBy(x: rect.midX, y: rect.midY)
+    context?.scaleBy(x: 1, y: -1)
+    context?.translateBy(x: -rect.midX, y: -rect.midY)
+    configuredImage.draw(
+      in: rect,
+      from: .zero,
+      operation: .sourceOver,
+      fraction: 1
+    )
+    context?.restoreGState()
     return rect
   }
 }
