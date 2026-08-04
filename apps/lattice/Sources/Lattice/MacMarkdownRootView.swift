@@ -61,16 +61,34 @@ struct MacMarkdownRootView: View {
     .sheet(isPresented: $isShowingCommandPalette) {
       MacCommandPaletteView(
         canCreateNote: model.canCreateNote,
+        notes: { query in
+          model.commandPaletteNotes(matching: query)
+        },
+        creationTitle: { query in
+          model.commandPaletteCreationTitle(matching: query)
+        },
         onCreateNote: {
           isShowingCommandPalette = false
           Task { @MainActor in
             model.createNote()
           }
         },
+        onCreateNamedNote: { title in
+          isShowingCommandPalette = false
+          Task { @MainActor in
+            model.createNote(named: title)
+          }
+        },
         onOpenTodayNote: {
           isShowingCommandPalette = false
           Task { @MainActor in
             model.openTodayNote()
+          }
+        },
+        onOpenNote: { noteID in
+          isShowingCommandPalette = false
+          Task { @MainActor in
+            model.selectFile(noteID)
           }
         }
       )

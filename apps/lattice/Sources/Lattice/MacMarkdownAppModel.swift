@@ -2,6 +2,12 @@ import Foundation
 import LatticeMacCore
 import Observation
 
+struct MacCommandPaletteNote: Identifiable, Hashable {
+  let id: MarkdownFile.ID
+  let title: String
+  let path: String
+}
+
 @MainActor
 @Observable
 final class MacMarkdownAppModel {
@@ -75,6 +81,71 @@ final class MacMarkdownAppModel {
     sidebarPreviews[file.id] ?? MarkdownSidebarPreview(file: file, body: "")
   }
 
+  func commandPaletteNotes(
+    matching query: String,
+    limit: Int = 8
+  ) -> [MacCommandPaletteNote] {
+    let normalizedQuery = query
+      .trimmingCharacters(in: .whitespacesAndNewlines)
+      .lowercased()
+
+    let rankedNotes = files.enumerated().compactMap { index, file in
+      let preview = sidebarPreview(for: file)
+      let note = MacCommandPaletteNote(
+        id: file.id,
+        title: preview.title,
+        path: file.relativePath
+      )
+
+      guard !normalizedQuery.isEmpty else {
+        return (note: note, rank: 0, recencyIndex: index)
+      }
+
+      let candidates = [note.title.lowercased(), note.path.lowercased()]
+      guard let rank = candidates.compactMap({ candidate in
+        Self.commandPaletteRank(candidate, query: normalizedQuery)
+      }).min() else {
+        return nil
+      }
+
+      return (note: note, rank: rank, recencyIndex: index)
+    }
+    .sorted { lhs, rhs in
+      if lhs.rank != rhs.rank {
+        return lhs.rank < rhs.rank
+      }
+      return lhs.recencyIndex < rhs.recencyIndex
+    }
+
+    return Array(rankedNotes.prefix(max(0, limit)).map(\.note))
+  }
+
+  func commandPaletteCreationTitle(matching query: String) -> String? {
+    guard canCreateNote,
+          let title = MarkdownFilename.wikiLinkTitle(from: query),
+          let requestedStem = MarkdownFilename.wikiLinkStem(from: query)
+    else {
+      return nil
+    }
+
+    let normalizedTitle = Self.normalizedPaletteIdentity(title)
+    let normalizedStem = Self.normalizedPaletteIdentity(requestedStem)
+    let hasExactMatch = files.contains { file in
+      let renderedTitle = Self.normalizedPaletteIdentity(sidebarPreview(for: file).title)
+      let filenameStem = Self.normalizedPaletteIdentity(
+        file.url.deletingPathExtension().lastPathComponent
+      )
+      let relativePathStem = Self.normalizedPaletteIdentity(
+        (file.relativePath as NSString).deletingPathExtension
+      )
+      return renderedTitle == normalizedTitle
+        || filenameStem == normalizedStem
+        || relativePathStem == normalizedTitle
+    }
+
+    return hasExactMatch ? nil : title
+  }
+
   init(bookmarkStore: MarkdownFolderBookmarkStore = MarkdownFolderBookmarkStore()) {
     self.bookmarkStore = bookmarkStore
   }
@@ -116,6 +187,10 @@ final class MacMarkdownAppModel {
     guard canCreateNote else { return }
     pendingNoteCreations += 1
     startNextNoteCreationIfNeeded()
+  }
+
+  func createNote(named title: String) {
+    openOrCreateNamedNote(title)
   }
 
   func navigateBack() {
@@ -197,6 +272,10 @@ final class MacMarkdownAppModel {
   }
 
   func openWikiLink(_ target: String) {
+    openOrCreateNamedNote(target)
+  }
+
+  private func openOrCreateNamedNote(_ target: String) {
     guard canCreateNote,
           MarkdownFilename.wikiLinkStem(from: target) != nil,
           let activeFolder = folder
@@ -743,5 +822,24 @@ final class MacMarkdownAppModel {
       }
       return lhs.relativePath.localizedStandardCompare(rhs.relativePath) == .orderedAscending
     }
+  }
+
+  private static func commandPaletteRank(_ candidate: String, query: String) -> Int? {
+    if candidate == query {
+      return 0
+    }
+    if candidate.hasPrefix(query) {
+      return 1
+    }
+    if candidate.contains(query) {
+      return 2
+    }
+    return nil
+  }
+
+  private static func normalizedPaletteIdentity(_ value: String) -> String {
+    value
+      .trimmingCharacters(in: .whitespacesAndNewlines)
+      .lowercased()
   }
 }

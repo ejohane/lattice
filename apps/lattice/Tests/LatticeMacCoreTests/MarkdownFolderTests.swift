@@ -541,6 +541,93 @@ struct MacMarkdownAppModelTests {
     #expect(model.selectedFileID == newerURL.standardizedFileURL)
   }
 
+  @Test("finds command palette notes by title and path but not body")
+  func findsCommandPaletteNotesByTitleAndPath() async throws {
+    let root = try temporaryDirectory()
+    defer { try? FileManager.default.removeItem(at: root) }
+    let archive = root.appendingPathComponent("Archive", isDirectory: true)
+    try FileManager.default.createDirectory(at: archive, withIntermediateDirectories: true)
+    let roadmapURL = archive.appendingPathComponent("Planning.md")
+    let journalURL = root.appendingPathComponent("Journal.md")
+    try "# Product Roadmap\n\nnebula phrase".write(
+      to: roadmapURL,
+      atomically: true,
+      encoding: .utf8
+    )
+    try "# Journal\n\nDaily reflection".write(
+      to: journalURL,
+      atomically: true,
+      encoding: .utf8
+    )
+    try FileManager.default.setAttributes(
+      [.modificationDate: Date(timeIntervalSince1970: 1_000)],
+      ofItemAtPath: roadmapURL.path
+    )
+    try FileManager.default.setAttributes(
+      [.modificationDate: Date(timeIntervalSince1970: 2_000)],
+      ofItemAtPath: journalURL.path
+    )
+
+    let model = MacMarkdownAppModel(folderURL: root)
+    #expect(await eventually { !model.isLoadingFiles && !model.isLoadingFile })
+
+    #expect(model.commandPaletteNotes(matching: "").map(\.title) == ["Journal", "Product Roadmap"])
+    #expect(model.commandPaletteNotes(matching: "road").map(\.title) == ["Product Roadmap"])
+    #expect(model.commandPaletteNotes(matching: "archive/planning").map(\.title) == ["Product Roadmap"])
+    #expect(model.commandPaletteNotes(matching: "nebula").isEmpty)
+
+    let match = try #require(model.commandPaletteNotes(matching: "planning").first)
+    model.selectFile(match.id)
+    #expect(await eventually {
+      model.selectedFileID == roadmapURL.standardizedFileURL && !model.isLoadingFile
+    })
+  }
+
+  @Test("offers named note creation only without an exact palette match")
+  func offersNamedNoteCreationWithoutExactMatch() async throws {
+    let root = try temporaryDirectory()
+    defer { try? FileManager.default.removeItem(at: root) }
+    let notesFolder = root.appendingPathComponent("notes", isDirectory: true)
+    try FileManager.default.createDirectory(at: notesFolder, withIntermediateDirectories: true)
+    try "# Existing Title\n\nBody".write(
+      to: notesFolder.appendingPathComponent("Existing File.md"),
+      atomically: true,
+      encoding: .utf8
+    )
+
+    let model = MacMarkdownAppModel(folderURL: root)
+    #expect(await eventually { !model.isLoadingFiles && !model.isLoadingFile })
+
+    #expect(model.commandPaletteCreationTitle(matching: "Existing Title") == nil)
+    #expect(model.commandPaletteCreationTitle(matching: "existing file") == nil)
+    #expect(model.commandPaletteCreationTitle(matching: "notes/Existing File.md") == nil)
+    #expect(model.commandPaletteCreationTitle(matching: "Existing") == "Existing")
+    #expect(model.commandPaletteCreationTitle(matching: "  ") == nil)
+  }
+
+  @Test("creates and opens a note named from the palette query")
+  func createsNamedNoteFromPaletteQuery() async throws {
+    let root = try temporaryDirectory()
+    defer { try? FileManager.default.removeItem(at: root) }
+    try "# Existing".write(
+      to: root.appendingPathComponent("Existing.md"),
+      atomically: true,
+      encoding: .utf8
+    )
+    let model = MacMarkdownAppModel(folderURL: root)
+    #expect(await eventually { !model.isLoadingFiles && !model.isLoadingFile })
+
+    model.createNote(named: "Project: Launch")
+
+    #expect(await eventually {
+      model.selectedFileID?.lastPathComponent == "Project - Launch.md"
+        && !model.isCreatingNote
+    })
+    #expect(model.text == "# Project: Launch\n\n")
+    #expect(model.selectedNoteTitle == "Project: Launch")
+    #expect(model.editorFocusRequest == 1)
+  }
+
   @Test("opens and reuses today's canonical note from the app model")
   func opensAndReusesTodayNote() async throws {
     let root = try temporaryDirectory()
