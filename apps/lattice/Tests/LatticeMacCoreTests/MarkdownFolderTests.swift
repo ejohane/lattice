@@ -583,6 +583,51 @@ struct MacMarkdownAppModelTests {
     })
   }
 
+  @Test("offers named note creation only without an exact palette match")
+  func offersNamedNoteCreationWithoutExactMatch() async throws {
+    let root = try temporaryDirectory()
+    defer { try? FileManager.default.removeItem(at: root) }
+    let notesFolder = root.appendingPathComponent("notes", isDirectory: true)
+    try FileManager.default.createDirectory(at: notesFolder, withIntermediateDirectories: true)
+    try "# Existing Title\n\nBody".write(
+      to: notesFolder.appendingPathComponent("Existing File.md"),
+      atomically: true,
+      encoding: .utf8
+    )
+
+    let model = MacMarkdownAppModel(folderURL: root)
+    #expect(await eventually { !model.isLoadingFiles && !model.isLoadingFile })
+
+    #expect(model.commandPaletteCreationTitle(matching: "Existing Title") == nil)
+    #expect(model.commandPaletteCreationTitle(matching: "existing file") == nil)
+    #expect(model.commandPaletteCreationTitle(matching: "notes/Existing File.md") == nil)
+    #expect(model.commandPaletteCreationTitle(matching: "Existing") == "Existing")
+    #expect(model.commandPaletteCreationTitle(matching: "  ") == nil)
+  }
+
+  @Test("creates and opens a note named from the palette query")
+  func createsNamedNoteFromPaletteQuery() async throws {
+    let root = try temporaryDirectory()
+    defer { try? FileManager.default.removeItem(at: root) }
+    try "# Existing".write(
+      to: root.appendingPathComponent("Existing.md"),
+      atomically: true,
+      encoding: .utf8
+    )
+    let model = MacMarkdownAppModel(folderURL: root)
+    #expect(await eventually { !model.isLoadingFiles && !model.isLoadingFile })
+
+    model.createNote(named: "Project: Launch")
+
+    #expect(await eventually {
+      model.selectedFileID?.lastPathComponent == "Project - Launch.md"
+        && !model.isCreatingNote
+    })
+    #expect(model.text == "# Project: Launch\n\n")
+    #expect(model.selectedNoteTitle == "Project: Launch")
+    #expect(model.editorFocusRequest == 1)
+  }
+
   @Test("opens and reuses today's canonical note from the app model")
   func opensAndReusesTodayNote() async throws {
     let root = try temporaryDirectory()

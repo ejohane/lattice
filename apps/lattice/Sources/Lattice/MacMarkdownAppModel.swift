@@ -120,6 +120,32 @@ final class MacMarkdownAppModel {
     return Array(rankedNotes.prefix(max(0, limit)).map(\.note))
   }
 
+  func commandPaletteCreationTitle(matching query: String) -> String? {
+    guard canCreateNote,
+          let title = MarkdownFilename.wikiLinkTitle(from: query),
+          let requestedStem = MarkdownFilename.wikiLinkStem(from: query)
+    else {
+      return nil
+    }
+
+    let normalizedTitle = Self.normalizedPaletteIdentity(title)
+    let normalizedStem = Self.normalizedPaletteIdentity(requestedStem)
+    let hasExactMatch = files.contains { file in
+      let renderedTitle = Self.normalizedPaletteIdentity(sidebarPreview(for: file).title)
+      let filenameStem = Self.normalizedPaletteIdentity(
+        file.url.deletingPathExtension().lastPathComponent
+      )
+      let relativePathStem = Self.normalizedPaletteIdentity(
+        (file.relativePath as NSString).deletingPathExtension
+      )
+      return renderedTitle == normalizedTitle
+        || filenameStem == normalizedStem
+        || relativePathStem == normalizedTitle
+    }
+
+    return hasExactMatch ? nil : title
+  }
+
   init(bookmarkStore: MarkdownFolderBookmarkStore = MarkdownFolderBookmarkStore()) {
     self.bookmarkStore = bookmarkStore
   }
@@ -161,6 +187,10 @@ final class MacMarkdownAppModel {
     guard canCreateNote else { return }
     pendingNoteCreations += 1
     startNextNoteCreationIfNeeded()
+  }
+
+  func createNote(named title: String) {
+    openOrCreateNamedNote(title)
   }
 
   func navigateBack() {
@@ -242,6 +272,10 @@ final class MacMarkdownAppModel {
   }
 
   func openWikiLink(_ target: String) {
+    openOrCreateNamedNote(target)
+  }
+
+  private func openOrCreateNamedNote(_ target: String) {
     guard canCreateNote,
           MarkdownFilename.wikiLinkStem(from: target) != nil,
           let activeFolder = folder
@@ -801,5 +835,11 @@ final class MacMarkdownAppModel {
       return 2
     }
     return nil
+  }
+
+  private static func normalizedPaletteIdentity(_ value: String) -> String {
+    value
+      .trimmingCharacters(in: .whitespacesAndNewlines)
+      .lowercased()
   }
 }

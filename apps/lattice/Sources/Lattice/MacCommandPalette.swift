@@ -69,12 +69,15 @@ struct MacCommandPaletteView: View {
 
   private enum Item: Hashable {
     case command(Command)
+    case createNote(String)
     case note(MacCommandPaletteNote)
 
     var title: String {
       switch self {
       case .command(let command):
         command.title
+      case .createNote(let title):
+        "Create “\(title)”"
       case .note(let note):
         note.title
       }
@@ -84,6 +87,8 @@ struct MacCommandPaletteView: View {
       switch self {
       case .command(let command):
         command.subtitle
+      case .createNote:
+        nil
       case .note(let note):
         note.path
       }
@@ -93,6 +98,8 @@ struct MacCommandPaletteView: View {
       switch self {
       case .command(let command):
         command.systemImage
+      case .createNote:
+        "square.and.pencil"
       case .note:
         "doc.text"
       }
@@ -102,6 +109,8 @@ struct MacCommandPaletteView: View {
       switch self {
       case .command(let command):
         command.shortcut
+      case .createNote:
+        "⌘↩"
       case .note:
         nil
       }
@@ -110,7 +119,9 @@ struct MacCommandPaletteView: View {
 
   let canCreateNote: Bool
   let notes: (String) -> [MacCommandPaletteNote]
+  let creationTitle: (String) -> String?
   let onCreateNote: @MainActor () -> Void
+  let onCreateNamedNote: @MainActor (String) -> Void
   let onOpenTodayNote: @MainActor () -> Void
   let onOpenNote: @MainActor (MacCommandPaletteNote.ID) -> Void
 
@@ -135,8 +146,25 @@ struct MacCommandPaletteView: View {
     notes(query)
   }
 
+  private var visibleCommandItems: [Item] {
+    let title = creationTitle(query)
+    var items = title.map { [Item.createNote($0)] } ?? []
+    items += visibleCommands
+      .filter { title == nil || $0 != .newNote }
+      .map(Item.command)
+    return items
+  }
+
   private var visibleItems: [Item] {
-    visibleCommands.map(Item.command) + visibleNotes.map(Item.note)
+    visibleCommandItems + visibleNotes.map(Item.note)
+  }
+
+  private var preferredSelection: Item? {
+    let trimmedQuery = query.trimmingCharacters(in: .whitespacesAndNewlines)
+    guard !trimmedQuery.isEmpty else {
+      return visibleCommandItems.first
+    }
+    return visibleNotes.first.map(Item.note) ?? visibleCommandItems.first
   }
 
   var body: some View {
@@ -149,6 +177,13 @@ struct MacCommandPaletteView: View {
           .textFieldStyle(.plain)
           .font(.title3)
           .focused($isSearchFocused)
+          .onKeyPress(keys: [.return]) { press in
+            guard press.modifiers.contains(.command) else {
+              return .ignored
+            }
+            performQueryCreation()
+            return .handled
+          }
           .onSubmit(performSelectedItem)
       }
       .padding(.horizontal, 16)
@@ -163,17 +198,17 @@ struct MacCommandPaletteView: View {
             .padding(.vertical, 24)
             .listRowSeparator(.hidden)
         } else {
-          if !visibleCommands.isEmpty {
+          if !visibleCommandItems.isEmpty {
             Section("Commands") {
-              ForEach(visibleCommands, id: \.self) { command in
+              ForEach(visibleCommandItems, id: \.self) { item in
                 Button {
-                  perform(.command(command))
+                  perform(item)
                 } label: {
-                  itemRow(.command(command))
+                  itemRow(item)
                 }
                 .buttonStyle(.plain)
                 .disabled(!canCreateNote)
-                .tag(Item.command(command))
+                .tag(item)
                 .listRowInsets(EdgeInsets(top: 2, leading: 6, bottom: 2, trailing: 6))
                 .listRowSeparator(.hidden)
               }
@@ -203,10 +238,10 @@ struct MacCommandPaletteView: View {
     .frame(width: 520, height: 420)
     .task {
       isSearchFocused = true
-      selection = visibleItems.first
+      selection = preferredSelection
     }
     .onChange(of: query) {
-      selection = visibleItems.first
+      selection = preferredSelection
     }
     .onKeyPress(.upArrow) {
       moveSelection(by: -1)
@@ -259,6 +294,11 @@ struct MacCommandPaletteView: View {
     perform(item)
   }
 
+  private func performQueryCreation() {
+    guard let title = creationTitle(query) else { return }
+    onCreateNamedNote(title)
+  }
+
   private func perform(_ item: Item) {
     guard visibleItems.contains(item) else { return }
     switch item {
@@ -270,6 +310,8 @@ struct MacCommandPaletteView: View {
       case .todayNote:
         onOpenTodayNote()
       }
+    case .createNote(let title):
+      onCreateNamedNote(title)
     case .note(let note):
       onOpenNote(note.id)
     }
