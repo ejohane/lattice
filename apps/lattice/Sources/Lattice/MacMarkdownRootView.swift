@@ -61,6 +61,9 @@ struct MacMarkdownRootView: View {
     .sheet(isPresented: $isShowingCommandPalette) {
       MacCommandPaletteView(
         canCreateNote: model.canCreateNote,
+        notes: { query in
+          model.commandPaletteNotes(matching: query)
+        },
         onCreateNote: {
           isShowingCommandPalette = false
           Task { @MainActor in
@@ -71,6 +74,12 @@ struct MacMarkdownRootView: View {
           isShowingCommandPalette = false
           Task { @MainActor in
             model.openTodayNote()
+          }
+        },
+        onOpenNote: { noteID in
+          isShowingCommandPalette = false
+          Task { @MainActor in
+            model.selectFile(noteID)
           }
         }
       )

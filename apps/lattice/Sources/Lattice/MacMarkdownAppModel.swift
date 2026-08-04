@@ -2,6 +2,12 @@ import Foundation
 import LatticeMacCore
 import Observation
 
+struct MacCommandPaletteNote: Identifiable, Hashable {
+  let id: MarkdownFile.ID
+  let title: String
+  let path: String
+}
+
 @MainActor
 @Observable
 final class MacMarkdownAppModel {
@@ -73,6 +79,45 @@ final class MacMarkdownAppModel {
 
   func sidebarPreview(for file: MarkdownFile) -> MarkdownSidebarPreview {
     sidebarPreviews[file.id] ?? MarkdownSidebarPreview(file: file, body: "")
+  }
+
+  func commandPaletteNotes(
+    matching query: String,
+    limit: Int = 8
+  ) -> [MacCommandPaletteNote] {
+    let normalizedQuery = query
+      .trimmingCharacters(in: .whitespacesAndNewlines)
+      .lowercased()
+
+    let rankedNotes = files.enumerated().compactMap { index, file in
+      let preview = sidebarPreview(for: file)
+      let note = MacCommandPaletteNote(
+        id: file.id,
+        title: preview.title,
+        path: file.relativePath
+      )
+
+      guard !normalizedQuery.isEmpty else {
+        return (note: note, rank: 0, recencyIndex: index)
+      }
+
+      let candidates = [note.title.lowercased(), note.path.lowercased()]
+      guard let rank = candidates.compactMap({ candidate in
+        Self.commandPaletteRank(candidate, query: normalizedQuery)
+      }).min() else {
+        return nil
+      }
+
+      return (note: note, rank: rank, recencyIndex: index)
+    }
+    .sorted { lhs, rhs in
+      if lhs.rank != rhs.rank {
+        return lhs.rank < rhs.rank
+      }
+      return lhs.recencyIndex < rhs.recencyIndex
+    }
+
+    return Array(rankedNotes.prefix(max(0, limit)).map(\.note))
   }
 
   init(bookmarkStore: MarkdownFolderBookmarkStore = MarkdownFolderBookmarkStore()) {
@@ -743,5 +788,18 @@ final class MacMarkdownAppModel {
       }
       return lhs.relativePath.localizedStandardCompare(rhs.relativePath) == .orderedAscending
     }
+  }
+
+  private static func commandPaletteRank(_ candidate: String, query: String) -> Int? {
+    if candidate == query {
+      return 0
+    }
+    if candidate.hasPrefix(query) {
+      return 1
+    }
+    if candidate.contains(query) {
+      return 2
+    }
+    return nil
   }
 }

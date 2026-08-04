@@ -34,7 +34,7 @@ extension FocusedValues {
 }
 
 struct MacCommandPaletteView: View {
-  private enum Selection: CaseIterable, Hashable {
+  private enum Command: CaseIterable, Hashable {
     case newNote
     case todayNote
 
@@ -67,25 +67,76 @@ struct MacCommandPaletteView: View {
     }
   }
 
+  private enum Item: Hashable {
+    case command(Command)
+    case note(MacCommandPaletteNote)
+
+    var title: String {
+      switch self {
+      case .command(let command):
+        command.title
+      case .note(let note):
+        note.title
+      }
+    }
+
+    var subtitle: String? {
+      switch self {
+      case .command(let command):
+        command.subtitle
+      case .note(let note):
+        note.path
+      }
+    }
+
+    var systemImage: String {
+      switch self {
+      case .command(let command):
+        command.systemImage
+      case .note:
+        "doc.text"
+      }
+    }
+
+    var shortcut: String? {
+      switch self {
+      case .command(let command):
+        command.shortcut
+      case .note:
+        nil
+      }
+    }
+  }
+
   let canCreateNote: Bool
+  let notes: (String) -> [MacCommandPaletteNote]
   let onCreateNote: @MainActor () -> Void
   let onOpenTodayNote: @MainActor () -> Void
+  let onOpenNote: @MainActor (MacCommandPaletteNote.ID) -> Void
 
   @Environment(\.dismiss) private var dismiss
   @FocusState private var isSearchFocused: Bool
   @State private var query = ""
-  @State private var selection: Selection? = .newNote
+  @State private var selection: Item?
 
-  private var visibleCommands: [Selection] {
+  private var visibleCommands: [Command] {
     let trimmedQuery = query.trimmingCharacters(in: .whitespacesAndNewlines)
-    guard !trimmedQuery.isEmpty else { return Selection.allCases }
+    guard !trimmedQuery.isEmpty else { return Command.allCases }
 
-    return Selection.allCases.filter { command in
+    return Command.allCases.filter { command in
       [command.title, command.subtitle]
         .compactMap { $0 }
         .joined(separator: " ")
         .localizedCaseInsensitiveContains(trimmedQuery)
     }
+  }
+
+  private var visibleNotes: [MacCommandPaletteNote] {
+    notes(query)
+  }
+
+  private var visibleItems: [Item] {
+    visibleCommands.map(Item.command) + visibleNotes.map(Item.note)
   }
 
   var body: some View {
@@ -94,11 +145,11 @@ struct MacCommandPaletteView: View {
         Image(systemName: "magnifyingglass")
           .foregroundStyle(.secondary)
 
-        TextField("Search commands", text: $query)
+        TextField("Search commands and notes", text: $query)
           .textFieldStyle(.plain)
           .font(.title3)
           .focused($isSearchFocused)
-          .onSubmit(performSelectedCommand)
+          .onSubmit(performSelectedItem)
       }
       .padding(.horizontal, 16)
       .padding(.vertical, 14)
@@ -106,35 +157,56 @@ struct MacCommandPaletteView: View {
       Divider()
 
       List(selection: $selection) {
-        if !visibleCommands.isEmpty {
-          ForEach(visibleCommands, id: \.self) { command in
-            Button {
-              perform(command)
-            } label: {
-              commandRow(command)
-            }
-            .buttonStyle(.plain)
-            .disabled(!canCreateNote)
-            .tag(command)
-            .listRowInsets(EdgeInsets(top: 2, leading: 6, bottom: 2, trailing: 6))
-            .listRowSeparator(.hidden)
-          }
-        } else {
+        if visibleItems.isEmpty {
           ContentUnavailableView.search(text: query)
             .frame(maxWidth: .infinity)
             .padding(.vertical, 24)
             .listRowSeparator(.hidden)
+        } else {
+          if !visibleCommands.isEmpty {
+            Section("Commands") {
+              ForEach(visibleCommands, id: \.self) { command in
+                Button {
+                  perform(.command(command))
+                } label: {
+                  itemRow(.command(command))
+                }
+                .buttonStyle(.plain)
+                .disabled(!canCreateNote)
+                .tag(Item.command(command))
+                .listRowInsets(EdgeInsets(top: 2, leading: 6, bottom: 2, trailing: 6))
+                .listRowSeparator(.hidden)
+              }
+            }
+          }
+
+          if !visibleNotes.isEmpty {
+            Section(query.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty ? "Recent Notes" : "Notes") {
+              ForEach(visibleNotes) { note in
+                Button {
+                  perform(.note(note))
+                } label: {
+                  itemRow(.note(note))
+                }
+                .buttonStyle(.plain)
+                .tag(Item.note(note))
+                .listRowInsets(EdgeInsets(top: 2, leading: 6, bottom: 2, trailing: 6))
+                .listRowSeparator(.hidden)
+              }
+            }
+          }
         }
       }
       .listStyle(.plain)
       .scrollContentBackground(.hidden)
     }
-    .frame(width: 480, height: 180)
+    .frame(width: 520, height: 420)
     .task {
       isSearchFocused = true
+      selection = visibleItems.first
     }
     .onChange(of: query) {
-      selection = visibleCommands.first
+      selection = visibleItems.first
     }
     .onKeyPress(.upArrow) {
       moveSelection(by: -1)
@@ -149,25 +221,28 @@ struct MacCommandPaletteView: View {
     }
   }
 
-  private func commandRow(_ command: Selection) -> some View {
+  private func itemRow(_ item: Item) -> some View {
     HStack(spacing: 12) {
-      Image(systemName: command.systemImage)
+      Image(systemName: item.systemImage)
         .foregroundStyle(.secondary)
         .frame(width: 20)
 
       VStack(alignment: .leading, spacing: 2) {
-        Text(command.title)
+        Text(item.title)
+          .lineLimit(1)
 
-        if let subtitle = command.subtitle {
+        if let subtitle = item.subtitle {
           Text(subtitle)
             .font(.callout)
             .foregroundStyle(.secondary)
+            .lineLimit(1)
+            .truncationMode(.middle)
         }
       }
 
       Spacer()
 
-      if let shortcut = command.shortcut {
+      if let shortcut = item.shortcut {
         Text(shortcut)
           .font(.system(.callout, design: .rounded, weight: .medium))
           .foregroundStyle(.secondary)
@@ -179,34 +254,40 @@ struct MacCommandPaletteView: View {
     .frame(height: 56)
   }
 
-  private func performSelectedCommand() {
-    guard let command = selection ?? visibleCommands.first else { return }
-    perform(command)
+  private func performSelectedItem() {
+    guard let item = selection ?? visibleItems.first else { return }
+    perform(item)
   }
 
-  private func perform(_ command: Selection) {
-    guard canCreateNote, visibleCommands.contains(command) else { return }
-    switch command {
-    case .newNote:
-      onCreateNote()
-    case .todayNote:
-      onOpenTodayNote()
+  private func perform(_ item: Item) {
+    guard visibleItems.contains(item) else { return }
+    switch item {
+    case .command(let command):
+      guard canCreateNote else { return }
+      switch command {
+      case .newNote:
+        onCreateNote()
+      case .todayNote:
+        onOpenTodayNote()
+      }
+    case .note(let note):
+      onOpenNote(note.id)
     }
   }
 
   private func moveSelection(by offset: Int) {
-    guard !visibleCommands.isEmpty else {
+    guard !visibleItems.isEmpty else {
       selection = nil
       return
     }
     guard let selection,
-          let currentIndex = visibleCommands.firstIndex(of: selection)
+          let currentIndex = visibleItems.firstIndex(of: selection)
     else {
-      self.selection = visibleCommands.first
+      self.selection = visibleItems.first
       return
     }
 
-    let nextIndex = min(max(currentIndex + offset, 0), visibleCommands.count - 1)
-    self.selection = visibleCommands[nextIndex]
+    let nextIndex = min(max(currentIndex + offset, 0), visibleItems.count - 1)
+    self.selection = visibleItems[nextIndex]
   }
 }
