@@ -4,6 +4,7 @@ import UniformTypeIdentifiers
 
 struct MacMarkdownRootView: View {
   let model: MacMarkdownAppModel
+  @Environment(MacKeyboardShortcutSettings.self) private var shortcutSettings
   @State private var isChoosingFolder = false
   @State private var isShowingCommandPalette = false
 
@@ -52,15 +53,30 @@ struct MacMarkdownRootView: View {
         model.createNote()
       }
     )
+    .background {
+      MacLocalKeyboardShortcutMonitorView(
+        settings: shortcutSettings,
+        canOpenTodayNote: model.canCreateNote
+      ) {
+        model.openTodayNote()
+      }
+    }
     .focusedSceneValue(
       \.macMarkdownShowCommandPaletteAction,
       MacMarkdownFocusedAction {
         isShowingCommandPalette = true
       }
     )
+    .focusedSceneValue(
+      \.macMarkdownOpenTodayNoteAction,
+      MacMarkdownFocusedAction(isEnabled: model.canCreateNote) {
+        model.openTodayNote()
+      }
+    )
     .sheet(isPresented: $isShowingCommandPalette) {
       MacCommandPaletteView(
         canCreateNote: model.canCreateNote,
+        todayNoteShortcut: shortcutSettings.todayNoteShortcut?.description,
         notes: { query in
           model.commandPaletteNotes(matching: query)
         },

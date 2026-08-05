@@ -11,6 +11,7 @@ struct LatticeMacApp: App {
   var body: some Scene {
     WindowGroup("Lattice", id: "main") {
       MacMarkdownRootView(model: appDelegate.model)
+        .environment(appDelegate.shortcutSettings)
         .frame(minWidth: 640, minHeight: 420)
     }
     .defaultSize(width: 960, height: 680)
@@ -36,6 +37,8 @@ private struct MacMarkdownCommands: Commands {
   @FocusedValue(\.macMarkdownNewNoteAction) private var newNoteAction
   @FocusedValue(\.macMarkdownShowCommandPaletteAction)
   private var showCommandPaletteAction
+  @FocusedValue(\.macMarkdownOpenTodayNoteAction)
+  private var openTodayNoteAction
 
   var body: some Commands {
     CommandGroup(after: .appInfo) {
@@ -64,6 +67,11 @@ private struct MacMarkdownCommands: Commands {
       }
       .keyboardShortcut("p", modifiers: [.command, .shift])
       .disabled(showCommandPaletteAction?.isEnabled != true)
+
+      Button("Today’s Note") {
+        openTodayNoteAction?.perform()
+      }
+      .disabled(openTodayNoteAction?.isEnabled != true)
     }
   }
 }
@@ -71,9 +79,12 @@ private struct MacMarkdownCommands: Commands {
 @MainActor
 final class MacAppDelegate: NSObject, NSApplicationDelegate {
   let model = MacMarkdownAppModel()
+  let shortcutSettings = MacKeyboardShortcutSettings()
   private var updaterController: SPUStandardUpdaterController?
   private lazy var jotWindowController = MacJotWindowController(model: model)
-  private lazy var settingsWindowController = MacSettingsWindowController()
+  private lazy var settingsWindowController = MacSettingsWindowController(
+    shortcutSettings: shortcutSettings
+  )
   private var globalJotShortcutTask: Task<Void, Never>?
 
   func applicationDidFinishLaunching(_ notification: Notification) {

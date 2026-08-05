@@ -107,6 +107,7 @@ public struct LatticeKeyboardShortcut: Equatable, Sendable {
 public enum LatticeKeyboardShortcutID: String, CaseIterable, Identifiable, Sendable {
   case commandPalette
   case zenMode
+  case todayNote
   case newNote
   case navigateBack
   case navigateForward
@@ -122,6 +123,8 @@ public enum LatticeKeyboardShortcutID: String, CaseIterable, Identifiable, Senda
       return "Command Palette"
     case .zenMode:
       return "Zen Mode"
+    case .todayNote:
+      return "Today’s Note"
     case .newNote:
       return "New Note"
     case .navigateBack:
@@ -139,6 +142,8 @@ public enum LatticeKeyboardShortcutID: String, CaseIterable, Identifiable, Senda
       return LatticeKeyboardShortcut(key: "p", modifiers: [.command, .shift])
     case .zenMode:
       return LatticeKeyboardShortcut(key: "z", modifiers: [.command, .shift])
+    case .todayNote:
+      return LatticeKeyboardShortcut(key: "d", modifiers: [.command, .shift])
     case .newNote:
       return LatticeKeyboardShortcut(key: "n", modifiers: [.command])
     case .navigateBack:

@@ -163,6 +163,31 @@ public struct LatticeRootView: View {
           }
         }
       }
+      .onKeyPress(phases: .down) { press in
+        handleKeyboardShortcut(press)
+      }
+  }
+
+  private func handleKeyboardShortcut(_ press: KeyPress) -> KeyPress.Result {
+    var modifiers = LatticeKeyboardModifiers()
+    if press.modifiers.contains(.command) {
+      modifiers.insert(.command)
+    }
+    if press.modifiers.contains(.shift) {
+      modifiers.insert(.shift)
+    }
+    if press.modifiers.contains(.option) {
+      modifiers.insert(.option)
+    }
+    if press.modifiers.contains(.control) {
+      modifiers.insert(.control)
+    }
+
+    let shortcut = LatticeKeyboardShortcut(
+      key: press.characters,
+      modifiers: modifiers
+    )
+    return model.performTodayNoteKeyboardShortcut(shortcut) ? .handled : .ignored
   }
 
   @ViewBuilder

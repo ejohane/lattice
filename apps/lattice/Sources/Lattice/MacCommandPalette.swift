@@ -21,6 +21,10 @@ private struct MacMarkdownShowCommandPaletteActionKey: FocusedValueKey {
   typealias Value = MacMarkdownFocusedAction
 }
 
+private struct MacMarkdownOpenTodayNoteActionKey: FocusedValueKey {
+  typealias Value = MacMarkdownFocusedAction
+}
+
 extension FocusedValues {
   var macMarkdownNewNoteAction: MacMarkdownFocusedAction? {
     get { self[MacMarkdownNewNoteActionKey.self] }
@@ -31,44 +35,48 @@ extension FocusedValues {
     get { self[MacMarkdownShowCommandPaletteActionKey.self] }
     set { self[MacMarkdownShowCommandPaletteActionKey.self] = newValue }
   }
+
+  var macMarkdownOpenTodayNoteAction: MacMarkdownFocusedAction? {
+    get { self[MacMarkdownOpenTodayNoteActionKey.self] }
+    set { self[MacMarkdownOpenTodayNoteActionKey.self] = newValue }
+  }
+}
+
+struct MacPaletteCommand: Hashable {
+  enum ID: CaseIterable {
+    case newNote
+    case todayNote
+  }
+
+  let id: ID
+  let title: String
+  let subtitle: String?
+  let systemImage: String
+  let shortcut: String?
+
+  static func commands(todayNoteShortcut: String?) -> [MacPaletteCommand] {
+    [
+      MacPaletteCommand(
+        id: .newNote,
+        title: "New Note",
+        subtitle: nil,
+        systemImage: "square.and.pencil",
+        shortcut: "⌘N"
+      ),
+      MacPaletteCommand(
+        id: .todayNote,
+        title: "Today’s Note",
+        subtitle: "Create or open today’s daily note",
+        systemImage: "calendar",
+        shortcut: todayNoteShortcut
+      )
+    ]
+  }
 }
 
 struct MacCommandPaletteView: View {
-  private enum Command: CaseIterable, Hashable {
-    case newNote
-    case todayNote
-
-    var title: String {
-      switch self {
-      case .newNote: "New Note"
-      case .todayNote: "Today’s Note"
-      }
-    }
-
-    var subtitle: String? {
-      switch self {
-      case .newNote: nil
-      case .todayNote: "Create or open today’s daily note"
-      }
-    }
-
-    var systemImage: String {
-      switch self {
-      case .newNote: "square.and.pencil"
-      case .todayNote: "calendar"
-      }
-    }
-
-    var shortcut: String? {
-      switch self {
-      case .newNote: "⌘N"
-      case .todayNote: nil
-      }
-    }
-  }
-
   private enum Item: Hashable {
-    case command(Command)
+    case command(MacPaletteCommand)
     case createNote(String)
     case note(MacCommandPaletteNote)
 
@@ -118,6 +126,7 @@ struct MacCommandPaletteView: View {
   }
 
   let canCreateNote: Bool
+  let todayNoteShortcut: String?
   let notes: (String) -> [MacCommandPaletteNote]
   let creationTitle: (String) -> String?
   let onCreateNote: @MainActor () -> Void
@@ -130,11 +139,12 @@ struct MacCommandPaletteView: View {
   @State private var query = ""
   @State private var selection: Item?
 
-  private var visibleCommands: [Command] {
+  private var visibleCommands: [MacPaletteCommand] {
+    let commands = MacPaletteCommand.commands(todayNoteShortcut: todayNoteShortcut)
     let trimmedQuery = query.trimmingCharacters(in: .whitespacesAndNewlines)
-    guard !trimmedQuery.isEmpty else { return Command.allCases }
+    guard !trimmedQuery.isEmpty else { return commands }
 
-    return Command.allCases.filter { command in
+    return commands.filter { command in
       [command.title, command.subtitle]
         .compactMap { $0 }
         .joined(separator: " ")
@@ -150,7 +160,7 @@ struct MacCommandPaletteView: View {
     let title = creationTitle(query)
     var items = title.map { [Item.createNote($0)] } ?? []
     items += visibleCommands
-      .filter { title == nil || $0 != .newNote }
+      .filter { title == nil || $0.id != .newNote }
       .map(Item.command)
     return items
   }
@@ -304,7 +314,7 @@ struct MacCommandPaletteView: View {
     switch item {
     case .command(let command):
       guard canCreateNote else { return }
-      switch command {
+      switch command.id {
       case .newNote:
         onCreateNote()
       case .todayNote:

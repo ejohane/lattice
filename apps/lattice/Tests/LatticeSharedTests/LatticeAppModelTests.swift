@@ -244,6 +244,7 @@ struct LatticeAppModelTests {
       noteLibrary: fixture.library,
       folderAccessStore: fixture.folderAccessStore,
       noteIndex: NoteIndex(appSupportURL: fixture.appSupportURL),
+      editorPreferencesStore: EditorPreferencesStore(defaults: fixture.defaults),
       dateProvider: { now }
     )
 
@@ -253,7 +254,7 @@ struct LatticeAppModelTests {
 
     let command = try #require(model.commandPaletteCommands().first { $0.title == "Today’s Note" })
     #expect(command.subtitle == "Create or open today’s daily note")
-    #expect(command.keyboardShortcut == nil)
+    #expect(command.keyboardShortcut == "Cmd-Shift-D")
     command.perform()
 
     let dailyNote = try #require(model.selectedNote)
@@ -275,6 +276,40 @@ struct LatticeAppModelTests {
     #expect(try fixture.library.listNotes().flatMap(\.notes).count == 2)
   }
 
+  @Test("today keyboard shortcut opens the canonical daily note")
+  func opensTodayNoteFromKeyboardShortcut() throws {
+    let fixture = try Fixture()
+    defer { fixture.cleanup() }
+    let model = LatticeAppModel(
+      noteLibrary: fixture.library,
+      folderAccessStore: fixture.folderAccessStore,
+      noteIndex: NoteIndex(appSupportURL: fixture.appSupportURL),
+      editorPreferencesStore: EditorPreferencesStore(defaults: fixture.defaults),
+      dateProvider: { fixture.date() }
+    )
+
+    try fixture.fileManager.createDirectory(at: fixture.root, withIntermediateDirectories: true)
+    model.chooseFolder(fixture.root)
+    model.text = "# Source Note\n\nUnsaved context"
+
+    #expect(model.performTodayNoteKeyboardShortcut(
+      LatticeKeyboardShortcutID.todayNote.defaultShortcut
+    ))
+    #expect(model.selectedNote?.filenameTitle == "2026-06-26")
+    #expect(model.text == "# Friday, June 26, 2026")
+
+    model.setKeyboardShortcut(
+      LatticeKeyboardShortcut(key: "t", modifiers: [.command, .option]),
+      for: .todayNote
+    )
+    #expect(!model.performTodayNoteKeyboardShortcut(
+      LatticeKeyboardShortcutID.todayNote.defaultShortcut
+    ))
+    #expect(model.performTodayNoteKeyboardShortcut(
+      LatticeKeyboardShortcut(key: "t", modifiers: [.command, .option])
+    ))
+  }
+
   @Test("legacy folders prompt once and migrate through the app model")
   func promptsForAndRunsFlatNoteMigration() throws {
     let fixture = try Fixture()
@@ -291,6 +326,7 @@ struct LatticeAppModelTests {
       noteLibrary: fixture.library,
       folderAccessStore: fixture.folderAccessStore,
       noteIndex: NoteIndex(appSupportURL: fixture.appSupportURL),
+      editorPreferencesStore: EditorPreferencesStore(defaults: fixture.defaults),
       dateProvider: { fixture.date() }
     )
 
@@ -298,6 +334,9 @@ struct LatticeAppModelTests {
     #expect(model.isNoteMigrationRequired)
     #expect(model.isShowingNoteMigrationPrompt)
     #expect(!model.commandPaletteCommands().contains { $0.title == "Today’s Note" })
+    #expect(!model.performTodayNoteKeyboardShortcut(
+      LatticeKeyboardShortcutID.todayNote.defaultShortcut
+    ))
 
     model.deferNoteMigration()
     #expect(!model.isShowingNoteMigrationPrompt)
@@ -856,10 +895,15 @@ struct LatticeAppModelTests {
       editorPreferencesStore: EditorPreferencesStore(defaults: defaults)
     )
 
-    let newNoteShortcut = try #require(model.keyboardShortcut(for: .newNote))
-    model.setKeyboardShortcut(newNoteShortcut, for: .zenMode)
+    #expect(model.keyboardShortcut(for: .todayNote) == LatticeKeyboardShortcut(
+      key: "d",
+      modifiers: [.command, .shift]
+    ))
 
-    #expect(model.keyboardShortcut(for: .zenMode) == newNoteShortcut)
+    let newNoteShortcut = try #require(model.keyboardShortcut(for: .newNote))
+    model.setKeyboardShortcut(newNoteShortcut, for: .todayNote)
+
+    #expect(model.keyboardShortcut(for: .todayNote) == newNoteShortcut)
     #expect(model.keyboardShortcut(for: .newNote) == nil)
 
     let restored = LatticeAppModel(
@@ -868,15 +912,15 @@ struct LatticeAppModelTests {
       editorPreferencesStore: EditorPreferencesStore(defaults: defaults)
     )
 
-    #expect(restored.keyboardShortcut(for: .zenMode) == newNoteShortcut)
+    #expect(restored.keyboardShortcut(for: .todayNote) == newNoteShortcut)
     #expect(restored.keyboardShortcut(for: .newNote) == nil)
 
     restored.resetKeyboardShortcut(for: .newNote)
     #expect(restored.keyboardShortcut(for: .newNote) == LatticeKeyboardShortcutID.newNote.defaultShortcut)
-    #expect(restored.keyboardShortcut(for: .zenMode) == nil)
+    #expect(restored.keyboardShortcut(for: .todayNote) == nil)
 
-    restored.resetKeyboardShortcut(for: .zenMode)
-    #expect(restored.keyboardShortcut(for: .zenMode) == LatticeKeyboardShortcutID.zenMode.defaultShortcut)
+    restored.resetKeyboardShortcut(for: .todayNote)
+    #expect(restored.keyboardShortcut(for: .todayNote) == LatticeKeyboardShortcutID.todayNote.defaultShortcut)
   }
 
   @Test("dismisses wiki autocomplete suggestions")
@@ -1153,7 +1197,8 @@ struct LatticeAppModelTests {
     let model = LatticeAppModel(
       noteLibrary: fixture.library,
       folderAccessStore: fixture.folderAccessStore,
-      noteIndex: NoteIndex(appSupportURL: fixture.appSupportURL)
+      noteIndex: NoteIndex(appSupportURL: fixture.appSupportURL),
+      editorPreferencesStore: EditorPreferencesStore(defaults: fixture.defaults)
     )
 
     try fixture.fileManager.createDirectory(at: fixture.root, withIntermediateDirectories: true)
@@ -1192,6 +1237,7 @@ struct LatticeAppModelTests {
       ($0.title, $0.keyboardShortcut)
     })
     #expect(commandShortcuts["Enter Zen Mode"] == "Cmd-Shift-Z")
+    #expect(commandShortcuts["Today’s Note"] == "Cmd-Shift-D")
     #expect(commandShortcuts["New Note"] == "Cmd-N")
   }
 
