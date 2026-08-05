@@ -37,7 +37,17 @@ struct MacMarkdownRootView: View {
         .help("Forward")
       }
 
-      ToolbarItem(placement: .primaryAction) {
+      ToolbarItemGroup(placement: .primaryAction) {
+        MacFileActionsMenu(
+          file: model.file(for: model.selectedFileID),
+          noteTitle: model.selectedFileID == nil ? nil : model.selectedNoteTitle,
+          action: { action, fileID in
+            Task { await model.performFileAction(action, for: fileID) }
+          }
+        ) {
+          Label("File Actions", systemImage: "ellipsis.circle")
+        }
+
         Button {
           model.createNote()
         } label: {
@@ -145,7 +155,14 @@ struct MacMarkdownRootView: View {
       set: { model.selectFile($0) }
     )) {
       ForEach(model.files) { file in
-        MacMarkdownSidebarRow(preview: model.sidebarPreview(for: file))
+        MacMarkdownSidebarRow(
+          file: file,
+          preview: model.sidebarPreview(for: file),
+          isSelected: model.selectedFileID == file.id,
+          action: { action, fileID in
+            Task { await model.performFileAction(action, for: fileID) }
+          }
+        )
           .help(file.relativePath)
           .tag(file.id)
           .listRowInsets(EdgeInsets(top: 2, leading: 12, bottom: 2, trailing: 10))

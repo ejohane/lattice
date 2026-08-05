@@ -12,10 +12,12 @@ struct MacCommandPaletteNote: Identifiable, Hashable {
 @Observable
 final class MacMarkdownAppModel {
   private let bookmarkStore: MarkdownFolderBookmarkStore
+  @ObservationIgnored private let fileActions: MacFileActionClient
   private var folder: MarkdownFolder?
   private var selectedFile: MarkdownFile?
   private var selectedDocument: MarkdownDocument?
   private var hasLoadedSelectedFile = false
+  private var hasPendingSelectedSave = false
   private var hasStarted = false
   private var isAccessingSecurityScopedFolder = false
   private var loadGeneration = 0
@@ -79,6 +81,30 @@ final class MacMarkdownAppModel {
 
   func sidebarPreview(for file: MarkdownFile) -> MarkdownSidebarPreview {
     sidebarPreviews[file.id] ?? MarkdownSidebarPreview(file: file, body: "")
+  }
+
+  func file(for id: MarkdownFile.ID?) -> MarkdownFile? {
+    files.first { $0.id == id }
+  }
+
+  @discardableResult
+  func performFileAction(
+    _ action: MacFileAction,
+    for fileID: MarkdownFile.ID
+  ) async -> Bool {
+    do {
+      let url = try await resolvedFileURL(for: fileID)
+      switch action {
+      case .showInFinder:
+        try fileActions.reveal(url)
+      case .copyFilePath:
+        try fileActions.copyPath(url.path)
+      }
+      return true
+    } catch {
+      present(error)
+      return false
+    }
   }
 
   func commandPaletteNotes(
@@ -146,12 +172,21 @@ final class MacMarkdownAppModel {
     return hasExactMatch ? nil : title
   }
 
-  init(bookmarkStore: MarkdownFolderBookmarkStore = MarkdownFolderBookmarkStore()) {
+  init(
+    bookmarkStore: MarkdownFolderBookmarkStore = MarkdownFolderBookmarkStore(),
+    fileActions: MacFileActionClient = .live
+  ) {
     self.bookmarkStore = bookmarkStore
+    self.fileActions = fileActions
   }
 
-  init(folderURL: URL, bookmarkStore: MarkdownFolderBookmarkStore = MarkdownFolderBookmarkStore()) {
+  init(
+    folderURL: URL,
+    bookmarkStore: MarkdownFolderBookmarkStore = MarkdownFolderBookmarkStore(),
+    fileActions: MacFileActionClient = .live
+  ) {
     self.bookmarkStore = bookmarkStore
+    self.fileActions = fileActions
     hasStarted = true
     activateFolder(folderURL)
   }
@@ -258,6 +293,7 @@ final class MacMarkdownAppModel {
         selectedFile = todayFile
         selectedDocument = document
         hasLoadedSelectedFile = true
+        hasPendingSelectedSave = false
         text = document.body
         editorContentRevision += 1
         isLoadingFile = false
@@ -317,6 +353,7 @@ final class MacMarkdownAppModel {
         selectedFile = linkedFile
         selectedDocument = document
         hasLoadedSelectedFile = true
+        hasPendingSelectedSave = false
         text = document.body
         editorContentRevision += 1
         isLoadingFile = false
@@ -396,6 +433,7 @@ final class MacMarkdownAppModel {
         selectedFile = result.file
         selectedDocument = result.document
         hasLoadedSelectedFile = true
+        hasPendingSelectedSave = false
         text = result.document.body
         editorExternalRefreshRequest += 1
       }
@@ -448,6 +486,7 @@ final class MacMarkdownAppModel {
         selectedFile = createdFile
         selectedDocument = MarkdownDocument(fileContents: "")
         hasLoadedSelectedFile = true
+        hasPendingSelectedSave = false
         text = ""
         editorContentRevision += 1
         isLoadingFile = false
@@ -486,6 +525,7 @@ final class MacMarkdownAppModel {
     selectedFile = nextFile
     selectedDocument = nil
     hasLoadedSelectedFile = false
+    hasPendingSelectedSave = false
     text = ""
     editorContentRevision += 1
     isLoadingFile = nextFile != nil
@@ -532,6 +572,7 @@ final class MacMarkdownAppModel {
         text = loadedDocument.body
         editorContentRevision += 1
         hasLoadedSelectedFile = true
+        hasPendingSelectedSave = false
         isLoadingFile = false
       } catch is CancellationError {
         return
@@ -553,6 +594,7 @@ final class MacMarkdownAppModel {
     text = newText
     document.body = newText
     selectedDocument = document
+    hasPendingSelectedSave = true
     updateSidebarPreview(for: selectedFile, body: newText)
     let shouldFinalizeName = automaticallyNamedFileIDs.contains(selectedFile.id)
       && MarkdownFilename.hasTerminatedMeaningfulLine(in: newText)
@@ -564,6 +606,9 @@ final class MacMarkdownAppModel {
         try Task.checkCancellation()
         try await folder.write(document, to: selectedFile)
         try Task.checkCancellation()
+        if selectedFileID == selectedFile.id, text == document.body {
+          hasPendingSelectedSave = false
+        }
         updateSidebarPreview(for: selectedFile, body: document.body, modifiedAt: Date())
         if shouldFinalizeName {
           try await finalizeAutomaticNameIfPossible(
@@ -611,6 +656,7 @@ final class MacMarkdownAppModel {
     selectedDocument = document
     do {
       try document.fileContents.write(to: selectedFile.url, atomically: true, encoding: .utf8)
+      hasPendingSelectedSave = false
       updateSidebarPreview(for: selectedFile, body: document.body, modifiedAt: Date())
     } catch {
       present(error)
@@ -650,6 +696,7 @@ final class MacMarkdownAppModel {
     selectedFile = nil
     selectedDocument = nil
     hasLoadedSelectedFile = false
+    hasPendingSelectedSave = false
     selectedFileID = nil
     text = ""
     editorContentRevision += 1
@@ -684,7 +731,43 @@ final class MacMarkdownAppModel {
     document.body = text
     selectedDocument = document
     try await activeFolder.write(document, to: selectedFile)
+    hasPendingSelectedSave = false
     updateSidebarPreview(for: selectedFile, body: document.body, modifiedAt: Date())
+  }
+
+  private func resolvedFileURL(for fileID: MarkdownFile.ID) async throws -> URL {
+    guard let targetFile = file(for: fileID) else {
+      throw MacFileActionError.fileUnavailable(fileID)
+    }
+    try ensureFileExists(at: targetFile.url)
+
+    guard fileID == selectedFileID,
+          let activeFolder = folder
+    else {
+      return targetFile.url.standardizedFileURL
+    }
+
+    saveTask?.cancel()
+    if hasPendingSelectedSave {
+      try await saveSelectedNote(in: activeFolder)
+    }
+    try await finalizeAutomaticNameIfPossible(in: activeFolder)
+    guard folder === activeFolder else {
+      throw MacFileActionError.folderChanged
+    }
+
+    let resolvedFile = selectedFile ?? targetFile
+    try ensureFileExists(at: resolvedFile.url)
+    return resolvedFile.url.standardizedFileURL
+  }
+
+  private func ensureFileExists(at url: URL) throws {
+    var isDirectory: ObjCBool = false
+    guard FileManager.default.fileExists(atPath: url.path, isDirectory: &isDirectory),
+          !isDirectory.boolValue
+    else {
+      throw MacFileActionError.fileUnavailable(url)
+    }
   }
 
   private func saveAndFinalizeSelectedNote() async {
