@@ -3,10 +3,10 @@ import SwiftUI
 
 @MainActor
 final class MacSettingsWindowController: NSWindowController {
-  init() {
-    let contentView = NSHostingView(rootView: MacSettingsView())
+  init(shortcutSettings: MacKeyboardShortcutSettings) {
+    let contentView = NSHostingView(rootView: MacSettingsView(shortcutSettings: shortcutSettings))
     let window = NSWindow(
-      contentRect: NSRect(x: 0, y: 0, width: 420, height: 150),
+      contentRect: NSRect(x: 0, y: 0, width: 460, height: 260),
       styleMask: [.titled, .closable, .miniaturizable],
       backing: .buffered,
       defer: false

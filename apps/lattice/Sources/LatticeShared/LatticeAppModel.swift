@@ -611,6 +611,21 @@ public final class LatticeAppModel {
     }
   }
 
+  @discardableResult
+  public func performTodayNoteKeyboardShortcut(
+    _ shortcut: LatticeKeyboardShortcut
+  ) -> Bool {
+    guard keyboardShortcut(for: .todayNote) == shortcut,
+          hasFolder,
+          !isNoteMigrationRequired
+    else {
+      return false
+    }
+
+    openTodayNote()
+    return true
+  }
+
   public func open(_ note: SavedNote) {
     open(note, heading: nil, selection: nil, recordHistory: true)
   }
@@ -2503,7 +2518,8 @@ public final class LatticeAppModel {
         title: "Today’s Note",
         subtitle: "Create or open today’s daily note",
         systemImage: "calendar",
-        isEnabled: !isNoteMigrationRequired
+        isEnabled: !isNoteMigrationRequired,
+        keyboardShortcut: keyboardShortcut(for: .todayNote)?.displayText
       ) { [weak self] in
         self?.openTodayNote()
       },

@@ -887,6 +887,111 @@ struct MacJotShortcutTests {
 }
 
 @MainActor
+@Suite("Mac command shortcuts")
+struct MacCommandShortcutTests {
+  @Test("Today’s Note defaults to Command-Shift-D")
+  func usesTodayNoteDefault() throws {
+    let shortcut = try #require(KeyboardShortcuts.Name.openTodayNote.defaultShortcut)
+
+    #expect(shortcut.key == .d)
+    #expect(shortcut.modifiers == [.command, .shift])
+  }
+
+  @Test("Today’s Note shortcut overrides conflicts and resets")
+  func overridesConflictsAndResets() throws {
+    let suffix = UUID().uuidString
+    let todayName = KeyboardShortcuts.Name(
+      "testTodayNote-\(suffix)",
+      default: .init(.d, modifiers: [.command, .shift])
+    )
+    let jotName = KeyboardShortcuts.Name(
+      "testJot-\(suffix)",
+      default: .init(.j, modifiers: [.command, .option, .control])
+    )
+    defer {
+      KeyboardShortcuts.setShortcut(nil, for: todayName)
+      KeyboardShortcuts.setShortcut(nil, for: jotName)
+    }
+    let settings = MacKeyboardShortcutSettings(
+      todayNoteName: todayName,
+      jotName: jotName
+    )
+
+    let override = KeyboardShortcuts.Shortcut(.t, modifiers: [.command, .option])
+    settings.setShortcut(override, for: .todayNote)
+    #expect(settings.todayNoteShortcut == override)
+
+    settings.setShortcut(override, for: .jot)
+    #expect(settings.jotShortcut == override)
+    #expect(settings.todayNoteShortcut == nil)
+
+    settings.resetShortcut(for: .todayNote)
+    #expect(settings.todayNoteShortcut == todayName.defaultShortcut)
+    #expect(settings.jotShortcut == override)
+  }
+
+  @Test("palette shows the configured Today’s Note shortcut")
+  func paletteShowsTodayNoteShortcut() throws {
+    let command = try #require(
+      MacPaletteCommand.commands(todayNoteShortcut: "⌘⇧D")
+        .first { $0.id == .todayNote }
+    )
+
+    #expect(command.title == "Today’s Note")
+    #expect(command.shortcut == "⌘⇧D")
+  }
+
+  @Test("local shortcut activation invokes Today’s Note when available")
+  func activatesTodayNoteWhenAvailable() throws {
+    let suffix = UUID().uuidString
+    let todayName = KeyboardShortcuts.Name(
+      "testTodayActivation-\(suffix)",
+      default: .init(.d, modifiers: [.command, .shift])
+    )
+    let jotName = KeyboardShortcuts.Name("testJotActivation-\(suffix)")
+    defer {
+      KeyboardShortcuts.setShortcut(nil, for: todayName)
+      KeyboardShortcuts.setShortcut(nil, for: jotName)
+    }
+    let settings = MacKeyboardShortcutSettings(
+      todayNoteName: todayName,
+      jotName: jotName
+    )
+    let event = try #require(NSEvent.keyEvent(
+      with: .keyDown,
+      location: .zero,
+      modifierFlags: [.command, .shift],
+      timestamp: 0,
+      windowNumber: 0,
+      context: nil,
+      characters: "D",
+      charactersIgnoringModifiers: "d",
+      isARepeat: false,
+      keyCode: 2
+    ))
+    var activationCount = 0
+
+    #expect(MacLocalKeyboardShortcutMonitor.handle(
+      event,
+      settings: settings,
+      canOpenTodayNote: true
+    ) {
+      activationCount += 1
+    })
+    #expect(activationCount == 1)
+
+    #expect(!MacLocalKeyboardShortcutMonitor.handle(
+      event,
+      settings: settings,
+      canOpenTodayNote: false
+    ) {
+      activationCount += 1
+    })
+    #expect(activationCount == 1)
+  }
+}
+
+@MainActor
 @Suite("Live Markdown presentation")
 struct LiveMarkdownPresentationTests {
   @Test("uses TextKit 1 for live presentation")
