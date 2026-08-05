@@ -875,6 +875,187 @@ struct MacMarkdownAppModelTests {
 }
 
 @MainActor
+@Suite("Mac file actions")
+struct MacFileActionTests {
+  @Test("shares the same Finder and copy actions across file action menus")
+  func sharesMenuActionConfiguration() {
+    #expect(MacFileAction.allCases == [.showInFinder, .copyFilePath])
+    #expect(MacFileAction.showInFinder.title == "Show in Finder")
+    #expect(MacFileAction.copyFilePath.title == "Copy File Path")
+  }
+
+  @Test("shows a row's reserved action control only for hover or selection")
+  func controlsSidebarActionVisibility() {
+    #expect(!MacSidebarFileActionVisibility.isVisible(isHovered: false, isSelected: false))
+    #expect(MacSidebarFileActionVisibility.isVisible(isHovered: true, isSelected: false))
+    #expect(MacSidebarFileActionVisibility.isVisible(isHovered: false, isSelected: true))
+  }
+
+  @Test("keeps menu metadata concise and note-specific")
+  func formatsMenuMetadata() {
+    let longPath = "Projects/An Extremely Long Folder Name/Quarterly Planning Note.md"
+    let shortPath = MacFileActionMenuPath.short(longPath)
+
+    #expect(shortPath.count == 42)
+    #expect(shortPath.hasPrefix("…"))
+    #expect(shortPath.hasSuffix("Quarterly Planning Note.md"))
+    #expect(MacFileActionAccessibility.label(noteTitle: "Roadmap") == "File Actions for Roadmap")
+    #expect(MacFileActionAccessibility.label(noteTitle: nil) == "File Actions")
+  }
+
+  @Test("copies an unselected row's standardized absolute path without changing selection")
+  func copiesUnselectedRowWithoutSelectingIt() async throws {
+    let root = try temporaryDirectory()
+    defer { try? FileManager.default.removeItem(at: root) }
+    let selectedURL = root.appendingPathComponent("Selected.md")
+    let targetURL = root.appendingPathComponent("Target.md")
+    try "# Selected".write(to: selectedURL, atomically: true, encoding: .utf8)
+    try "# Target".write(to: targetURL, atomically: true, encoding: .utf8)
+    try FileManager.default.setAttributes(
+      [.modificationDate: Date(timeIntervalSince1970: 2_000)],
+      ofItemAtPath: selectedURL.path
+    )
+    try FileManager.default.setAttributes(
+      [.modificationDate: Date(timeIntervalSince1970: 1_000)],
+      ofItemAtPath: targetURL.path
+    )
+    let recorder = FileActionRecorder()
+    let model = MacMarkdownAppModel(
+      folderURL: root,
+      fileActions: recorder.client
+    )
+    #expect(await eventually {
+      model.selectedFileID == selectedURL.standardizedFileURL && !model.isLoadingFile
+    })
+
+    #expect(await model.performFileAction(.copyFilePath, for: targetURL))
+
+    #expect(recorder.copiedPaths == [targetURL.standardizedFileURL.path])
+    #expect(model.selectedFileID == selectedURL.standardizedFileURL)
+    #expect(model.text == "# Selected")
+  }
+
+  @Test("flushes and finalizes the selected note before copying its path")
+  func finalizesSelectedNoteBeforeCopying() async throws {
+    let root = try temporaryDirectory()
+    defer { try? FileManager.default.removeItem(at: root) }
+    let recorder = FileActionRecorder()
+    let model = MacMarkdownAppModel(folderURL: root, fileActions: recorder.client)
+    #expect(await eventually { !model.isLoadingFiles })
+    model.createNote()
+    #expect(await eventually { model.selectedFileID?.lastPathComponent == "Untitled.md" })
+    model.updateText("Current Draft")
+    let untitledID = try #require(model.selectedFileID)
+
+    #expect(await model.performFileAction(.copyFilePath, for: untitledID))
+
+    let finalURL = root.appendingPathComponent("Current Draft.md").standardizedFileURL
+    #expect(recorder.copiedPaths == [finalURL.path])
+    #expect(model.selectedFileID == finalURL)
+    #expect(try String(contentsOf: finalURL, encoding: .utf8) == "Current Draft")
+    #expect(!FileManager.default.fileExists(atPath: untitledID.path))
+  }
+
+  @Test("does not rewrite a clean selected note while resolving its path")
+  func preservesCleanSelectedNoteModificationDate() async throws {
+    let root = try temporaryDirectory()
+    defer { try? FileManager.default.removeItem(at: root) }
+    let url = root.appendingPathComponent("Clean.md")
+    let originalDate = Date(timeIntervalSince1970: 1_234)
+    try "# Clean".write(to: url, atomically: true, encoding: .utf8)
+    try FileManager.default.setAttributes(
+      [.modificationDate: originalDate],
+      ofItemAtPath: url.path
+    )
+    let recorder = FileActionRecorder()
+    let model = MacMarkdownAppModel(folderURL: root, fileActions: recorder.client)
+    #expect(await eventually { !model.isLoadingFiles && !model.isLoadingFile })
+
+    #expect(await model.performFileAction(.copyFilePath, for: url))
+
+    let modificationDate = try url.resourceValues(
+      forKeys: [.contentModificationDateKey]
+    ).contentModificationDate
+    #expect(modificationDate == originalDate)
+  }
+
+  @Test("reveals the resolved final URL for the selected note")
+  func revealsResolvedFinalURL() async throws {
+    let root = try temporaryDirectory()
+    defer { try? FileManager.default.removeItem(at: root) }
+    let recorder = FileActionRecorder()
+    let model = MacMarkdownAppModel(folderURL: root, fileActions: recorder.client)
+    #expect(await eventually { !model.isLoadingFiles })
+    model.createNote()
+    #expect(await eventually { model.selectedFileID?.lastPathComponent == "Untitled.md" })
+    model.updateText("Reveal Me")
+    let untitledID = try #require(model.selectedFileID)
+
+    #expect(await model.performFileAction(.showInFinder, for: untitledID))
+
+    #expect(recorder.revealedURLs == [
+      root.appendingPathComponent("Reveal Me.md").standardizedFileURL
+    ])
+  }
+
+  @Test("reports a missing row file through the normal error presentation")
+  func reportsMissingFile() async throws {
+    let root = try temporaryDirectory()
+    defer { try? FileManager.default.removeItem(at: root) }
+    let selectedURL = root.appendingPathComponent("Selected.md")
+    let missingURL = root.appendingPathComponent("Missing.md")
+    try "# Selected".write(to: selectedURL, atomically: true, encoding: .utf8)
+    try "# Missing".write(to: missingURL, atomically: true, encoding: .utf8)
+    let recorder = FileActionRecorder()
+    let model = MacMarkdownAppModel(folderURL: root, fileActions: recorder.client)
+    #expect(await eventually { !model.isLoadingFiles && !model.isLoadingFile })
+    try FileManager.default.removeItem(at: missingURL)
+
+    #expect(!(await model.performFileAction(.showInFinder, for: missingURL)))
+
+    #expect(recorder.revealedURLs.isEmpty)
+    #expect(model.errorMessage?.contains("Missing.md") == true)
+  }
+
+  @Test("reports Finder and pasteboard boundary failures")
+  func reportsOperationFailure() async throws {
+    struct ExpectedFailure: LocalizedError {
+      var errorDescription: String? { "Injected file action failure" }
+    }
+
+    let root = try temporaryDirectory()
+    defer { try? FileManager.default.removeItem(at: root) }
+    let url = root.appendingPathComponent("Note.md")
+    try "# Note".write(to: url, atomically: true, encoding: .utf8)
+    let client = MacFileActionClient(
+      reveal: { _ in throw ExpectedFailure() },
+      copyPath: { _ in throw ExpectedFailure() }
+    )
+    let model = MacMarkdownAppModel(folderURL: root, fileActions: client)
+    #expect(await eventually { !model.isLoadingFiles && !model.isLoadingFile })
+
+    #expect(!(await model.performFileAction(.showInFinder, for: url)))
+    #expect(model.errorMessage == "Injected file action failure")
+    model.errorMessage = nil
+    #expect(!(await model.performFileAction(.copyFilePath, for: url)))
+    #expect(model.errorMessage == "Injected file action failure")
+  }
+}
+
+@MainActor
+private final class FileActionRecorder {
+  var revealedURLs: [URL] = []
+  var copiedPaths: [String] = []
+
+  var client: MacFileActionClient {
+    MacFileActionClient(
+      reveal: { [weak self] url in self?.revealedURLs.append(url) },
+      copyPath: { [weak self] path in self?.copiedPaths.append(path) }
+    )
+  }
+}
+
+@MainActor
 @Suite("Mac Jot shortcut")
 struct MacJotShortcutTests {
   @Test("uses a collision-resistant default global shortcut")
