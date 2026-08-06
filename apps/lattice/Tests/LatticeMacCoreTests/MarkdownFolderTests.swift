@@ -375,8 +375,9 @@ struct MacMarkdownAppModelTests {
 
     model.applyEditorEdit(range: NSRange(location: 6, length: 5), replacement: "**world**")
     #expect(model.text == "Hello **world**")
-    try await Task.sleep(for: .milliseconds(400))
-    #expect(try String(contentsOf: url, encoding: .utf8) == "Hello **world**")
+    #expect(await eventually {
+      (try? String(contentsOf: url, encoding: .utf8)) == "Hello **world**"
+    })
   }
 
   @Test("creates, selects, focuses, and names a new note once")
