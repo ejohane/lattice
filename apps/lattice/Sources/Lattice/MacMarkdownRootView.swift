@@ -39,24 +39,27 @@ struct MacMarkdownRootView: View {
         .help("Forward")
       }
 
-      ToolbarItemGroup(placement: .primaryAction) {
-        MacFileActionsMenu(
-          file: model.file(for: model.selectedFileID),
-          noteTitle: model.selectedFileID == nil ? nil : model.selectedNoteTitle,
-          action: { action, fileID in
-            Task { await model.performFileAction(action, for: fileID) }
+      ToolbarItem(placement: .primaryAction) {
+        ControlGroup {
+          MacFileActionsMenu(
+            file: model.file(for: model.selectedFileID),
+            noteTitle: model.selectedFileID == nil ? nil : model.selectedNoteTitle,
+            action: { action, fileID in
+              Task { await model.performFileAction(action, for: fileID) }
+            }
+          ) {
+            Label("File Actions", systemImage: "ellipsis.circle")
           }
-        ) {
-          Label("File Actions", systemImage: "ellipsis.circle")
-        }
 
-        Button {
-          model.createNote()
-        } label: {
-          Label("New Note", systemImage: "square.and.pencil")
+          Button {
+            model.createNote()
+          } label: {
+            Label("New Note", systemImage: "square.and.pencil")
+          }
+          .disabled(!model.canCreateNote)
+          .help("New Note")
         }
-        .disabled(!model.canCreateNote)
-        .help("New Note")
+        .controlGroupStyle(.navigation)
       }
     }
     .focusedSceneValue(
