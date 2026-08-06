@@ -1,4 +1,5 @@
 import Foundation
+import LatticeEditor
 import LatticeMacCore
 import Observation
 
@@ -26,6 +27,8 @@ final class MacMarkdownAppModel {
   private var namingFileIDs: Set<MarkdownFile.ID> = []
   private var backHistory: [MarkdownFile.ID] = []
   private var forwardHistory: [MarkdownFile.ID] = []
+  private var fileTags: [MarkdownFile.ID: [NoteTagOccurrence]] = [:]
+  private var selectionBeforeEmptyTagFilter: MarkdownFile.ID?
 
   @ObservationIgnored private var fileLoadTask: Task<Void, Never>?
   @ObservationIgnored private var saveTask: Task<Void, Never>?
@@ -33,6 +36,8 @@ final class MacMarkdownAppModel {
   private(set) var folderURL: URL?
   private(set) var files: [MarkdownFile] = []
   private(set) var sidebarPreviews: [MarkdownFile.ID: MarkdownSidebarPreview] = [:]
+  private(set) var tagSummaries: [NoteTagSummary] = []
+  private(set) var selectedTagName: String?
   private(set) var selectedFileID: MarkdownFile.ID?
   private(set) var text = ""
   private(set) var isLoadingFiles = false
@@ -51,6 +56,10 @@ final class MacMarkdownAppModel {
   private(set) var isSubmittingJot = false
   private(set) var jotErrorMessage: String?
   var errorMessage: String?
+  var renamingTag: NoteTagSummary?
+  var renameTagName = ""
+  var deletingTag: NoteTagSummary?
+  private(set) var isMutatingTags = false
 
   var canCreateNote: Bool {
     folder != nil && !isLoadingFiles
@@ -77,6 +86,11 @@ final class MacMarkdownAppModel {
   var selectedNoteTitle: String {
     guard let selectedFile else { return "Lattice" }
     return sidebarPreview(for: selectedFile).title
+  }
+
+  var filteredFiles: [MarkdownFile] {
+    guard let selectedTagName else { return files }
+    return files.filter { fileHasTag(selectedTagName, fileID: $0.id) }
   }
 
   func sidebarPreview(for file: MarkdownFile) -> MarkdownSidebarPreview {
@@ -111,6 +125,17 @@ final class MacMarkdownAppModel {
     matching query: String,
     limit: Int = 8
   ) -> [MacCommandPaletteNote] {
+    let matchingTags = commandPaletteTags(matching: query)
+    if !matchingTags.isEmpty {
+      let identities = Set(matchingTags.map(\.normalizedName))
+      return Array(files.filter { file in
+        identities.contains { fileHasTag($0, fileID: file.id) }
+      }.prefix(max(0, limit)).map { file in
+        let preview = sidebarPreview(for: file)
+        return MacCommandPaletteNote(id: file.id, title: preview.title, path: file.relativePath)
+      })
+    }
+
     let normalizedQuery = query
       .trimmingCharacters(in: .whitespacesAndNewlines)
       .lowercased()
@@ -146,7 +171,20 @@ final class MacMarkdownAppModel {
     return Array(rankedNotes.prefix(max(0, limit)).map(\.note))
   }
 
+  func commandPaletteTags(matching query: String, limit: Int = 8) -> [NoteTagSummary] {
+    let trimmed = query.trimmingCharacters(in: .whitespacesAndNewlines)
+    guard trimmed.hasPrefix("#") else { return [] }
+    let prefix = NoteTagParser.normalizedName(String(trimmed.dropFirst()))
+    guard !prefix.isEmpty else { return Array(tagSummaries.prefix(max(0, limit))) }
+    return Array(tagSummaries.filter {
+      $0.normalizedName.hasPrefix(prefix)
+    }.prefix(max(0, limit)))
+  }
+
   func commandPaletteCreationTitle(matching query: String) -> String? {
+    guard !query.trimmingCharacters(in: .whitespacesAndNewlines).hasPrefix("#") else {
+      return nil
+    }
     guard canCreateNote,
           let title = MarkdownFilename.wikiLinkTitle(from: query),
           let requestedStem = MarkdownFilename.wikiLinkStem(from: query)
@@ -282,12 +320,11 @@ final class MacMarkdownAppModel {
           calendar: calendar
         )
         let document = try await activeFolder.read(todayFile)
-        let discoveredFiles = try await activeFolder.files()
-        let discoveredPreviews = await activeFolder.sidebarPreviews(for: discoveredFiles)
+        let scanResult = try await activeFolder.scan()
         guard generation == loadGeneration else { return }
 
         automaticallyNamedFileIDs.remove(todayFile.id)
-        replaceDiscoveredFiles(discoveredFiles, previews: discoveredPreviews)
+        replaceDiscoveredSnapshots(scanResult)
         recordNavigation(to: todayFile.id)
         selectedFileID = todayFile.id
         selectedFile = todayFile
@@ -309,6 +346,94 @@ final class MacMarkdownAppModel {
 
   func openWikiLink(_ target: String) {
     openOrCreateNamedNote(target)
+  }
+
+  func selectTag(_ tag: NoteTagSummary?) {
+    selectedTagName = tag?.normalizedName
+    guard let tag else {
+      if selectedFileID == nil,
+         let previous = selectionBeforeEmptyTagFilter,
+         hasFile(previous) {
+        selectionBeforeEmptyTagFilter = nil
+        selectFile(previous)
+      } else {
+        selectionBeforeEmptyTagFilter = nil
+      }
+      return
+    }
+
+    guard let selectedFileID,
+          fileHasTag(tag.normalizedName, fileID: selectedFileID)
+    else {
+      let previous = self.selectedFileID
+      let next = filteredFiles.first?.id
+      selectionBeforeEmptyTagFilter = next == nil ? previous : nil
+      selectFile(next)
+      return
+    }
+  }
+
+  func activateTag(at characterIndex: Int) {
+    guard let occurrence = NoteTagParser.tag(at: characterIndex, in: text) else { return }
+    activateTag(normalizedName: occurrence.normalizedName)
+  }
+
+  func activateTag(normalizedName: String) {
+    guard let occurrence = NoteTagParser.tags(in: text).first(where: {
+      $0.normalizedName == NoteTagParser.normalizedName(normalizedName)
+    }) else { return }
+    flushSave()
+    let summary = tagSummaries.first { $0.normalizedName == occurrence.normalizedName }
+      ?? NoteTagSummary(name: occurrence.name, noteCount: 1)
+    selectTag(summary)
+  }
+
+  func beginRenamingTag(_ tag: NoteTagSummary) {
+    renamingTag = tag
+    renameTagName = tag.name
+  }
+
+  func cancelTagRename() {
+    renamingTag = nil
+    renameTagName = ""
+  }
+
+  func requestTagDeletion(_ tag: NoteTagSummary) {
+    deletingTag = tag
+  }
+
+  func cancelTagDeletion() {
+    deletingTag = nil
+  }
+
+  @discardableResult
+  func confirmTagRename() async -> Bool {
+    guard let tag = renamingTag else { return false }
+    let replacement = renameTagName.trimmingCharacters(in: .whitespacesAndNewlines)
+    guard NoteTagParser.isValidName(replacement) else {
+      errorMessage = MarkdownTagRewriteError.invalidTagName(replacement).localizedDescription
+      return false
+    }
+    renamingTag = nil
+    renameTagName = ""
+    return await performTagRewrite(
+      tag: tag,
+      replacementName: replacement,
+      selectedTagAfterSuccess: selectedTagName == tag.normalizedName
+        ? NoteTagParser.normalizedName(replacement)
+        : selectedTagName
+    )
+  }
+
+  @discardableResult
+  func confirmTagDeletion(_ presentedTag: NoteTagSummary? = nil) async -> Bool {
+    guard let tag = presentedTag ?? deletingTag else { return false }
+    deletingTag = nil
+    return await performTagRewrite(
+      tag: tag,
+      replacementName: nil,
+      selectedTagAfterSuccess: selectedTagName == tag.normalizedName ? nil : selectedTagName
+    )
   }
 
   private func openOrCreateNamedNote(_ target: String) {
@@ -342,12 +467,11 @@ final class MacMarkdownAppModel {
           return
         }
         let document = try await activeFolder.read(linkedFile)
-        let discoveredFiles = try await activeFolder.files()
-        let discoveredPreviews = await activeFolder.sidebarPreviews(for: discoveredFiles)
+        let scanResult = try await activeFolder.scan()
         guard generation == loadGeneration else { return }
 
         automaticallyNamedFileIDs.remove(linkedFile.id)
-        replaceDiscoveredFiles(discoveredFiles, previews: discoveredPreviews)
+        replaceDiscoveredSnapshots(scanResult)
         recordNavigation(to: linkedFile.id)
         selectedFileID = linkedFile.id
         selectedFile = linkedFile
@@ -379,12 +503,11 @@ final class MacMarkdownAppModel {
           now: now,
           calendar: calendar
         )
-        let discoveredFiles = try await activeFolder.files()
-        let discoveredPreviews = await activeFolder.sidebarPreviews(for: discoveredFiles)
+        let scanResult = try await activeFolder.scan()
         guard folder === activeFolder else { return }
 
         automaticallyNamedFileIDs.remove(todayFile.id)
-        replaceDiscoveredFiles(discoveredFiles, previews: discoveredPreviews)
+        replaceDiscoveredSnapshots(scanResult)
       } catch {
         guard folder === activeFolder else { return }
         present(error)
@@ -419,14 +542,13 @@ final class MacMarkdownAppModel {
         now: now,
         calendar: calendar
       )
-      let discoveredFiles = try await activeFolder.files()
-      let discoveredPreviews = await activeFolder.sidebarPreviews(for: discoveredFiles)
+      let scanResult = try await activeFolder.scan()
       guard folder === activeFolder else {
         jotErrorMessage = "The notes folder changed before Jot finished saving."
         return false
       }
 
-      replaceDiscoveredFiles(discoveredFiles, previews: discoveredPreviews)
+      replaceDiscoveredSnapshots(scanResult)
       automaticallyNamedFileIDs.remove(result.file.id)
 
       if selectedFileID == result.file.id {
@@ -475,12 +597,11 @@ final class MacMarkdownAppModel {
         }
 
         let createdFile = try await activeFolder.createNote()
-        let discoveredFiles = try await activeFolder.files()
-        let discoveredPreviews = await activeFolder.sidebarPreviews(for: discoveredFiles)
+        let scanResult = try await activeFolder.scan()
         guard generation == loadGeneration else { return }
 
         automaticallyNamedFileIDs.insert(createdFile.id)
-        replaceDiscoveredFiles(discoveredFiles, previews: discoveredPreviews)
+        replaceDiscoveredSnapshots(scanResult)
         recordNavigation(to: createdFile.id)
         selectedFileID = createdFile.id
         selectedFile = createdFile
@@ -508,6 +629,11 @@ final class MacMarkdownAppModel {
     previousDocument?.body = text
     let shouldSavePreviousFile = hasLoadedSelectedFile
     let nextFile = files.first { $0.id == id }
+    if let selectedTagName,
+       let nextFile,
+       !fileHasTag(selectedTagName, fileID: nextFile.id) {
+      self.selectedTagName = nil
+    }
     let activeFolder = folder
 
     if recordsHistory, let nextFile {
@@ -610,6 +736,7 @@ final class MacMarkdownAppModel {
           hasPendingSelectedSave = false
         }
         updateSidebarPreview(for: selectedFile, body: document.body, modifiedAt: Date())
+        updatePersistedTags(for: selectedFile, fileContents: document.fileContents)
         if shouldFinalizeName {
           try await finalizeAutomaticNameIfPossible(
             file: selectedFile,
@@ -658,6 +785,7 @@ final class MacMarkdownAppModel {
       try document.fileContents.write(to: selectedFile.url, atomically: true, encoding: .utf8)
       hasPendingSelectedSave = false
       updateSidebarPreview(for: selectedFile, body: document.body, modifiedAt: Date())
+      updatePersistedTags(for: selectedFile, fileContents: document.fileContents)
     } catch {
       present(error)
     }
@@ -688,6 +816,9 @@ final class MacMarkdownAppModel {
     folder = MarkdownFolder(rootURL: url)
     files = []
     sidebarPreviews = [:]
+    fileTags = [:]
+    tagSummaries = []
+    selectedTagName = nil
     pendingNoteCreations = 0
     automaticallyNamedFileIDs = []
     namingFileIDs = []
@@ -708,10 +839,9 @@ final class MacMarkdownAppModel {
     let generation = loadGeneration
     Task {
       do {
-        let discoveredFiles = try await folder.files()
-        let discoveredPreviews = await folder.sidebarPreviews(for: discoveredFiles)
+        let scanResult = try await folder.scan()
         guard generation == loadGeneration else { return }
-        replaceDiscoveredFiles(discoveredFiles, previews: discoveredPreviews)
+        replaceDiscoveredSnapshots(scanResult)
         isLoadingFiles = false
         selectFile(files.first?.id)
       } catch {
@@ -733,6 +863,7 @@ final class MacMarkdownAppModel {
     try await activeFolder.write(document, to: selectedFile)
     hasPendingSelectedSave = false
     updateSidebarPreview(for: selectedFile, body: document.body, modifiedAt: Date())
+    updatePersistedTags(for: selectedFile, fileContents: document.fileContents)
   }
 
   private func resolvedFileURL(for fileID: MarkdownFile.ID) async throws -> URL {
@@ -828,6 +959,9 @@ final class MacMarkdownAppModel {
     if let preview = sidebarPreviews.removeValue(forKey: oldFile.id) {
       sidebarPreviews[newFile.id] = preview
     }
+    if let tags = fileTags.removeValue(forKey: oldFile.id) {
+      fileTags[newFile.id] = tags
+    }
     files.removeAll { $0.id == oldFile.id }
     files.append(newFile)
     sortFilesByRecency()
@@ -887,13 +1021,23 @@ final class MacMarkdownAppModel {
     }
   }
 
-  private func replaceDiscoveredFiles(
-    _ discoveredFiles: [MarkdownFile],
-    previews: [MarkdownFile.ID: MarkdownSidebarPreview]
-  ) {
-    sidebarPreviews = previews
-    files = discoveredFiles
+  private func replaceDiscoveredSnapshots(_ result: MarkdownFolderScanResult) {
+    files = result.snapshots.map(\.file)
+    sidebarPreviews = Dictionary(uniqueKeysWithValues: result.snapshots.map {
+      ($0.file.id, $0.preview)
+    })
+    fileTags = Dictionary(uniqueKeysWithValues: result.snapshots.map {
+      ($0.file.id, $0.tags)
+    })
     sortFilesByRecency()
+    rebuildTagSummaries()
+    if !result.failures.isEmpty {
+      errorMessage = Self.fileFailureMessage(
+        operation: "read",
+        changedCount: nil,
+        failures: result.failures
+      )
+    }
   }
 
   private func sortFilesByRecency() {
@@ -905,6 +1049,124 @@ final class MacMarkdownAppModel {
       }
       return lhs.relativePath.localizedStandardCompare(rhs.relativePath) == .orderedAscending
     }
+  }
+
+  private func fileHasTag(_ normalizedName: String, fileID: MarkdownFile.ID) -> Bool {
+    let identity = NoteTagParser.normalizedName(normalizedName)
+    return fileTags[fileID]?.contains { $0.normalizedName == identity } == true
+  }
+
+  private func rebuildTagSummaries() {
+    var counts: [String: Int] = [:]
+    var displayNames: [String: String] = [:]
+
+    for file in files {
+      var seenInFile: Set<String> = []
+      for tag in fileTags[file.id] ?? [] where seenInFile.insert(tag.normalizedName).inserted {
+        counts[tag.normalizedName, default: 0] += 1
+        if displayNames[tag.normalizedName] == nil {
+          displayNames[tag.normalizedName] = tag.name
+        }
+      }
+    }
+
+    tagSummaries = counts.map { identity, count in
+      NoteTagSummary(
+        name: displayNames[identity] ?? identity,
+        normalizedName: identity,
+        noteCount: count
+      )
+    }.sorted {
+      $0.name.localizedStandardCompare($1.name) == .orderedAscending
+    }
+  }
+
+  private func updatePersistedTags(for file: MarkdownFile, fileContents: String) {
+    fileTags[file.id] = NoteTagParser.tags(in: fileContents)
+    rebuildTagSummaries()
+    guard let selectedTagName,
+          selectedFileID == file.id,
+          !fileHasTag(selectedTagName, fileID: file.id)
+    else { return }
+
+    let nextFileID = filteredFiles.first?.id
+    if nextFileID != selectedFileID {
+      selectFile(nextFileID)
+    }
+  }
+
+  private func performTagRewrite(
+    tag: NoteTagSummary,
+    replacementName: String?,
+    selectedTagAfterSuccess: String?
+  ) async -> Bool {
+    guard let activeFolder = folder, !isMutatingTags else { return false }
+    isMutatingTags = true
+    saveTask?.cancel()
+    defer { isMutatingTags = false }
+
+    do {
+      if hasPendingSelectedSave {
+        try await saveSelectedNote(in: activeFolder)
+      }
+      let selectedID = selectedFileID
+      let result = try await activeFolder.rewriteTag(
+        normalizedName: tag.normalizedName,
+        to: replacementName
+      )
+      let scanResult = try await activeFolder.scan()
+      guard folder === activeFolder else { return false }
+
+      replaceDiscoveredSnapshots(MarkdownFolderScanResult(
+        snapshots: scanResult.snapshots,
+        failures: []
+      ))
+      selectedTagName = result.failures.isEmpty ? selectedTagAfterSuccess : nil
+
+      if let selectedID,
+         let refreshedFile = file(for: selectedID) {
+        let refreshedDocument = try await activeFolder.read(refreshedFile)
+        selectedFileID = refreshedFile.id
+        selectedFile = refreshedFile
+        selectedDocument = refreshedDocument
+        text = refreshedDocument.body
+        hasLoadedSelectedFile = true
+        hasPendingSelectedSave = false
+        editorExternalRefreshRequest += 1
+      }
+
+      if let selectedTagName,
+         let selectedFileID,
+         !fileHasTag(selectedTagName, fileID: selectedFileID) {
+        selectFile(filteredFiles.first?.id)
+      }
+
+      let failures = result.failures + scanResult.failures.filter { scanFailure in
+        !result.failures.contains { $0.relativePath == scanFailure.relativePath }
+      }
+      if !failures.isEmpty {
+        errorMessage = Self.fileFailureMessage(
+          operation: replacementName == nil ? "delete the tag from" : "rename the tag in",
+          changedCount: result.changedNoteCount,
+          failures: failures
+        )
+      }
+      return failures.isEmpty
+    } catch {
+      present(error)
+      return false
+    }
+  }
+
+  private static func fileFailureMessage(
+    operation: String,
+    changedCount: Int?,
+    failures: [MarkdownFileOperationFailure]
+  ) -> String {
+    let changed = changedCount.map { "Updated \($0) note\($0 == 1 ? "" : "s"), but " } ?? ""
+    let paths = failures.prefix(3).map(\.relativePath).joined(separator: ", ")
+    let remainder = failures.count > 3 ? " and \(failures.count - 3) more" : ""
+    return "\(changed)could not \(operation) \(failures.count) file\(failures.count == 1 ? "" : "s"): \(paths)\(remainder)."
   }
 
   private static func commandPaletteRank(_ candidate: String, query: String) -> Int? {

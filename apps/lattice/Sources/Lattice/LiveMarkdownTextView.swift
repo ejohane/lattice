@@ -22,6 +22,9 @@ final class LiveMarkdownTextView: NSTextView {
   var onOpenLink: ((LiveMarkdownLinkTarget.Destination) -> Void)?
   var onFocusChange: ((Bool) -> Void)?
   var onCancelSlashCommandPalette: (() -> Bool)?
+  var onMoveEditorCompletion: ((Int) -> Bool)?
+  var onCommitEditorCompletion: (() -> Bool)?
+  var onCancelEditorCompletion: (() -> Bool)?
   var onSubmit: (() -> Void)?
   var onCancel: (() -> Void)?
   var seedsTitleOnFirstInsertion = true
@@ -91,6 +94,9 @@ final class LiveMarkdownTextView: NSTextView {
   }
 
   override func insertTab(_ sender: Any?) {
+    if onCommitEditorCompletion?() == true {
+      return
+    }
     if applyMarkdownListIndentation(direction: .indent) {
       return
     }
@@ -106,7 +112,20 @@ final class LiveMarkdownTextView: NSTextView {
     super.insertBacktab(sender)
   }
 
+  override func moveUp(_ sender: Any?) {
+    if onMoveEditorCompletion?(-1) == true { return }
+    super.moveUp(sender)
+  }
+
+  override func moveDown(_ sender: Any?) {
+    if onMoveEditorCompletion?(1) == true { return }
+    super.moveDown(sender)
+  }
+
   override func cancelOperation(_ sender: Any?) {
+    if onCancelEditorCompletion?() == true {
+      return
+    }
     if onCancelSlashCommandPalette?() == true {
       return
     }
