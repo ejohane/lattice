@@ -1,15 +1,20 @@
 import Foundation
 import LatticeCore
+import LatticeEditor
 import Testing
 
 @Suite("NoteTags")
 struct NoteTagTests {
   @Test("parses portable inline tags with case-insensitive identities")
   func parsesInlineTags() {
-    let tags = NoteTagParser.tags(in: "#Work #project/lattice (#Mañana) #work")
+    let tags = NoteTagParser.tags(in: "#Work #project/lattice (#Mañana) #work #東京2026 #über-cool")
 
-    #expect(tags.map(\.name) == ["Work", "project/lattice", "Mañana", "work"])
-    #expect(tags.map(\.normalizedName) == ["work", "project/lattice", "mañana", "work"])
+    #expect(tags.map(\.name) == [
+      "Work", "project/lattice", "Mañana", "work", "東京2026", "über-cool"
+    ])
+    #expect(tags.map(\.normalizedName) == [
+      "work", "project/lattice", "mañana", "work", "東京2026", "über-cool"
+    ])
   }
 
   @Test("ignores headings escapes code and URL fragments")
@@ -37,6 +42,8 @@ struct NoteTagTests {
     #expect(!NoteTagParser.isValidName("/child"))
     #expect(!NoteTagParser.isValidName("parent/"))
     #expect(!NoteTagParser.isValidName("parent//child"))
+    #expect(!NoteTagParser.isValidName("1234"))
+    #expect(!NoteTagParser.isValidName("work.project"))
   }
 
   @Test("finds autocomplete context outside code")
@@ -69,5 +76,49 @@ struct NoteTagTests {
       with: nil,
       in: text
     ) == "and\n`#work`")
+  }
+
+  @Test("preserves frontmatter and all excluded contexts during rewrites")
+  func preservesExcludedContextsDuringRewrites() {
+    let text = """
+      ---
+      aliases: [#Work]
+      ---
+      # Heading
+      \\#Work
+      https://example.com/#Work
+      `#Work`
+      ```text
+      #Work
+      ```
+      Visible #WORK and #work/project.
+      """
+
+    #expect(NoteTagParser.tags(in: text).map(\.name) == ["WORK", "work/project"])
+    #expect(NoteTagParser.replacingTag(
+      normalizedName: "work",
+      with: "career",
+      in: text
+    ) == text.replacingOccurrences(of: "Visible #WORK", with: "Visible #career"))
+  }
+
+  @Test("autocomplete excludes headings escapes URLs code and invalid nested names")
+  func autocompleteExclusions() {
+    let excluded = [
+      "# Heading",
+      "\\#pro",
+      "https://example.com/#pro",
+      "`#pro",
+      "#123",
+      "#/child",
+      "#parent//child"
+    ]
+
+    for text in excluded {
+      #expect(NoteTagParser.autocompleteContext(
+        in: text,
+        selection: NSRange(location: (text as NSString).length, length: 0)
+      ) == nil)
+    }
   }
 }

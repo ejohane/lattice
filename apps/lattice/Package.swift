@@ -21,6 +21,7 @@ let package = Package(
   targets: [
     .target(
       name: "LatticeCore",
+      dependencies: ["LatticeEditor"],
       linkerSettings: [
         .linkedLibrary("sqlite3"),
         .linkedFramework("EventKit")
@@ -30,7 +31,8 @@ let package = Package(
       name: "LatticeEditor"
     ),
     .target(
-      name: "LatticeMacCore"
+      name: "LatticeMacCore",
+      dependencies: ["LatticeEditor"]
     ),
     .target(
       name: "LatticeShared",

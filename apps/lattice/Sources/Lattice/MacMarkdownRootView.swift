@@ -1,4 +1,5 @@
 import LatticeMacCore
+import LatticeEditor
 import SwiftUI
 import UniformTypeIdentifiers
 
@@ -7,6 +8,7 @@ struct MacMarkdownRootView: View {
   @Environment(MacKeyboardShortcutSettings.self) private var shortcutSettings
   @State private var isChoosingFolder = false
   @State private var isShowingCommandPalette = false
+  @State private var tagsAreExpanded = true
 
   var body: some View {
     @Bindable var model = model
@@ -90,6 +92,9 @@ struct MacMarkdownRootView: View {
         notes: { query in
           model.commandPaletteNotes(matching: query)
         },
+        tags: { query in
+          model.commandPaletteTags(matching: query)
+        },
         creationTitle: { query in
           model.commandPaletteCreationTitle(matching: query)
         },
@@ -116,6 +121,10 @@ struct MacMarkdownRootView: View {
           Task { @MainActor in
             model.selectFile(noteID)
           }
+        },
+        onFilterTag: { tag in
+          isShowingCommandPalette = false
+          model.selectTag(tag)
         }
       )
     }
@@ -141,6 +150,27 @@ struct MacMarkdownRootView: View {
     } message: {
       Text(model.errorMessage ?? "")
     }
+    .sheet(item: Binding(
+      get: { model.renamingTag },
+      set: { if $0 == nil { model.cancelTagRename() } }
+    )) { tag in
+      MacTagRenameSheet(model: model, tag: tag)
+    }
+    .alert(
+      "Delete #\(model.deletingTag?.name ?? "Tag")?",
+      isPresented: Binding(
+        get: { model.deletingTag != nil },
+        set: { if !$0 { model.cancelTagDeletion() } }
+      ),
+      presenting: model.deletingTag
+    ) { tag in
+      Button("Cancel", role: .cancel) { model.cancelTagDeletion() }
+      Button("Delete Tag", role: .destructive) {
+        Task { _ = await model.confirmTagDeletion(tag) }
+      }
+    } message: { tag in
+      Text("This removes #\(tag.name) from \(tag.noteCount) note\(tag.noteCount == 1 ? "" : "s"). It does not delete any notes.")
+    }
     .task {
       model.start()
     }
@@ -154,30 +184,46 @@ struct MacMarkdownRootView: View {
       get: { model.selectedFileID },
       set: { model.selectFile($0) }
     )) {
-      ForEach(model.files) { file in
-        MacMarkdownSidebarRow(
-          file: file,
-          preview: model.sidebarPreview(for: file),
-          isSelected: model.selectedFileID == file.id,
-          action: { action, fileID in
-            Task { await model.performFileAction(action, for: fileID) }
-          }
+      if model.folderURL != nil {
+        MacTagSidebarSection(
+          tags: model.tagSummaries,
+          selectedTagName: model.selectedTagName,
+          isExpanded: $tagsAreExpanded,
+          onSelect: { model.selectTag($0) },
+          onRename: { model.beginRenamingTag($0) },
+          onDelete: { model.requestTagDeletion($0) }
         )
-          .help(file.relativePath)
-          .tag(file.id)
-          .listRowInsets(EdgeInsets(top: 2, leading: 12, bottom: 2, trailing: 10))
+      }
+
+      Section {
+        if model.folderURL != nil && model.filteredFiles.isEmpty && !model.isLoadingFiles {
+          ContentUnavailableView(
+            model.selectedTagName == nil ? "No Markdown Files" : "No Tagged Notes",
+            systemImage: model.selectedTagName == nil ? "doc.text" : "tag",
+            description: Text(emptySidebarDescription(model: model))
+          )
+          .listRowSeparator(.hidden)
+        } else {
+          ForEach(model.filteredFiles) { file in
+            MacMarkdownSidebarRow(
+              file: file,
+              preview: model.sidebarPreview(for: file),
+              isSelected: model.selectedFileID == file.id,
+              action: { action, fileID in
+                Task { await model.performFileAction(action, for: fileID) }
+              }
+            )
+              .help(file.relativePath)
+              .tag(file.id)
+              .listRowInsets(EdgeInsets(top: 2, leading: 12, bottom: 2, trailing: 10))
+          }
+        }
       }
     }
     .listStyle(.sidebar)
     .overlay {
       if model.isLoadingFiles {
         ProgressView()
-      } else if model.folderURL != nil && model.files.isEmpty {
-        ContentUnavailableView(
-          "No Markdown Files",
-          systemImage: "doc.text",
-          description: Text("This folder does not contain any .md files.")
-        )
       }
     }
     .safeAreaInset(edge: .bottom) {
@@ -195,6 +241,16 @@ struct MacMarkdownRootView: View {
       .padding(.vertical, 12)
       .background(.bar)
     }
+  }
+
+  private func emptySidebarDescription(model: MacMarkdownAppModel) -> String {
+    guard let selectedTagName = model.selectedTagName else {
+      return "This folder does not contain any .md files."
+    }
+    let displayName = model.tagSummaries.first {
+      $0.normalizedName == selectedTagName
+    }?.name ?? selectedTagName
+    return "No notes currently use #\(displayName)."
   }
 
   @ViewBuilder
@@ -225,6 +281,10 @@ struct MacMarkdownRootView: View {
           },
           onEnsureTodayNote: { now, calendar in
             model.ensureTodayNote(now: now, calendar: calendar)
+          },
+          tagSummaries: model.tagSummaries,
+          onOpenTag: { normalizedName in
+            model.activateTag(normalizedName: normalizedName)
           }
         )
         .frame(
@@ -246,6 +306,16 @@ struct MacMarkdownRootView: View {
           isChoosingFolder = true
         }
       }
+    } else if let selectedTagName = model.selectedTagName,
+              model.filteredFiles.isEmpty {
+      let displayName = model.tagSummaries.first {
+        $0.normalizedName == selectedTagName
+      }?.name ?? selectedTagName
+      ContentUnavailableView(
+        "No Notes Tagged #\(displayName)",
+        systemImage: "tag",
+        description: Text("Choose All Notes or another tag to continue.")
+      )
     } else {
       ContentUnavailableView(
         "Select a Markdown File",

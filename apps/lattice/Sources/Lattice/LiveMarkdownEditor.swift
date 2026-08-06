@@ -15,6 +15,8 @@ struct LiveMarkdownEditor: NSViewRepresentable {
   let onReplaceAll: (String) -> Void
   let onOpenWikiLink: (String) -> Void
   let onEnsureTodayNote: (Date, Calendar) -> Void
+  let tagSummaries: [NoteTagSummary]
+  let onOpenTag: (String) -> Void
   let onSubmit: (() -> Void)?
   let onCancel: (() -> Void)?
 
@@ -30,6 +32,8 @@ struct LiveMarkdownEditor: NSViewRepresentable {
     onReplaceAll: @escaping (String) -> Void,
     onOpenWikiLink: @escaping (String) -> Void,
     onEnsureTodayNote: @escaping (Date, Calendar) -> Void,
+    tagSummaries: [NoteTagSummary] = [],
+    onOpenTag: @escaping (String) -> Void = { _ in },
     onSubmit: (() -> Void)? = nil,
     onCancel: (() -> Void)? = nil
   ) {
@@ -44,6 +48,8 @@ struct LiveMarkdownEditor: NSViewRepresentable {
     self.onReplaceAll = onReplaceAll
     self.onOpenWikiLink = onOpenWikiLink
     self.onEnsureTodayNote = onEnsureTodayNote
+    self.tagSummaries = tagSummaries
+    self.onOpenTag = onOpenTag
     self.onSubmit = onSubmit
     self.onCancel = onCancel
   }
@@ -70,6 +76,15 @@ struct LiveMarkdownEditor: NSViewRepresentable {
     }
     textView.onCancelSlashCommandPalette = { [weak coordinator = context.coordinator] in
       coordinator?.cancelSlashCommandPalette() ?? false
+    }
+    textView.onMoveEditorCompletion = { [weak coordinator = context.coordinator] delta in
+      coordinator?.moveEditorCompletion(by: delta) ?? false
+    }
+    textView.onCommitEditorCompletion = { [weak coordinator = context.coordinator] in
+      coordinator?.commitTagAutocomplete() ?? false
+    }
+    textView.onCancelEditorCompletion = { [weak coordinator = context.coordinator] in
+      coordinator?.cancelTagAutocomplete() ?? false
     }
     textView.onSubmit = onSubmit
     textView.onCancel = onCancel
@@ -158,6 +173,11 @@ struct LiveMarkdownEditor: NSViewRepresentable {
     private var needsFullPresentationReset = false
     private var pendingPresentationFocus: Bool?
     private var slashCommandPaletteView: NSHostingView<MacSlashCommandPalette>?
+    private var tagAutocompletePaletteView: NSHostingView<MacTagAutocompletePalette>?
+    private var tagAutocompleteSuggestions: [MacTagAutocompleteSuggestion] = []
+    private var tagAutocompleteSelectionIndex = 0
+    private var activeTagTriggerLocation: Int?
+    private var dismissedTagTriggerLocation: Int?
     private var activeSlashTriggerLocation: Int?
     private var dismissedSlashTriggerLocation: Int?
     private var presentationRefreshGeneration = 0
@@ -194,6 +214,7 @@ struct LiveMarkdownEditor: NSViewRepresentable {
       pendingEdits = []
       cancelPendingPresentationWork()
       closeSlashCommandPalette(suppressCurrentTrigger: false)
+      closeTagAutocomplete(suppressCurrentTrigger: false)
       dismissedSlashTriggerLocation = nil
       textView.string = text
       textView.setSelectedRange(NSRange(location: 0, length: 0))
@@ -219,6 +240,7 @@ struct LiveMarkdownEditor: NSViewRepresentable {
       pendingEdits = []
       cancelPendingPresentationWork()
       closeSlashCommandPalette(suppressCurrentTrigger: false)
+      closeTagAutocomplete(suppressCurrentTrigger: false)
       dismissedSlashTriggerLocation = nil
       textView.string = text
       let length = (text as NSString).length
@@ -288,6 +310,9 @@ struct LiveMarkdownEditor: NSViewRepresentable {
 
     func textView(_ textView: NSTextView, doCommandBy commandSelector: Selector) -> Bool {
       guard commandSelector == #selector(NSResponder.insertNewline(_:)) else { return false }
+      if commitTagAutocomplete() {
+        return true
+      }
       if commitTodaySlashCommand() {
         return true
       }
@@ -338,7 +363,52 @@ struct LiveMarkdownEditor: NSViewRepresentable {
         }
       case .wiki(let target):
         parent.onOpenWikiLink(target)
+      case .tag(let normalizedName):
+        parent.onOpenTag(normalizedName)
       }
+    }
+
+    func moveEditorCompletion(by delta: Int) -> Bool {
+      guard !tagAutocompleteSuggestions.isEmpty else { return false }
+      let count = tagAutocompleteSuggestions.count
+      tagAutocompleteSelectionIndex = (tagAutocompleteSelectionIndex + delta + count) % count
+      updateTagPaletteView()
+      return true
+    }
+
+    func cancelTagAutocomplete() -> Bool {
+      guard !tagAutocompleteSuggestions.isEmpty || tagAutocompletePaletteView != nil else {
+        return false
+      }
+      closeTagAutocomplete(suppressCurrentTrigger: true)
+      return true
+    }
+
+    @discardableResult
+    func commitTagAutocomplete(
+      _ selectedSuggestion: MacTagAutocompleteSuggestion? = nil
+    ) -> Bool {
+      guard let textView else { return false }
+      let suggestion: MacTagAutocompleteSuggestion
+      if let selectedSuggestion {
+        suggestion = selectedSuggestion
+      } else {
+        guard tagAutocompleteSuggestions.indices.contains(tagAutocompleteSelectionIndex) else {
+          return false
+        }
+        suggestion = tagAutocompleteSuggestions[tagAutocompleteSelectionIndex]
+      }
+      guard let commit = MacTagAutocomplete.committing(suggestion, in: textView.string)
+      else { return false }
+
+      closeTagAutocomplete(suppressCurrentTrigger: false)
+      textView.window?.makeFirstResponder(textView)
+      textView.insertText(
+        "#\(suggestion.name)",
+        replacementRange: suggestion.replacementRange
+      )
+      textView.setSelectedRange(commit.selection)
+      return true
     }
 
     func cancelSlashCommandPalette() -> Bool {
@@ -429,8 +499,114 @@ struct LiveMarkdownEditor: NSViewRepresentable {
             )
           }
         }
-        self.updateSlashCommandPalette(in: textView)
+        self.updateEditorCompletions(in: textView)
       }
+    }
+
+    private func updateEditorCompletions(in textView: LiveMarkdownTextView) {
+      updateSlashCommandPalette(in: textView)
+      if slashCommandPaletteView != nil {
+        closeTagAutocomplete(suppressCurrentTrigger: false)
+      } else {
+        updateTagAutocomplete(in: textView)
+      }
+    }
+
+    private func updateTagAutocomplete(in textView: LiveMarkdownTextView) {
+      guard !textView.hasMarkedText(),
+            let context = NoteTagParser.autocompleteContext(
+              in: textView.string,
+              selection: textView.selectedRange()
+            )
+      else {
+        closeTagAutocomplete(suppressCurrentTrigger: false)
+        dismissedTagTriggerLocation = nil
+        return
+      }
+      guard dismissedTagTriggerLocation != context.replacementRange.location else {
+        closeTagAutocomplete(suppressCurrentTrigger: false)
+        return
+      }
+
+      let suggestions = MacTagAutocomplete.suggestions(
+        in: textView.string,
+        selection: textView.selectedRange(),
+        tags: parent.tagSummaries
+      )
+      guard !suggestions.isEmpty else {
+        closeTagAutocomplete(suppressCurrentTrigger: false)
+        return
+      }
+
+      tagAutocompleteSuggestions = suggestions
+      tagAutocompleteSelectionIndex = min(tagAutocompleteSelectionIndex, suggestions.count - 1)
+      activeTagTriggerLocation = context.replacementRange.location
+      guard let anchor = slashCommandAnchor(
+        in: textView,
+        triggerLocation: context.replacementRange.location
+      ) else { return }
+
+      if tagAutocompletePaletteView == nil {
+        let palette = NSHostingView(rootView: tagPaletteRootView())
+        textView.addSubview(palette, positioned: .above, relativeTo: nil)
+        tagAutocompletePaletteView = palette
+      }
+      updateTagPaletteView()
+      if let palette = tagAutocompletePaletteView {
+        positionTagAutocomplete(palette, below: anchor, in: textView)
+      }
+    }
+
+    private func tagPaletteRootView() -> MacTagAutocompletePalette {
+      let maximumRows = MacTagAutocompletePaletteMetrics.maximumVisibleRows
+      let start = min(
+        max(0, tagAutocompleteSelectionIndex - maximumRows + 1),
+        max(0, tagAutocompleteSuggestions.count - maximumRows)
+      )
+      let end = min(tagAutocompleteSuggestions.count, start + maximumRows)
+      return MacTagAutocompletePalette(
+        suggestions: Array(tagAutocompleteSuggestions[start..<end]),
+        selectedIndex: tagAutocompleteSelectionIndex - start
+      ) { [weak self] suggestion in
+        _ = self?.commitTagAutocomplete(suggestion)
+      }
+    }
+
+    private func updateTagPaletteView() {
+      tagAutocompletePaletteView?.rootView = tagPaletteRootView()
+    }
+
+    private func positionTagAutocomplete(
+      _ paletteView: NSView,
+      below anchor: SlashCommandAnchor,
+      in textView: LiveMarkdownTextView
+    ) {
+      let visibleRect = textView.visibleRect
+      let width = MacTagAutocompletePaletteMetrics.width
+      let rowCount = min(
+        tagAutocompleteSuggestions.count,
+        MacTagAutocompletePaletteMetrics.maximumVisibleRows
+      )
+      let height = CGFloat(rowCount) * MacTagAutocompletePaletteMetrics.rowHeight
+      let minimumX = visibleRect.minX + 8
+      let maximumX = max(minimumX, visibleRect.maxX - width - 8)
+      let x = min(max(anchor.slashRect.minX, minimumX), maximumX)
+      let preferredY = anchor.lineRect.maxY + MacTagAutocompletePaletteMetrics.verticalGap
+      let y = preferredY + height <= visibleRect.maxY - 8
+        ? preferredY
+        : max(visibleRect.minY + 8, anchor.lineRect.minY - height - 8)
+      paletteView.frame = NSRect(x: x, y: y, width: width, height: height)
+    }
+
+    private func closeTagAutocomplete(suppressCurrentTrigger: Bool) {
+      if suppressCurrentTrigger {
+        dismissedTagTriggerLocation = activeTagTriggerLocation
+      }
+      tagAutocompletePaletteView?.removeFromSuperview()
+      tagAutocompletePaletteView = nil
+      tagAutocompleteSuggestions = []
+      tagAutocompleteSelectionIndex = 0
+      activeTagTriggerLocation = nil
     }
 
     private func cancelPendingPresentationWork() {

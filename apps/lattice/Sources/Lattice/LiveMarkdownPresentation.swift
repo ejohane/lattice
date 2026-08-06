@@ -34,6 +34,7 @@ struct LiveMarkdownLinkTarget: Equatable {
   enum Destination: Equatable {
     case web(URL)
     case wiki(String)
+    case tag(String)
   }
 
   let destination: Destination
@@ -185,6 +186,12 @@ final class LiveMarkdownPresentationController {
     storage.setAttributes(Self.baseAttributes, range: range)
     for token in tokens where intersects(token.fullRange, range) {
       apply(token, to: storage, selection: selection)
+    }
+    for tag in NoteTagParser.tags(in: storage.string) where intersects(tag.range, range) {
+      storage.addAttributes([
+        .foregroundColor: NSColor.controlAccentColor,
+        .underlineStyle: NSUnderlineStyle.single.rawValue
+      ], range: tag.range)
     }
     storage.endEditing()
 
@@ -399,6 +406,11 @@ final class LiveMarkdownPresentationController {
       default:
         return nil
       }
+    } + NoteTagParser.tags(in: textView.string).map { tag in
+      LiveMarkdownLinkTarget(
+        destination: .tag(tag.normalizedName),
+        range: tag.range
+      )
     }
   }
 

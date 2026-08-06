@@ -1,4 +1,5 @@
 import Foundation
+import LatticeEditor
 
 public struct IndexedNote: Identifiable, Equatable, Sendable {
   public let url: URL

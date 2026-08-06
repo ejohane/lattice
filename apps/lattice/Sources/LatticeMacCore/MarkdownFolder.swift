@@ -1,4 +1,62 @@
 import Foundation
+import LatticeEditor
+
+public struct MarkdownFileSnapshot: Equatable, Sendable {
+  public let file: MarkdownFile
+  public let preview: MarkdownSidebarPreview
+  public let tags: [NoteTagOccurrence]
+
+  public init(
+    file: MarkdownFile,
+    preview: MarkdownSidebarPreview,
+    tags: [NoteTagOccurrence]
+  ) {
+    self.file = file
+    self.preview = preview
+    self.tags = tags
+  }
+}
+
+public struct MarkdownFileOperationFailure: Equatable, Sendable {
+  public let relativePath: String
+  public let message: String
+
+  public init(relativePath: String, message: String) {
+    self.relativePath = relativePath
+    self.message = message
+  }
+}
+
+public struct MarkdownFolderScanResult: Equatable, Sendable {
+  public let snapshots: [MarkdownFileSnapshot]
+  public let failures: [MarkdownFileOperationFailure]
+
+  public init(
+    snapshots: [MarkdownFileSnapshot],
+    failures: [MarkdownFileOperationFailure]
+  ) {
+    self.snapshots = snapshots
+    self.failures = failures
+  }
+}
+
+public struct MarkdownTagRewriteResult: Equatable, Sendable {
+  public let changedFiles: [MarkdownFile]
+  public let failures: [MarkdownFileOperationFailure]
+
+  public var changedNoteCount: Int { changedFiles.count }
+}
+
+public enum MarkdownTagRewriteError: LocalizedError, Equatable {
+  case invalidTagName(String)
+
+  public var errorDescription: String? {
+    switch self {
+    case .invalidTagName(let name):
+      "“\(name)” is not a valid tag name. Use letters, numbers, -, _, or /, and include at least one letter."
+    }
+  }
+}
 
 public struct DailyNoteAppendResult: Equatable, Sendable {
   public let file: MarkdownFile
@@ -57,6 +115,27 @@ public actor MarkdownFolder {
     return MarkdownDocument(fileContents: contents)
   }
 
+  public func scan() throws -> MarkdownFolderScanResult {
+    let discoveredFiles = try files()
+    var snapshots: [MarkdownFileSnapshot] = []
+    var failures: [MarkdownFileOperationFailure] = []
+    snapshots.reserveCapacity(discoveredFiles.count)
+
+    for file in discoveredFiles {
+      do {
+        snapshots.append(try snapshot(for: file))
+      } catch {
+        snapshots.append(MarkdownFileSnapshot(
+          file: file,
+          preview: MarkdownSidebarPreview(file: file, body: ""),
+          tags: []
+        ))
+        failures.append(operationFailure(for: file, error: error))
+      }
+    }
+    return MarkdownFolderScanResult(snapshots: snapshots, failures: failures)
+  }
+
   public func sidebarPreviews(
     for files: [MarkdownFile]
   ) -> [MarkdownFile.ID: MarkdownSidebarPreview] {
@@ -77,6 +156,43 @@ public actor MarkdownFolder {
     }
 
     return previews
+  }
+
+  public func rewriteTag(
+    normalizedName: String,
+    to replacementName: String?
+  ) throws -> MarkdownTagRewriteResult {
+    if let replacementName, !NoteTagParser.isValidName(replacementName) {
+      throw MarkdownTagRewriteError.invalidTagName(replacementName)
+    }
+
+    let identity = NoteTagParser.normalizedName(normalizedName)
+    var changedFiles: [MarkdownFile] = []
+    var failures: [MarkdownFileOperationFailure] = []
+
+    for file in try files() {
+      do {
+        let original = try String(contentsOf: file.url, encoding: .utf8)
+        let rewritten = NoteTagParser.replacingTag(
+          normalizedName: identity,
+          with: replacementName,
+          in: original
+        )
+        guard rewritten != original else { continue }
+
+        try rewritten.write(to: file.url, atomically: true, encoding: .utf8)
+        let verified = try String(contentsOf: file.url, encoding: .utf8)
+        guard verified == rewritten else {
+          try? original.write(to: file.url, atomically: true, encoding: .utf8)
+          throw CocoaError(.fileWriteUnknown)
+        }
+        changedFiles.append(file)
+      } catch {
+        failures.append(operationFailure(for: file, error: error))
+      }
+    }
+
+    return MarkdownTagRewriteResult(changedFiles: changedFiles, failures: failures)
   }
 
   public func write(_ document: MarkdownDocument, to file: MarkdownFile) throws {
@@ -204,6 +320,29 @@ public actor MarkdownFolder {
       return url.lastPathComponent
     }
     return fileComponents.dropFirst(rootComponents.count).joined(separator: "/")
+  }
+
+  private func snapshot(for file: MarkdownFile) throws -> MarkdownFileSnapshot {
+    let contents = try String(contentsOf: file.url, encoding: .utf8)
+    let body = MarkdownDocument(fileContents: contents).body
+    let modifiedAt = try file.url.resourceValues(
+      forKeys: [.contentModificationDateKey]
+    ).contentModificationDate
+    return MarkdownFileSnapshot(
+      file: file,
+      preview: MarkdownSidebarPreview(file: file, body: body, modifiedAt: modifiedAt),
+      tags: NoteTagParser.tags(in: contents)
+    )
+  }
+
+  private func operationFailure(
+    for file: MarkdownFile,
+    error: Error
+  ) -> MarkdownFileOperationFailure {
+    MarkdownFileOperationFailure(
+      relativePath: file.relativePath,
+      message: error.localizedDescription
+    )
   }
 
   private func existingWikiNote(matching stem: String) throws -> MarkdownFile? {

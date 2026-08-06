@@ -1,4 +1,5 @@
 import SwiftUI
+import LatticeEditor
 
 struct MacMarkdownFocusedAction {
   let isEnabled: Bool
@@ -77,6 +78,7 @@ struct MacPaletteCommand: Hashable {
 struct MacCommandPaletteView: View {
   private enum Item: Hashable {
     case command(MacPaletteCommand)
+    case filterTag(NoteTagSummary)
     case createNote(String)
     case note(MacCommandPaletteNote)
 
@@ -84,6 +86,8 @@ struct MacCommandPaletteView: View {
       switch self {
       case .command(let command):
         command.title
+      case .filterTag(let tag):
+        "Filter by #\(tag.name)"
       case .createNote(let title):
         "Create “\(title)”"
       case .note(let note):
@@ -95,6 +99,8 @@ struct MacCommandPaletteView: View {
       switch self {
       case .command(let command):
         command.subtitle
+      case .filterTag(let tag):
+        "\(tag.noteCount) tagged note\(tag.noteCount == 1 ? "" : "s")"
       case .createNote:
         nil
       case .note(let note):
@@ -106,6 +112,8 @@ struct MacCommandPaletteView: View {
       switch self {
       case .command(let command):
         command.systemImage
+      case .filterTag:
+        "tag"
       case .createNote:
         "square.and.pencil"
       case .note:
@@ -117,10 +125,21 @@ struct MacCommandPaletteView: View {
       switch self {
       case .command(let command):
         command.shortcut
+      case .filterTag:
+        nil
       case .createNote:
         "⌘↩"
       case .note:
         nil
+      }
+    }
+
+    var requiresCreatePermission: Bool {
+      switch self {
+      case .command, .createNote:
+        true
+      case .filterTag, .note:
+        false
       }
     }
   }
@@ -128,11 +147,13 @@ struct MacCommandPaletteView: View {
   let canCreateNote: Bool
   let todayNoteShortcut: String?
   let notes: (String) -> [MacCommandPaletteNote]
+  let tags: (String) -> [NoteTagSummary]
   let creationTitle: (String) -> String?
   let onCreateNote: @MainActor () -> Void
   let onCreateNamedNote: @MainActor (String) -> Void
   let onOpenTodayNote: @MainActor () -> Void
   let onOpenNote: @MainActor (MacCommandPaletteNote.ID) -> Void
+  let onFilterTag: @MainActor (NoteTagSummary) -> Void
 
   @Environment(\.dismiss) private var dismiss
   @FocusState private var isSearchFocused: Bool
@@ -162,6 +183,7 @@ struct MacCommandPaletteView: View {
     items += visibleCommands
       .filter { title == nil || $0.id != .newNote }
       .map(Item.command)
+    items += tags(query).map(Item.filterTag)
     return items
   }
 
@@ -174,7 +196,7 @@ struct MacCommandPaletteView: View {
     guard !trimmedQuery.isEmpty else {
       return visibleCommandItems.first
     }
-    return visibleNotes.first.map(Item.note) ?? visibleCommandItems.first
+    return visibleCommandItems.first ?? visibleNotes.first.map(Item.note)
   }
 
   var body: some View {
@@ -217,7 +239,7 @@ struct MacCommandPaletteView: View {
                   itemRow(item)
                 }
                 .buttonStyle(.plain)
-                .disabled(!canCreateNote)
+                .disabled(item.requiresCreatePermission && !canCreateNote)
                 .tag(item)
                 .listRowInsets(EdgeInsets(top: 2, leading: 6, bottom: 2, trailing: 6))
                 .listRowSeparator(.hidden)
@@ -320,6 +342,8 @@ struct MacCommandPaletteView: View {
       case .todayNote:
         onOpenTodayNote()
       }
+    case .filterTag(let tag):
+      onFilterTag(tag)
     case .createNote(let title):
       onCreateNamedNote(title)
     case .note(let note):
